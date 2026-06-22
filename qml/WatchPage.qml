@@ -352,10 +352,12 @@ Kirigami.ScrollablePage {
 
         property string statusKind: ""
         property string statusMsg: ""
+        property string code: ""
 
         function openForPair() {
             title = "Pair watch";
             statusKind = "";
+            code = "";
             statusMsg = "Opening pairing window…";
             open();
             var r = StoandlClient.pair();
@@ -370,6 +372,7 @@ Kirigami.ScrollablePage {
         function openForRepair(name) {
             title = "Re-pair " + name;
             statusKind = "";
+            code = "";
             statusMsg = "Re-opening pairing window…";
             open();
             var r = StoandlClient.repair(name);
@@ -383,6 +386,13 @@ Kirigami.ScrollablePage {
 
         function handleStatus(kind, msg) {
             statusKind = kind;
+            // confirm:<code> — show the code and the Accept/Decline buttons; the user verifies it
+            // matches the code on the watch before accepting.
+            if (kind === "confirm") {
+                code = msg;
+                statusMsg = "Does this code match the one shown on the watch?";
+                return;
+            }
             statusMsg = msg !== "" ? msg : kind;
             if (kind === "ok") {
                 page.toast("Watch paired");
@@ -399,7 +409,18 @@ Kirigami.ScrollablePage {
             QQC2.Label {
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
-                text: "Confirm the 6-digit code shown on the watch."
+                text: pairDialog.statusKind === "confirm"
+                    ? "Verify this code matches the one shown on the watch, then Accept."
+                    : "Put the watch in pairing mode."
+            }
+
+            QQC2.Label {
+                visible: pairDialog.statusKind === "confirm"
+                Layout.alignment: Qt.AlignHCenter
+                text: pairDialog.code
+                font.family: "monospace"
+                font.bold: true
+                font.pointSize: Kirigami.Theme.defaultFont.pointSize * 2
             }
 
             RowLayout {
@@ -420,6 +441,32 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     text: pairDialog.statusMsg
+                }
+            }
+
+            // Numeric-comparison Accept/Decline (only while a code is awaiting a decision).
+            RowLayout {
+                visible: pairDialog.statusKind === "confirm"
+                Layout.fillWidth: true
+                QQC2.Button {
+                    text: "Decline"
+                    icon.name: "dialog-cancel-symbolic"
+                    onClicked: {
+                        StoandlClient.confirmPairing(false);
+                        pairDialog.statusKind = "pending";
+                        pairDialog.statusMsg = "Declining…";
+                    }
+                }
+                Item { Layout.fillWidth: true }
+                QQC2.Button {
+                    text: "Accept"
+                    icon.name: "dialog-ok-symbolic"
+                    highlighted: true
+                    onClicked: {
+                        StoandlClient.confirmPairing(true);
+                        pairDialog.statusKind = "pending";
+                        pairDialog.statusMsg = "Completing pairing…";
+                    }
                 }
             }
         }

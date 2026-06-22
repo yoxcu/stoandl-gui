@@ -190,6 +190,7 @@ QVariantMap StoandlClient::battery()                       { return statusMap(ca
 QVariantMap StoandlClient::connectWatch(const QString &n)  { return statusMap(callStatus(QStringLiteral("Connect"), {n})); }
 QVariantMap StoandlClient::pair()                          { return statusMap(callStatus(QStringLiteral("Pair"))); }
 QVariantMap StoandlClient::pairStatusNow()                 { return statusMap(callStatus(QStringLiteral("PairStatus"))); }
+QVariantMap StoandlClient::confirmPairing(bool accept)     { return statusMap(callStatus(QStringLiteral("ConfirmPairing"), { accept })); }
 QVariantMap StoandlClient::repair(const QString &n)        { return statusMap(callStatus(QStringLiteral("Repair"), {n})); }
 QVariantMap StoandlClient::unpair(const QString &n)        { return statusMap(callStatus(QStringLiteral("Unpair"), {n})); }
 

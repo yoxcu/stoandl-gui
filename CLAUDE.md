@@ -34,7 +34,8 @@ is hidden when the daemon is down (nothing works without it).
 
 ## Status kinds
 ok · error · notready · notfound · ambiguous · pending · timeout · inprogress · reboot · failed ·
-done · uptodate · disabled · busy · idle · none
+done · uptodate · disabled · busy · idle · none · confirm (PairStatus `confirm:<code>` — numeric
+comparison awaiting ConfirmPairing(bool))
 
 ## Daemon hooks (added this milestone — see the drift report `docs/handoff/drift-report.md`)
 The GUI now consumes daemon-side hooks beyond the original 51 methods: `transport` on ListWatches +

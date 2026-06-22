@@ -49,6 +49,7 @@ public:
     Q_INVOKABLE QVariantMap  connectWatch(const QString &name); // Connect(s)
     Q_INVOKABLE QVariantMap  pair();                     // Pair() then start the PairStatus poll
     Q_INVOKABLE QVariantMap  pairStatusNow();            // PairStatus() one-shot (poll uses this)
+    Q_INVOKABLE QVariantMap  confirmPairing(bool accept);// ConfirmPairing(b) — answer a confirm:<code>
     Q_INVOKABLE QVariantMap  repair(const QString &name);// Repair(s) -> reopen pairing window
     Q_INVOKABLE QVariantMap  unpair(const QString &name);// Unpair(s); "" = forget all
     Q_INVOKABLE void         findWatch();                // FindWatch() (b) — async, may block daemon-side
