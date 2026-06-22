@@ -105,7 +105,9 @@ Kirigami.ScrollablePage {
         },
         Kirigami.Action {
             icon.name: "view-refresh-symbolic"
-            text: "Sync now"
+            // Re-reads the locker from the daemon (ListApps) — the watch↔locker sync is automatic, so
+            // this only refreshes what's shown here, hence "Refresh" rather than "Sync".
+            text: "Refresh"
             enabled: StoandlClient.daemonUp
             onTriggered: { page.reload(); page.toast("Refreshed"); }
         }
@@ -126,19 +128,24 @@ Kirigami.ScrollablePage {
         contentItem: RowLayout {
             spacing: Kirigami.Units.largeSpacing
 
-            // Extracted menu icon when available, otherwise a themed generic glyph. Menu icons are
-            // tiny monochrome bitmaps, so render them crisply (smooth off) at the icon size.
+            // Extracted menu icon when available, otherwise a themed generic glyph. Menu icons are tiny
+            // bitmaps (~25 px); don't force-upscale them to fill the slot — a non-integer nearest-neighbour
+            // stretch mangles 1 px detail. Render at native size, centered; smoothing only matters for the
+            // DPR/downscale path.
             Item {
                 implicitWidth: Kirigami.Units.iconSizes.medium
                 implicitHeight: Kirigami.Units.iconSizes.medium
 
                 Image {
                     id: menuIcon
-                    anchors.fill: parent
+                    anchors.centerIn: parent
+                    width: Math.min(implicitWidth, parent.width)
+                    height: Math.min(implicitHeight, parent.height)
                     source: row.iconUrl
                     visible: row.iconUrl !== "" && status === Image.Ready
                     fillMode: Image.PreserveAspectFit
-                    smooth: false
+                    smooth: true
+                    mipmap: true
                     asynchronous: true
                     cache: true
                 }
