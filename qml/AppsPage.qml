@@ -128,30 +128,30 @@ Kirigami.ScrollablePage {
         contentItem: RowLayout {
             spacing: Kirigami.Units.largeSpacing
 
-            // Extracted menu icon when available, otherwise a themed generic glyph. Menu icons are tiny
-            // bitmaps (~25 px); don't force-upscale them to fill the slot — a non-integer nearest-neighbour
-            // stretch mangles 1 px detail. Render at native size, centered; smoothing only matters for the
-            // DPR/downscale path.
+            // Extracted menu icon when available, otherwise a themed generic glyph. Menu bitmaps are tiny
+            // (~25 px, daemon-flattened to black-on-white); render at a clean integer 2× with no smoothing
+            // so the hard edges stay pixel-exact instead of being mangled by a fractional stretch.
             Item {
-                implicitWidth: Kirigami.Units.iconSizes.medium
-                implicitHeight: Kirigami.Units.iconSizes.medium
+                implicitWidth: Kirigami.Units.iconSizes.huge
+                implicitHeight: Kirigami.Units.iconSizes.huge
 
                 Image {
                     id: menuIcon
                     anchors.centerIn: parent
-                    width: Math.min(implicitWidth, parent.width)
-                    height: Math.min(implicitHeight, parent.height)
+                    width: Math.min(implicitWidth * 2, parent.width)
+                    height: Math.min(implicitHeight * 2, parent.height)
                     source: row.iconUrl
                     visible: row.iconUrl !== "" && status === Image.Ready
                     fillMode: Image.PreserveAspectFit
-                    smooth: true
-                    mipmap: true
+                    smooth: false
                     asynchronous: true
                     cache: true
                 }
 
                 Kirigami.Icon {
-                    anchors.fill: parent
+                    anchors.centerIn: parent
+                    width: Kirigami.Units.iconSizes.large
+                    height: Kirigami.Units.iconSizes.large
                     visible: !menuIcon.visible
                     source: row.appData.active ? "starred-symbolic"
                            : row.appData.isFace ? "preferences-desktop-theme-symbolic"
