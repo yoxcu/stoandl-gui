@@ -1065,6 +1065,14 @@ void StoandlClient::stopWatchPoll()
 void StoandlClient::refreshWatches()
 {
     recheckDaemon();
+    if (m_daemonUp) {
+        // Fold the BluetoothStatus poll into the same 4 s tick. `ok:off` => off; anything else
+        // (incl. an older daemon that lacks the method) => assume on, so we never flash a false
+        // "Bluetooth is off" state.
+        const Status s = callStatus(QStringLiteral("BluetoothStatus"));
+        const bool on = !(s.kind == QStringLiteral("ok") && s.tail == QStringLiteral("off"));
+        if (on != m_bluetoothOn) { m_bluetoothOn = on; Q_EMIT bluetoothOnChanged(); }
+    }
     Q_EMIT watchesChanged(m_daemonUp ? listWatches() : QVariantList());
 }
 

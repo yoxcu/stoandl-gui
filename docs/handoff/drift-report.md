@@ -23,6 +23,7 @@ and consumed by the GUI; the real Kotlin daemon must grow the same surface. Form
 | Method | Sig | Returns | Hook |
 |---|---|---|---|
 | `WatchDetails` | `() → s` | `ok:name\tcode\tmodel\tplatform\ttransport\tfirmware\tserial\tbattery\tlastSync` / `notready:` (Board omitted per §4d) | identity gap (Screen 1) — wiring-only |
+| `BluetoothStatus` | `() → s` | `ok:on` / `ok:off` — host Bluetooth usable (libpebble3 adapter state + `org.bluez.GattManager1`, so it catches rfkill/airplane-mode) | Screen-1 BT-off state — wiring-only (daemon already tracks + logs it) |
 | `SetWatchNickname` | `(s,s) → s` | rename a known watch | #9 |
 | `GetSyncStatus` | `() → as` | `service\tenabled\tavailable\tlastSync` for `{notifications,weather,calendar,music,health,dnd}` | #5 |
 | `SetSyncEnabled` | `(s,b) → s` | runtime master on/off | #5 |
@@ -107,10 +108,20 @@ the notification quiet-hours + regex-filter hooks.
   toolbar on mobile), per the handoff's repeated correction. The Apps install action is segment-aware.
 - **Row actions are inline, not kebabs** everywhere (Apps/Faces gear+bin, Extensions toggle+gear+bin,
   known watches Connect+bin, notification filters bin).
-- **States we can't yet detect.** The prototype's *Bluetooth-off* and *Reconnecting* states need
-  `BluetoothStatus()`/`WatchStateChanged` (Screen-1 gaps) — not exposed, so not shown. The GUI does
-  handle **daemon-down** (nav hidden + `systemctl --user start stoandl` affordance) and **no-watch**
-  (`notready` → `PlaceholderMessage`).
+- **Bluetooth-off — detectable, now exposed (corrected).** Earlier this report claimed the daemon
+  "can't detect" Bluetooth-off. That was wrong. The daemon already tracks the adapter state — from
+  libpebble3's `bluetoothEnabled` **and** the presence of `org.bluez.GattManager1` on the hci adapter,
+  so it even catches rfkill / airplane-mode (which leave `Powered=true`) — and **logs every transition**
+  ("Bluetooth disabled — pausing…" / "Bluetooth re-enabled — resuming"). The only gap was D-Bus
+  exposure. That gap is closed: **`BluetoothStatus() → ok:on | ok:off`** (wiring-only — the state was
+  already in `StoandlControlImpl` as `btOn()`). The GUI should poll it (e.g. on the same 4 s focus tick
+  as `ListWatches`) and render the prototype's Bluetooth-off state instead of an empty no-watch screen.
+- **Reconnecting — still not surfaced.** This transient genuinely needs per-connection state tracking
+  (`WatchStateChanged`); there's no signal. The polled `ListWatches` `state` field gives `connecting`,
+  which approximates it but won't pinpoint a mid-session reconnect. Left unshown for now.
+- The GUI handles **daemon-down** (nav hidden + `systemctl --user start stoandl` affordance) and
+  **no-watch** (`notready` → `PlaceholderMessage`); Bluetooth-off should slot in as a third top-level
+  state (BT off but daemon up).
 - **Not readable from the daemon → kept as local UI state (flagged):** the per-app "Allow during quiet
   hours" priority override, and the master mute-all snooze state (`NotifSetMuteAll` has no getter; per-app
   mute is read back from `NotifList`).

@@ -59,6 +59,8 @@ class MockStoandl(dbus.service.Object):
                 "serial": "Q403118E01AA", "code": "A1F0", "lastSync": "yesterday",
             },
         }
+        # Host Bluetooth on/usable (BluetoothStatus). Set False to exercise the GUI's BT-off state.
+        self.bt_on = True
         # Pairing op state: None when idle, else a dict tracking poll count.
         self.pairing = None
         # Locker contents (apps + faces). flags ⊆ {active,sideloaded,config,system,synced}.
@@ -223,6 +225,12 @@ class MockStoandl(dbus.service.Object):
             self.watches[name]["battery"] = "88"
 
     # --- ListWatches / Battery / WatchDetails ------------------------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def BluetoothStatus(self):
+        # Host Bluetooth on/usable. Flip self.bt_on (or send SIGUSR-style toggle) to
+        # exercise the GUI's Bluetooth-off state.
+        return "ok:on" if self.bt_on else "ok:off"
+
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def ListWatches(self):
         # HOOK #4: `transport` (ble|classic, empty when disconnected) appended.

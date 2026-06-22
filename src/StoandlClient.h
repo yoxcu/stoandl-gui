@@ -23,11 +23,15 @@ class StoandlClient : public QObject
     QML_SINGLETON
 
     Q_PROPERTY(bool daemonUp READ daemonUp NOTIFY daemonUpChanged)
+    // Host Bluetooth on/usable (BluetoothStatus, polled on the 4 s watch tick). The daemon detects
+    // adapter-off / rfkill / airplane-mode; the GUI shows a "Bluetooth is off" state when this is false.
+    Q_PROPERTY(bool bluetoothOn READ bluetoothOn NOTIFY bluetoothOnChanged)
 
 public:
     explicit StoandlClient(QObject *parent = nullptr);
 
     bool daemonUp() const { return m_daemonUp; }
+    bool bluetoothOn() const { return m_bluetoothOn; }
 
     // Parsed status string: "kind:tail", tail tab-split into fields.
     struct Status {
@@ -162,6 +166,7 @@ public:
 
 Q_SIGNALS:
     void daemonUpChanged();
+    void bluetoothOnChanged();                       // host Bluetooth on/off (BluetoothStatus, watch tick)
     void watchesChanged(const QVariantList &rows);   // 4 s focus poll
     void pairStatus(const QString &kind, const QString &msg); // Pair/Repair poll
     void findWatchResult(bool ok);
@@ -193,6 +198,7 @@ private:
 
     QDBusConnection m_bus;
     bool            m_daemonUp = false;
+    bool            m_bluetoothOn = true;   // assume on until the first BluetoothStatus poll says otherwise
 
     QTimer *m_watchTimer = nullptr;
     QTimer *m_pairTimer  = nullptr;

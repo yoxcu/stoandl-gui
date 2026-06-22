@@ -96,7 +96,7 @@ Kirigami.ScrollablePage {
         Kirigami.Action {
             icon.name: "list-add"
             text: "Pair new watch"
-            enabled: StoandlClient.daemonUp
+            enabled: StoandlClient.daemonUp && StoandlClient.bluetoothOn
             onTriggered: pairDialog.openForPair()
         },
         Kirigami.Action {
@@ -123,9 +123,23 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.gridUnit * 4
         }
 
+        // --- Bluetooth-off state (daemon up, adapter off / rfkill / airplane) ---
+        // The daemon detects this (adapter Powered + org.bluez.GattManager1) and reconnects on its
+        // own when BT returns; we just surface it instead of an empty/"pair a watch" screen.
+        Kirigami.InlineMessage {
+            visible: StoandlClient.daemonUp && !StoandlClient.bluetoothOn
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.largeSpacing
+            Layout.leftMargin: Kirigami.Units.largeSpacing
+            Layout.rightMargin: Kirigami.Units.largeSpacing
+            type: Kirigami.MessageType.Warning
+            icon.source: "network-bluetooth-inactive-symbolic"
+            text: "Bluetooth is off — turn it on to connect your Pebble. The daemon reconnects automatically."
+        }
+
         // --- no-watch (notready) empty state -------------------------------
         Kirigami.PlaceholderMessage {
-            visible: StoandlClient.daemonUp && page.connectedWatch === null && page.watches.length === 0
+            visible: StoandlClient.daemonUp && StoandlClient.bluetoothOn && page.connectedWatch === null && page.watches.length === 0
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             icon.name: "smartwatch-symbolic"
