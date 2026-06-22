@@ -116,19 +116,42 @@ Kirigami.ScrollablePage {
         id: row
         required property var appData
 
+        // The app's extracted menu-icon PNG (file:// URL), fetched lazily from the daemon's local
+        // cache. Empty until resolved or when the daemon has no icon — then we show a generic glyph.
+        property string iconUrl: ""
+        Component.onCompleted: row.iconUrl = StoandlClient.appIcon(row.appData.uuid)
+
         onClicked: page.doLaunch(appData)
 
         contentItem: RowLayout {
             spacing: Kirigami.Units.largeSpacing
 
-            Kirigami.Icon {
-                source: row.appData.active ? "starred-symbolic"
-                       : row.appData.isFace ? "preferences-desktop-theme-symbolic"
-                       : "application-x-executable-symbolic"
-                color: row.appData.active ? Kirigami.Theme.highlightColor
-                                          : Kirigami.Theme.textColor
+            // Extracted menu icon when available, otherwise a themed generic glyph. Menu icons are
+            // tiny monochrome bitmaps, so render them crisply (smooth off) at the icon size.
+            Item {
                 implicitWidth: Kirigami.Units.iconSizes.medium
                 implicitHeight: Kirigami.Units.iconSizes.medium
+
+                Image {
+                    id: menuIcon
+                    anchors.fill: parent
+                    source: row.iconUrl
+                    visible: row.iconUrl !== "" && status === Image.Ready
+                    fillMode: Image.PreserveAspectFit
+                    smooth: false
+                    asynchronous: true
+                    cache: true
+                }
+
+                Kirigami.Icon {
+                    anchors.fill: parent
+                    visible: !menuIcon.visible
+                    source: row.appData.active ? "starred-symbolic"
+                           : row.appData.isFace ? "preferences-desktop-theme-symbolic"
+                           : "application-x-executable-symbolic"
+                    color: row.appData.active ? Kirigami.Theme.highlightColor
+                                              : Kirigami.Theme.textColor
+                }
             }
 
             ColumnLayout {

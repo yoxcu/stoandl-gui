@@ -264,6 +264,19 @@ QVariantList StoandlClient::listApps()
     return rows;
 }
 
+QString StoandlClient::appIcon(const QString &uuid)
+{
+    // GetAppIcon(uuid) -> "ok:<abs png path>" | "none:" | "notready:" | "error:<msg>".
+    // The daemon is co-located, so the path is a local file; hand the QML a file:// URL it can
+    // load straight into an Image. Empty string = no icon (delegate uses its generic fallback).
+    if (uuid.isEmpty())
+        return QString();
+    const Status s = callStatus(QStringLiteral("GetAppIcon"), {uuid});
+    if (s.kind != QStringLiteral("ok") || s.tail.isEmpty())
+        return QString();
+    return QUrl::fromLocalFile(s.tail).toString();
+}
+
 QVariantMap StoandlClient::launchApp(const QString &id) { return statusMap(callStatus(QStringLiteral("LaunchApp"), {id})); }
 QVariantMap StoandlClient::removeApp(const QString &id) { return statusMap(callStatus(QStringLiteral("RemoveApp"), {id})); }
 

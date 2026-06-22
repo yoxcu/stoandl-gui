@@ -57,6 +57,7 @@ because the daemon isn't D-Bus-activated (a late/reconnecting client can miss a 
 | `NotifListFilters` | `() → as` | `pattern\taction` (`allow`\|`block`) | new |
 | `NotifAddFilter` | `(s,s) → s` | pattern, action | new |
 | `NotifRemoveFilter` | `(s) → s` | by pattern | new |
+| `GetAppIcon` | `(s) → s` | `ok:<abs png path>` / `none:` / `notready:` / `error:` — an installed app/face's menu icon, extracted **locally** from its cached `.pbw` (PNG passthrough or GBitmap decode, no AWT/network), cached at `<configDir>/icons/<uuid>.png`. The GUI fetches it lazily per Apps/Faces row (method count +1). | new (app icons) |
 
 ### Status-kind / shape notes
 - `GetHealthSeries` rows use an **empty value field** to mark a no-data point (e.g. a future weekday);

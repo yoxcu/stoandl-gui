@@ -390,6 +390,63 @@ class MockStoandl(dbus.service.Object):
                     a["title"], a["developer"]) for a in self.apps]
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def GetAppIcon(self, uuid):
+        # HOOK (app icons): the daemon extracts an installed app's menu icon from its cached .pbw and
+        # writes it as a PNG, returning ok:<abs path> | none: | notready: | error:. We mirror that by
+        # writing a tiny sample PNG per app to a temp dir so the GUI's per-row Image path is exercised
+        # headlessly. A couple of UUIDs return none: to exercise the generic-fallback branch.
+        app = self._resolve_app(uuid)
+        if app is None or app == "ambiguous":
+            return "none:"
+        # Exercise the no-icon fallback for a subset (system apps + Isotime).
+        if "system" in app["flags"] or app["uuid"] == "3af56a2b":
+            return "none:"
+        path = self._sample_icon_png(app["uuid"])
+        if path is None:
+            return "error:could not write sample icon"
+        return f"ok:{path}"
+
+    def _sample_icon_png(self, uuid):
+        # A 25x25 RGBA PNG: a filled rounded-ish square tinted from the uuid, on transparent ground —
+        # stands in for a real extracted menu icon. Pure stdlib (zlib), no Pillow dependency.
+        import os
+        import struct
+        import zlib
+        import tempfile
+        d = os.path.join(tempfile.gettempdir(), "stoandl-mock-icons")
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, f"{uuid}.png")
+        if os.path.exists(path):
+            return path
+        w = h = 25
+        # Tint from the uuid hash so different apps look different.
+        hv = sum(ord(c) for c in uuid)
+        r, g, b = (60 + hv % 180), (60 + (hv * 7) % 180), (60 + (hv * 13) % 180)
+        raw = bytearray()
+        for y in range(h):
+            raw.append(0)  # filter: none
+            for x in range(w):
+                inside = 2 <= x < w - 2 and 2 <= y < h - 2
+                if inside:
+                    raw += bytes((r, g, b, 255))
+                else:
+                    raw += bytes((0, 0, 0, 0))
+
+        def chunk(tag, data):
+            c = struct.pack(">I", len(data)) + tag + data
+            return c + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+
+        sig = b"\x89PNG\r\n\x1a\n"
+        ihdr = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)  # colorType 6 = RGBA
+        idat = zlib.compress(bytes(raw))
+        try:
+            with open(path, "wb") as f:
+                f.write(sig + chunk(b"IHDR", ihdr) + chunk(b"IDAT", idat) + chunk(b"IEND", b""))
+        except OSError:
+            return None
+        return path
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def LaunchApp(self, query):
         app = self._resolve_app(query)
         if app is None:

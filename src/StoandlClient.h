@@ -71,6 +71,10 @@ public:
 
     // --- typed wrappers: Apps & Faces screen (Milestone 2) -----------------
     Q_INVOKABLE QVariantList listApps();                 // -> [{uuid,type,order,title,developer,flags[],active,system,config,sideloaded,isFace}]
+    // GetAppIcon(uuid) -> a local "file://" URL to the app's extracted menu-icon PNG, or "" when the
+    // daemon has no icon for it (none:/notready:/error:). Fetched lazily per row by the delegate; the
+    // QML falls back to a generic icon when this is empty. Co-located daemon, so the path is local.
+    Q_INVOKABLE QString      appIcon(const QString &uuid);
     Q_INVOKABLE QVariantMap  launchApp(const QString &id);   // LaunchApp(s)
     Q_INVOKABLE QVariantMap  removeApp(const QString &id);   // RemoveApp(s) (system refused daemon-side)
     Q_INVOKABLE QVariantMap  sideloadApp(const QUrl &fileUrl); // SideloadApp(absolute daemon-side path)
