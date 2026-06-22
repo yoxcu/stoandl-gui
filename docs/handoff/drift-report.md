@@ -36,9 +36,9 @@ and consumed by the GUI; the real Kotlin daemon must grow the same surface. Form
 | `GetConfigSchema` | `() → as` | `key\ttype\tlabel\toptions\tdesc` | #10 |
 | `GetConfig` | `() → as` | `key\tvalue` | #10 |
 | `SetConfig` | `(s,s) → s` | set one config key | #10 |
-| `NotifGetQuietHours` | `() → s` | `ok:<on\|off>\t<from>\t<to>\t<now\|off>` | new (notifications) |
-| `NotifSetQuietHours` | `(b,s,s) → s` | enabled, from, to | new |
-| `NotifSetQuietNow` | `(s) → s` | spec `1h`\|`morning`\|`off` | new |
+| ~~`NotifGetQuietHours`~~ | ~~`() → s`~~ | **dropped** — superseded by `dnd.sync` (desktop DND ↔ watch Quiet Time) | ~~new~~ |
+| ~~`NotifSetQuietHours`~~ | ~~`(b,s,s) → s`~~ | **dropped** — superseded by `dnd.sync` | ~~new~~ |
+| ~~`NotifSetQuietNow`~~ | ~~`(s) → s`~~ | **dropped** — superseded by `dnd.sync` | ~~new~~ |
 | `NotifListFilters` | `() → as` | `pattern\taction` (`allow`\|`block`) | new |
 | `NotifAddFilter` | `(s,s) → s` | pattern, action | new |
 | `NotifRemoveFilter` | `(s) → s` | by pattern | new |
@@ -86,7 +86,10 @@ of these too (it previously covered only the Watch-screen subset).
 **Implemented (mock + GUI):** #4 (transport, synced), #5 (GetSyncStatus/SetSyncEnabled), #7 (ext config —
 both `url` and `schema` backends), #8 (health summary + series), #9 (SetWatchNickname), #10 (schema-driven
 daemon config) — plus `WatchDetails`, the `CheckFirmware` changelog URL, the dev-connection wiring, and
-the notification quiet-hours + regex-filter hooks.
+the notification regex-filter hooks. (The notification **quiet-hours** hooks — `NotifGetQuietHours`/
+`NotifSetQuietHours`/`NotifSetQuietNow` — were **dropped**: they overlapped `dnd.sync`, which already
+mirrors desktop Do Not Disturb ↔ the watch's native Quiet Time, so the daemon won't implement them and
+the GUI no longer calls them.)
 
 **Deferred (the GUI ships on polling — handoff "when you want polling → live"):**
 - #1 `WatchStateChanged`, #2 `FirmwareProgress`/`LanguageProgress`, #3 `LockerChanged`/
@@ -122,9 +125,9 @@ the notification quiet-hours + regex-filter hooks.
 - The GUI handles **daemon-down** (nav hidden + `systemctl --user start stoandl` affordance) and
   **no-watch** (`notready` → `PlaceholderMessage`); Bluetooth-off should slot in as a third top-level
   state (BT off but daemon up).
-- **Not readable from the daemon → kept as local UI state (flagged):** the per-app "Allow during quiet
-  hours" priority override, and the master mute-all snooze state (`NotifSetMuteAll` has no getter; per-app
-  mute is read back from `NotifList`).
+- **Not readable from the daemon → kept as local UI state (flagged):** the master mute-all snooze state
+  (`NotifSetMuteAll` has no getter; per-app mute is read back from `NotifList`). _(The per-app "Allow
+  during quiet hours" priority override was removed along with quiet-hours — see §1.)_
 - **Health `todayIndex`** isn't in the summary → derived as the last series point that has data.
 - **Colors** (sleep stages, heart) are mapped to `Kirigami.Theme` roles; the prototype's fixed hexes are
   treated as a density spec, not a color spec (CLAUDE.md rule).

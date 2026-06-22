@@ -42,8 +42,9 @@ The GUI now consumes daemon-side hooks beyond the original 51 methods: `transpor
 `synced` on ListApps (#4); `GetSyncStatus`/`SetSyncEnabled` (#5); `ExtList.config` + `ExtOpenConfig` +
 `ExtConfigSchema`/`ExtGetConfig`/`ExtSetConfig` (#7); `GetHealthSummary`/`GetHealthSeries` (#8);
 `SetWatchNickname` (#9); `GetConfigSchema`/`GetConfig`/`SetConfig` (#10); `WatchDetails`; notification
-quiet-hours + filters; a changelog URL on `CheckFirmware`. All are implemented in the mock
-(`tools/mock_stoandl.py`) and must be grown in the real Kotlin daemon to match.
+regex filters; a changelog URL on `CheckFirmware`. All are implemented in the mock
+(`tools/mock_stoandl.py`) and must be grown in the real Kotlin daemon to match. (Notification
+quiet-hours hooks were dropped — superseded by the daemon's `dnd.sync`.)
 
 ## Not on D-Bus (shell out to the `stoandl` CLI, co-located): backup, restore, support bundle.
 

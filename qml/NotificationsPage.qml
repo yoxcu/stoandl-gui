@@ -6,9 +6,9 @@ import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
 
 // Notifications screen. Master forward toggle + temp-mute, per-app list (each
-// row opens a deeper Kirigami.Dialog), scheduled quiet hours + quiet-now, and
-// regex filters. Everything is polled/re-fetched in reload() — the interface has
-// no change events, so every mutation re-fetches its slice (handoff hard rules).
+// row opens a deeper Kirigami.Dialog), and regex filters. Everything is
+// polled/re-fetched in reload() — the interface has no change events, so every
+// mutation re-fetches its slice (handoff hard rules).
 Kirigami.ScrollablePage {
     id: page
     objectName: "notifications"
@@ -17,7 +17,6 @@ Kirigami.ScrollablePage {
     // --- live snapshots (all re-fetched in reload()) -----------------------
     property bool forward: false           // master "Forward notifications"
     property var apps: []                   // notifList() rows
-    property var quiet: ({})                // notifQuietHours() map
     property var filters: []                // notifListFilters() rows
 
     // Master temp-mute state is DERIVED from the re-fetched per-app list — the daemon
@@ -38,7 +37,6 @@ Kirigami.ScrollablePage {
         }
         page.forward = fwd;
         page.apps = StoandlClient.notifList();
-        page.quiet = StoandlClient.notifQuietHours();
         page.filters = StoandlClient.notifListFilters();
     }
 
@@ -221,70 +219,6 @@ Kirigami.ScrollablePage {
             }
         }
 
-        // ============ QUIET HOURS ============
-        FormCard.FormHeader {
-            visible: StoandlClient.daemonUp
-            title: "Quiet hours"
-        }
-
-        FormCard.FormCard {
-            visible: StoandlClient.daemonUp
-
-            FormCard.FormSwitchDelegate {
-                text: "Scheduled quiet hours"
-                description: (page.quiet.from || "—") + " – " + (page.quiet.to || "—")
-                checked: page.quiet.enabled === true
-                onToggled: {
-                    var r = StoandlClient.notifSetQuietHours(checked,
-                                                             page.quiet.from || "",
-                                                             page.quiet.to || "");
-                    if (!r.ok)
-                        page.toast("Quiet hours: " + (r.tail || r.kind));
-                    page.reload();
-                }
-            }
-
-            FormCard.FormDelegateSeparator {}
-
-            // Quiet now (1 hr / Morning) or End.
-            FormCard.AbstractFormDelegate {
-                id: quietNowRow
-                Layout.fillWidth: true
-                background: null
-                readonly property bool quietActive: (page.quiet.now || "") !== ""
-                contentItem: ColumnLayout {
-                    spacing: Kirigami.Units.smallSpacing
-                    QQC2.Label {
-                        Layout.fillWidth: true
-                        text: quietNowRow.quietActive
-                              ? ("Quiet until " + page.quiet.now)
-                              : "Quiet now"
-                        font: Kirigami.Theme.smallFont
-                        opacity: 0.7
-                    }
-                    RowLayout {
-                        spacing: Kirigami.Units.smallSpacing
-                        QQC2.Button {
-                            visible: quietNowRow.quietActive
-                            text: "End"
-                            icon.name: "media-playback-stop-symbolic"
-                            onClicked: page.setQuietNow("off")
-                        }
-                        QQC2.Button {
-                            visible: !quietNowRow.quietActive
-                            text: "1 hr"
-                            onClicked: page.setQuietNow("1h")
-                        }
-                        QQC2.Button {
-                            visible: !quietNowRow.quietActive
-                            text: "Morning"
-                            onClicked: page.setQuietNow("morning")
-                        }
-                    }
-                }
-            }
-        }
-
         // ============ FILTERS ============
         FormCard.FormHeader {
             visible: StoandlClient.daemonUp
@@ -365,21 +299,11 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp
             Layout.fillWidth: true
             Layout.margins: Kirigami.Units.largeSpacing
-            text: "Filters use regex on the notification title and body. Block hides; allow overrides quiet hours."
+            text: "Filters use regex on the notification title and body. Block hides matching notifications; allow always forwards them."
             font: Kirigami.Theme.smallFont
             opacity: 0.7
             wrapMode: Text.WordWrap
         }
-    }
-
-    // Quiet-now helper (kept on the page so both buttons share it).
-    function setQuietNow(spec) {
-        var r = StoandlClient.notifSetQuietNow(spec);
-        if (!r.ok)
-            page.toast("Quiet now: " + (r.tail || r.kind));
-        else
-            page.toast(spec === "off" ? "Quiet time ended" : "Quiet mode on");
-        page.reload();
     }
 
     // ============ PER-APP DEEPER VIEW (dialog) ============
@@ -388,8 +312,6 @@ Kirigami.ScrollablePage {
 
         property var app: ({})
         property string appName: ""
-        // No daemon field for quiet-hours override yet — local UI state only.
-        property bool allowQuiet: false
 
         // Fixed sets (handoff spec).
         readonly property var vibes: ["Standard", "Double", "Long", "Subtle", "Heartbeat"]
@@ -405,7 +327,6 @@ Kirigami.ScrollablePage {
         function openFor(row) {
             appDialog.app = row;
             appDialog.appName = row.name;
-            appDialog.allowQuiet = false;   // not persisted by the daemon
             appDialog.open();
         }
 
@@ -550,7 +471,7 @@ Kirigami.ScrollablePage {
 
             Kirigami.Separator { Layout.fillWidth: true }
 
-            // --- options: custom icon + quiet-hours override ---
+            // --- options: custom icon ---
             FormCard.FormComboBoxDelegate {
                 Layout.fillWidth: true
                 text: "Custom icon"
@@ -567,14 +488,6 @@ Kirigami.ScrollablePage {
                         page.toast("Icon: " + (r.tail || r.kind));
                     appDialog.refreshApp();
                 }
-            }
-
-            FormCard.FormSwitchDelegate {
-                text: "Allow during quiet hours"
-                description: "High-priority override"
-                checked: appDialog.allowQuiet
-                // Local UI state only — no daemon field for this yet.
-                onToggled: appDialog.allowQuiet = checked
             }
         }
     }

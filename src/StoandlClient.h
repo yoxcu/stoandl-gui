@@ -114,10 +114,7 @@ public:
     Q_INVOKABLE QVariantMap  notifSetMuteAll(const QString &spec);                      // NotifSetMuteAll(s)
     Q_INVOKABLE QVariantMap  notifSetStyle(const QString &name, const QString &color,
                                            const QString &icon, const QString &vibe);   // NotifSetStyle(s,s,s,s)
-    // HOOK (notifications) — quiet hours + regex filters.
-    Q_INVOKABLE QVariantMap  notifQuietHours();          // -> {kind,enabled,from,to,now}
-    Q_INVOKABLE QVariantMap  notifSetQuietHours(bool enabled, const QString &from, const QString &to);
-    Q_INVOKABLE QVariantMap  notifSetQuietNow(const QString &spec);
+    // HOOK (notifications) — regex filters.
     Q_INVOKABLE QVariantList notifListFilters();         // -> [{pattern,action}]
     Q_INVOKABLE QVariantMap  notifAddFilter(const QString &pattern, const QString &action);
     Q_INVOKABLE QVariantMap  notifRemoveFilter(const QString &pattern);

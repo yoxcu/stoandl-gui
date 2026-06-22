@@ -34,10 +34,11 @@ Settings** — and **Watch is tab 0**. The nav hides when the daemon is down.
   `ExtConfigSchema`/`ExtGetConfig`/`ExtSetConfig`) + bin (uninstall, keep-config
   option). Install action is segment-aware (`.pbw` vs extension archive).
 - **Notifications** — Forward-notifications master toggle + Mute-temporarily;
-  per-app list → a deeper per-app dialog (mute, vibration pattern, custom icon,
-  allow-during-quiet); scheduled Quiet hours + Quiet-now; regex Filters (allow/block,
-  Add-filter page action). Maps to `NotifList`/`NotifSetMute`/`NotifSetMuteAll`/
-  `NotifSetStyle` + the quiet-hours/filter hooks.
+  per-app list → a deeper per-app dialog (mute, vibration pattern, custom icon);
+  regex Filters (allow/block, Add-filter page action). Maps to `NotifList`/
+  `NotifSetMute`/`NotifSetMuteAll`/`NotifSetStyle` + the filter hooks. (Quiet hours
+  is intentionally absent — it is superseded by the daemon's `dnd.sync`, which
+  mirrors desktop Do Not Disturb ↔ the watch's native Quiet Time.)
 - **Settings** — Sync services (per-service master toggles via `GetSyncStatus`/
   `SetSyncEnabled` + force-sync + per-calendar toggles), Watch settings (from
   `ListWatchPrefs`/`SetWatchPref`), Backup (CLI shell-outs), and a schema-driven

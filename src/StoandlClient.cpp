@@ -948,31 +948,6 @@ QVariantMap StoandlClient::notifSetStyle(const QString &name, const QString &col
     return statusMap(callStatus(QStringLiteral("NotifSetStyle"), {name, color, icon, vibe}));
 }
 
-QVariantMap StoandlClient::notifQuietHours()
-{
-    // ok:<on|off>\t<from>\t<to>\t<now|off>
-    const Status s = callStatus(QStringLiteral("NotifGetQuietHours"));
-    QVariantMap m;
-    m[QStringLiteral("kind")] = s.kind;
-    if (s.kind == QStringLiteral("ok")) {
-        m[QStringLiteral("enabled")] = (s.fields.value(0) == QStringLiteral("on"));
-        m[QStringLiteral("from")]    = s.fields.value(1);
-        m[QStringLiteral("to")]      = s.fields.value(2);
-        const QString now = s.fields.value(3);
-        m[QStringLiteral("now")]     = (now == QStringLiteral("off")) ? QString() : now;
-    }
-    return m;
-}
-
-QVariantMap StoandlClient::notifSetQuietHours(bool enabled, const QString &from, const QString &to)
-{
-    return statusMap(callStatus(QStringLiteral("NotifSetQuietHours"), {enabled, from, to}));
-}
-QVariantMap StoandlClient::notifSetQuietNow(const QString &spec)
-{
-    return statusMap(callStatus(QStringLiteral("NotifSetQuietNow"), {spec}));
-}
-
 QVariantList StoandlClient::notifListFilters()
 {
     // Record: pattern \t action(allow|block)

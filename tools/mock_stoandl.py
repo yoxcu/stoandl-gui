@@ -202,8 +202,7 @@ class MockStoandl(dbus.service.Object):
             {"name": "Phone",    "mute": "never",  "color": "default", "icon": "default", "vibe": "Long",     "last": 1718880000},
             {"name": "Calendar", "mute": "always", "color": "default", "icon": "calendar","vibe": "Standard", "last": 1718800000},
         ]
-        # HOOK (notifications): quiet hours + regex filters (config-backed today).
-        self.quiet = {"enabled": True, "from": "23:00", "to": "07:00", "now": ""}
+        # HOOK (notifications): regex filters (config-backed today).
         self.filters = [
             {"pattern": "(?i)verification code", "action": "allow"},
             {"pattern": "Slack: .* is typing", "action": "block"},
@@ -662,26 +661,7 @@ class MockStoandl(dbus.service.Object):
             a[field] = "default" if val == "default" else val
         return f"ok:{a['name']} style updated"
 
-    # HOOK (notifications): quiet hours + regex filters (config-backed).
-    @dbus.service.method(IFACE, in_signature="", out_signature="s")
-    def NotifGetQuietHours(self):
-        q = self.quiet
-        return "ok:" + rec("on" if q["enabled"] else "off", q["from"], q["to"], q["now"] or "off")
-
-    @dbus.service.method(IFACE, in_signature="bss", out_signature="s")
-    def NotifSetQuietHours(self, enabled, frm, to):
-        self.quiet["enabled"] = bool(enabled)
-        if frm:
-            self.quiet["from"] = frm
-        if to:
-            self.quiet["to"] = to
-        return "ok:quiet hours updated"
-
-    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
-    def NotifSetQuietNow(self, spec):
-        self.quiet["now"] = "" if spec in ("", "off") else spec
-        return f"ok:quiet now = {self.quiet['now'] or 'off'}"
-
+    # HOOK (notifications): regex filters (config-backed).
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def NotifListFilters(self):
         return [rec(f["pattern"], f["action"]) for f in self.filters]
