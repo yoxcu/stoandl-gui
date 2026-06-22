@@ -20,7 +20,7 @@ and consumed by the GUI; the real Kotlin daemon must grow the same surface. Form
 
 ### New signals (reactive layer — augment polling)
 
-The daemon gained **five signals** on `de.yoxcu.stoandl.Control`. They are a push layer ON TOP of
+The daemon gained **six signals** on `de.yoxcu.stoandl.Control`. They are a push layer ON TOP of
 polling — the GUI subscribes to them but keeps the slow safety-net watch poll + the daemonUp re-sync,
 because the daemon isn't D-Bus-activated (a late/reconnecting client can miss a signal).
 
@@ -31,6 +31,7 @@ because the daemon isn't D-Bus-activated (a late/reconnecting client can miss a 
 | `LockerChanged` | `()` | poke → re-call `ListApps` (install/remove + active-watchface change) | #3 (partial) |
 | `LanguageProgress` | `(s phase, i percent, s detail)` | push language-install progress; phase vocabulary = `LanguageStatus`'s; percent 0–100 while `installing` else -1 | #2 (partial) |
 | `ExtensionsChanged` | `()` | poke → re-call `ExtList` (enable/disable/restart/install/uninstall, incl. CLI/other-client) | #3 (partial) |
+| `ExtensionStateChanged` | `(s name, s state)` | finer companion to `ExtensionsChanged`: unsolicited per-extension run-state transition (`state` ∈ `ready`\|`exited`\|`quarantined`) the list-level poke can't carry; the GUI overrides the stale polled `running` (a quarantined ext stays in the daemon's `running` map) | #3 |
 
 ### New methods (the hooks)
 
@@ -105,21 +106,26 @@ the notification regex-filter hooks. (The notification **quiet-hours** hooks —
 mirrors desktop Do Not Disturb ↔ the watch's native Quiet Time, so the daemon won't implement them and
 the GUI no longer calls them.)
 
-**Reactive signals — partially landed (five signals, consumed on top of polling):**
+**Reactive signals — partially landed (six signals, consumed on top of polling):**
 - #1 `WatchesChanged()`, #2 `FirmwareProgress(s,i,s)`, #3 `LockerChanged()`, plus
-  `LanguageProgress(s,i,s)` and `ExtensionsChanged()` now exist and the GUI subscribes to them in
-  `StoandlClient` (re-using `refreshWatches()`/`refreshApps()`/`refreshExtensions()`/the
-  `firmwareStatus`+`languageStatus` emit helpers — QML unchanged). They **augment** polling rather
-  than replace it: the daemon is not D-Bus-activated, so a late/reconnecting client can miss a signal
-  → the watch poll stays (now a **20 s** safety-net cadence, still the `BluetoothStatus` carrier) and
-  the GUI re-syncs on `daemonUpChanged`. The op-pollers stay too (the firmware/language op-poll is the
-  reboot/disconnect watchdog; `FirmwareProgress`/`LanguageProgress` just smooth the % between its
-  ticks, so the language op-poll relaxes from 0.6 s to a **3 s** watchdog cadence). The mock emits all
-  five from its state mutations so PUSH mode can be exercised.
+  `LanguageProgress(s,i,s)`, `ExtensionsChanged()`, and `ExtensionStateChanged(s,s)` now exist and the
+  GUI subscribes to them in `StoandlClient` (re-using `refreshWatches()`/`refreshApps()`/
+  `refreshExtensions()`/the `firmwareStatus`+`languageStatus` emit helpers — QML unchanged for the
+  pokes/pushes). They **augment** polling rather than replace it: the daemon is not D-Bus-activated,
+  so a late/reconnecting client can miss a signal → the watch poll stays (now a **20 s** safety-net
+  cadence, still the `BluetoothStatus` carrier) and the GUI re-syncs on `daemonUpChanged`. The
+  op-pollers stay too (the firmware/language op-poll is the reboot/disconnect watchdog;
+  `FirmwareProgress`/`LanguageProgress` just smooth the % between its ticks, so the language op-poll
+  relaxes from 0.6 s to a **3 s** watchdog cadence). `ExtensionStateChanged` is the finer companion to
+  the `ExtensionsChanged` poke: it carries an unsolicited per-extension run-state transition
+  (`ready`/`exited`/`quarantined`) the list-level poke can't, so `StoandlClient` records it in a
+  name→state `QHash` and merges it into the `ExtList` rows as a `runtimeState` field — a quarantined
+  or crashed extension shows a distinct StatusChip ("Quarantined" / "Crashed (restarting)") in the
+  Plugins list instead of a stale "running". The mock emits all six from its state mutations
+  (`ready` after `ExtEnable`/`ExtRestart`, and an `exited`→`quarantined` sequence via a mock-only
+  `ExtCrash(name)` trigger) so PUSH mode can be exercised.
 - **Still open**: the richer `WatchStateChanged(s name, s state, i battery)` (per-watch payload +
-  mid-session reconnect) and the fine-grained `ExtensionStateChanged(s name, s state)` (per-extension
-  crash/quarantine run-state — the list-level `ExtensionsChanged` poke doesn't carry it, so the
-  Plugins screen still re-polls `ExtList` for that).
+  mid-session reconnect).
 
 **Deferred:**
 - #6 byte-returning variants (`TakeScreenshotBytes`, `GatherLogsText`, `GetCoreDumpBytes`, `BackupTo`/

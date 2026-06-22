@@ -471,6 +471,8 @@ class MockStoandl(dbus.service.Object):
         e["enabled"] = True
         e["running"] = e["installed"]
         self.ExtensionsChanged()
+        if e["running"]:
+            self.ExtensionStateChanged(e["name"], "ready")
         return f"ok:enabled {e['name']}"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
@@ -492,7 +494,31 @@ class MockStoandl(dbus.service.Object):
             return f"error:{e['name']} is disabled"
         e["running"] = e["installed"]
         self.ExtensionsChanged()
+        if e["running"]:
+            self.ExtensionStateChanged(e["name"], "ready")
         return f"ok:restarted {e['name']}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def ExtCrash(self, query):
+        # MOCK-ONLY trigger (not in the real daemon's contract): drive an UNSOLICITED crash
+        # → quarantine sequence so the GUI's ExtensionStateChanged handling is exercisable.
+        # Fires `exited` (process ended, restarting after backoff) now, then `quarantined`
+        # (gave up after rapid failures) on a GLib tick. The polled ExtList keeps the ext in
+        # `running` throughout — that's the whole point: only the signal reveals the quarantine.
+        e = self._resolve_ext(query)
+        if e is None or e == "ambiguous":
+            return f"notfound:no extension matching '{query}'"
+        if not (e["enabled"] and e["installed"]):
+            return f"error:{e['name']} is not running"
+        name = e["name"]
+        self.ExtensionStateChanged(name, "exited")
+
+        def _quarantine():
+            self.ExtensionStateChanged(name, "quarantined")
+            return False  # one-shot
+
+        GLib.timeout_add(800, _quarantine)
+        return f"ok:crashing {name}"
 
     @dbus.service.method(IFACE, in_signature="sb", out_signature="s")
     def ExtUninstall(self, query, keep_config):
@@ -881,7 +907,7 @@ class MockStoandl(dbus.service.Object):
         return "mock-0.2.0"
 
     # --- Reactive signals --------------------------------------------------
-    # The real daemon gained three signals on de.yoxcu.stoandl.Control. The GUI consumes
+    # The real daemon gained six signals on de.yoxcu.stoandl.Control. The GUI consumes
     # them as a push layer ON TOP of polling. We fire them from the same state mutations the
     # polled methods read, so a subscribed GUI updates without waiting for its next poll tick.
     @dbus.service.signal(IFACE, signature="")
@@ -909,6 +935,16 @@ class MockStoandl(dbus.service.Object):
     @dbus.service.signal(IFACE, signature="")
     def ExtensionsChanged(self):
         # poke: re-call ExtList. Fired on enable/disable/restart/install/uninstall.
+        pass
+
+    @dbus.service.signal(IFACE, signature="ss")
+    def ExtensionStateChanged(self, name, state):
+        # Finer companion to ExtensionsChanged: an UNSOLICITED per-extension run-state
+        # transition the list-level poke can't carry. state ∈ {ready (handshake done /
+        # running), exited (process ended, restarting after backoff), quarantined (gave up
+        # after rapid failures — won't restart until ExtRestart)}. The GUI records it and
+        # overrides a stale polled "running" (the daemon keeps a quarantined ext in its
+        # running map). We fire it after enable/restart and on the mock-only crash trigger.
         pass
 
     # --- firmware progress walker (pushes FirmwareProgress on a GLib tick) --

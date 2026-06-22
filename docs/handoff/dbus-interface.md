@@ -19,9 +19,9 @@ document is the contract between the daemon and any out-of-process front-end.
 > gdbus introspect --session --dest de.yoxcu.stoandl --object-path /de/yoxcu/stoandl
 > ```
 >
-> A live introspection should show the 51 methods below, **five signals**
-> (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/`LanguageProgress`/`ExtensionsChanged`,
-> see below), and **no** properties.
+> A live introspection should show the 51 methods below, **six signals**
+> (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/`LanguageProgress`/`ExtensionsChanged`/
+> `ExtensionStateChanged`, see below), and **no** properties.
 
 ## Service summary
 
@@ -32,7 +32,7 @@ document is the contract between the daemon and any out-of-process front-end.
 | **Object path** | `/de/yoxcu/stoandl` |
 | **Interface** | `de.yoxcu.stoandl.Control` |
 | **Methods** | 51 |
-| **Signals** | **5** (`WatchesChanged`, `FirmwareProgress`, `LockerChanged`, `LanguageProgress`, `ExtensionsChanged` — see below) |
+| **Signals** | **6** (`WatchesChanged`, `FirmwareProgress`, `LockerChanged`, `LanguageProgress`, `ExtensionsChanged`, `ExtensionStateChanged` — see below) |
 | **Properties** | **0** |
 | **Activation** | **not** D-Bus-activated — a systemd **user** service ([`packaging/stoandl.service`](../packaging/stoandl.service); also OpenRC via `packaging/stoandl.openrc`). The daemon calls `requestBusName("de.yoxcu.stoandl")` at startup (`Main.kt:69`) and `releaseBusName` on shutdown (`Main.kt:90`). There is no `dbus-1/services/*.service` activation file — a caller that finds the name unowned must start/`enable` the service itself. |
 
@@ -41,9 +41,9 @@ The session connection is `DBusConnectionBuilder.forSessionBus().withShared(fals
 `Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus` so the headless daemon reaches the user
 session bus with no graphical login.
 
-### Five signals augment polling; no properties
+### Six signals augment polling; no properties
 
-`de.yoxcu.stoandl.Control` declares **five D-Bus signals** and **no** properties:
+`de.yoxcu.stoandl.Control` declares **six D-Bus signals** and **no** properties:
 
 | Signal | Args | Meaning |
 |---|---|---|
@@ -52,15 +52,16 @@ session bus with no graphical login.
 | `LockerChanged` | *(none)* | A poke — re-call `ListApps`. Fires on on-watch / CLI install/remove + active-watchface change. |
 | `LanguageProgress` | `(s phase, i percent, s detail)` | Push language-pack install progress. `phase` uses the same vocabulary as `LanguageStatus` (`downloading`/`installing`/`done`/`idle`/`failed`/`notready`); `percent` is 0–100 while `installing`, else `-1`; `detail` = language name / failure reason. |
 | `ExtensionsChanged` | *(none)* | A poke — re-call `ExtList`. Fires on enable / disable / restart / install / uninstall (incl. CLI / other-client changes). |
+| `ExtensionStateChanged` | `(s name, s state)` | The **finer companion** to `ExtensionsChanged`: an **unsolicited** per-extension run-state transition the list-level poke can't catch. `state` ∈ `ready` (handshake done / running), `exited` (process ended, restarting after backoff), `quarantined` (gave up after rapid failures — won't restart until the user runs `ExtRestart`). A subscribed client overrides the polled `running`/`stopped` with this (a quarantined ext still shows as `running` in `ExtList`, because the daemon keeps it in its `running` map). |
 
 The signals **augment** polling, they don't replace it. Because the daemon is **not** D-Bus-activated
 (below), a late or reconnecting client can miss a signal, so a reactive client must still keep a slow
-safety-net poll and re-sync after the name is (re)owned. Beyond these five, the daemon still doesn't
-push battery changes or fine-grained extension *running-state* changes (crash/quarantine) — those are
-learned only by **calling a method again**. Long-running operations are surfaced as *polled status
-strings* (see [Long-running operations](#long-running-operations)); `FirmwareProgress`/`LanguageProgress`
-now also push the flash/install progress between poll ticks (so those op-polls relax to a watchdog
-cadence). See the [gap analysis](#gui-gap-analysis) for the still-missing reactive members.
+safety-net poll and re-sync after the name is (re)owned. Beyond these six, the daemon still doesn't
+push battery changes — those are learned only by **calling a method again**. Long-running operations
+are surfaced as *polled status strings* (see [Long-running operations](#long-running-operations));
+`FirmwareProgress`/`LanguageProgress` now also push the flash/install progress between poll ticks (so
+those op-polls relax to a watchdog cadence). See the [gap analysis](#gui-gap-analysis) for the
+still-missing reactive members.
 
 The only other object stoandl exports on any bus is an internal **BlueZ pairing agent**
 (`org.bluez.Agent1` at `/io/stoandl/agent`, on the **system** bus, from
@@ -297,11 +298,12 @@ is down — and a reminder that **backup/restore are not daemon capabilities**:
 
 A planned Kirigami GUI has five screens. For each, this lists the existing control members that
 satisfy it and the **gaps** — data or actions it needs that the daemon does not expose over D-Bus.
-The recurring theme: **there are still no properties, and signals cover only five pokes/pushes**
-(`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/`LanguageProgress`/`ExtensionsChanged` — see
-[Five signals](#five-signals-augment-polling-no-properties)), so most "live update" needs are still
+The recurring theme: **there are still no properties, and signals cover only six pokes/pushes**
+(`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/`LanguageProgress`/`ExtensionsChanged`/
+`ExtensionStateChanged` — see
+[Six signals](#six-signals-augment-polling-no-properties)), so most "live update" needs are still
 gaps, and several values the daemon already computes are simply dropped from a return or never
-surfaced. (The gap rows below that those five signals now address are called out as *landed* in the
+surfaced. (The gap rows below that those six signals now address are called out as *landed* in the
 cross-cutting priority list.)
 
 A `feasibility` note marks each gap as **wiring-only** (the daemon/libpebble3 already computes it —
@@ -353,7 +355,7 @@ present), `LaunchApp`, `RemoveApp`, `SideloadApp`, `OpenConfig` + `WebviewClose`
 | Gap | Kind | Today | Proposed hook | Feasibility |
 |---|---|---|---|---|
 | Live list-changed push (enable/disable/restart/install/uninstall) | signal | ✅ **landed** — `ExtensionsChanged()` poke → re-call `ExtList` (fires on every mutation, incl. CLI / other-client) | `ExtensionsChanged()` | **wiring-only** — fired alongside each `Ext*` mutation |
-| Live per-extension *running-state* push (crash/quarantine/restart/needs-config) | signal | still none — `ExtensionsChanged` is a list-level poke; fine-grained transitions need a re-poll of `ExtList` | `ExtensionStateChanged(s name, s state)` | **wiring-only** — `ExtensionProcess` already observes every transition (`ready`, exit, quarantine) internally |
+| Live per-extension *running-state* push (crash/quarantine/restart/needs-config) | signal | ✅ **landed** — `ExtensionStateChanged(s name, s state)` pushes the unsolicited per-extension transition (`ready`/`exited`/`quarantined`) the list-level `ExtensionsChanged` poke can't carry; the GUI records it and overrides the stale polled `running` so a quarantined/crashed ext shows distinctly | `ExtensionStateChanged(s name, s state)` | **wiring-only** — `ExtensionProcess` already observes every transition (`ready`, exit, quarantine) internally |
 | Richer run-state than `running\|stopped` (quarantined, needs-config, restarting) | data | collapsed to `running.containsKey()` | 5th `ExtList` field `runState`, or `ExtStatus(s) → s` | **needs bookkeeping** — facts exist (`StartResult.NEEDS_CONFIG`, quarantine after `MAX_FAST_FAILURES`) but aren't recorded into a queryable field |
 | Per-extension config (declares `requiresConfig`? `userConfigured`? path? read/write settings) | data + action | not exposed (only a desktop notification tells the user to edit the file) | `ExtConfigGet(s) → s` / `ExtConfigSet(s,s,s) → s` | **wiring-only to read** (manifest + `readConfigFile()` already parsed); write is new |
 | Install from bytes/upload (not a daemon-side path) | action | `ExtInstall` takes a daemon-resolved path | optional `ExtInstallBytes(s name, ay data) → s` | **wiring-only** but low priority for a co-located GUI |
@@ -398,9 +400,9 @@ language `ListLanguages`/`InstallLanguage`/`SideloadLanguage`/`LanguageStatus`; 
 ### Cross-cutting: the hooks worth adding first
 
 Most screens want the **same handful** of new members. In rough priority (items 1–3 are **partially
-landed** — the five signals `WatchesChanged`/`FirmwareProgress`/`LockerChanged`/`LanguageProgress`/
-`ExtensionsChanged` now exist and the GUI subscribes to them on top of polling; the rest of each item
-is still open):
+landed** — the six signals `WatchesChanged`/`FirmwareProgress`/`LockerChanged`/`LanguageProgress`/
+`ExtensionsChanged`/`ExtensionStateChanged` now exist and the GUI subscribes to them on top of
+polling; the rest of each item is still open):
 
 1. ✅ **A connection/state signal** — landed as the zero-arg **`WatchesChanged()`** poke (re-call
    `ListWatches`). Serves the Watch screen's live list/battery and the post-reset reboot
@@ -411,10 +413,11 @@ is still open):
    between poll ticks; the op-polls stay as the reboot/disconnect watchdog, relaxed to a watchdog
    cadence). *Wiring-only.*
 3. ✅ **`LockerChanged()`** landed (re-call `ListApps`; covers install/remove + active-face change),
-   and **`ExtensionsChanged()`** landed (re-call `ExtList` on every enable/disable/restart/install/
-   uninstall). The fine-grained **`ExtensionStateChanged`** (per-extension crash/quarantine run-state)
-   is *still open* — the Plugins screen still re-polls `ExtList` for that. *Wiring-only* (the live
-   flows are already there).
+   **`ExtensionsChanged()`** landed (re-call `ExtList` on every enable/disable/restart/install/
+   uninstall), and the fine-grained **`ExtensionStateChanged(s name, s state)`** landed (the
+   unsolicited per-extension crash/quarantine run-state — `ready`/`exited`/`quarantined` — the
+   list-level poke can't carry; the GUI overrides the stale polled `running` so a quarantined/crashed
+   ext shows distinctly in the Plugins list). *Wiring-only* (the live flows are already there).
 4. **Add dropped fields to existing records** — `transport` on `ListWatches`; `synced` on
    `ListApps`. *Wiring-only, one line each.*
 5. **`GetSyncStatus()`** + **`SetSyncEnabled()`** — the Sync screen's toggles and last-sync labels.

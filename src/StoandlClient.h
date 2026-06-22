@@ -6,6 +6,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QStringList>
+#include <QHash>
 #include <QUrl>
 
 class QTimer;
@@ -188,6 +189,10 @@ private Q_SLOTS:
     void onLockerChanged();                                           // poke → refreshApps()
     void onLanguageProgress(const QString &phase, int percent, const QString &detail); // → languageStatus()
     void onExtensionsChanged();                                       // poke → refreshExtensions()
+    // Finer companion to ExtensionsChanged: an unsolicited per-extension run-state transition
+    // (ready / exited / quarantined) the list-level poke can't carry. Records the state and
+    // re-syncs the list (the override is merged into the rows extList() builds).
+    void onExtensionStateChanged(const QString &name, const QString &state);
     void pollPairOnce();
     void firmwarePollOnce();
     void languagePollOnce();
@@ -229,4 +234,10 @@ private:
     int     m_langElapsedMs = 0;
     bool    m_langSeenActivity = false;
     bool    m_langFirstPoll = true;
+
+    // Per-extension runtime state from ExtensionStateChanged (name → ready|exited|quarantined).
+    // Merged into the extList() rows so a quarantined/exited extension isn't shown as a stale
+    // "running" (the polled ExtList keeps a quarantined ext in its `running` map). Entries are
+    // pruned in extList() when ExtList no longer lists that name.
+    QHash<QString, QString> m_extState;
 };

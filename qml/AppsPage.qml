@@ -320,6 +320,17 @@ Kirigami.ScrollablePage {
                     trailing: RowLayout {
                         spacing: Kirigami.Units.smallSpacing
 
+                        // Runtime-state chip from ExtensionStateChanged: a quarantined or crashed
+                        // (exited, restarting) extension is shown distinctly instead of the stale
+                        // polled "running". Hidden for the normal running/stopped states.
+                        StatusChip {
+                            readonly property string rs: extRow.modelData.runtimeState || ""
+                            visible: rs === "quarantined" || rs === "exited"
+                            label: rs === "quarantined" ? "Quarantined" : "Crashed (restarting)"
+                            tint: rs === "quarantined" ? Kirigami.Theme.negativeTextColor
+                                                       : Kirigami.Theme.neutralTextColor
+                        }
+
                         QQC2.ToolButton {
                             visible: extRow.modelData.hasConfig === true
                             icon.name: "configure-symbolic"

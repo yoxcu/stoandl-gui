@@ -16,8 +16,9 @@ are the 3rd segment of **Apps** (Faces / Apps / Extensions). Sync services live 
 is hidden when the daemon is down (nothing works without it).
 
 ## Hard rules
-- **The interface has FIVE signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
-  `LanguageProgress`/`ExtensionsChanged`) that augment polling — polling stays as the fallback.**
+- **The interface has SIX signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
+  `LanguageProgress`/`ExtensionsChanged`/`ExtensionStateChanged`) that augment polling — polling
+  stays as the fallback.**
   The daemon is NOT D-Bus-activated, so a late or reconnecting client can miss a signal; therefore
   the GUI keeps a slow safety-net poll **and** re-syncs on `daemonUpChanged`. All of this lives in
   `StoandlClient`: the signals re-use the existing `refreshWatches()`/`refreshApps()`/
@@ -25,7 +26,11 @@ is hidden when the daemon is down (nothing works without it).
   watch poll carries `BluetoothStatus` + is the missed-`WatchesChanged` net; op pollers for
   Pair/Firmware/Language stay (the firmware/language op-poll is the reboot/disconnect watchdog —
   the `FirmwareProgress`/`LanguageProgress` signal just smooths its % between ticks, so the
-  language op-poll is relaxed to a 3s watchdog cadence). UI never polls directly.
+  language op-poll is relaxed to a 3s watchdog cadence). `ExtensionStateChanged(s name, s state)`
+  is the finer companion to the `ExtensionsChanged` poke: it carries an unsolicited per-extension
+  run-state transition (`ready`/`exited`/`quarantined`) the list-level poke can't — `StoandlClient`
+  records it in a name→state map and merges it into the `ExtList` rows (so a quarantined/exited ext
+  isn't shown as a stale "running"). UI never polls directly.
 - **After any mutating call, still re-fetch that screen's list.** The signal is a best-effort poke,
   not a guarantee — the re-fetch is authoritative.
 - Returns are either `kind:message` (split on first `:`) or tab-separated `as` records. Parse in
@@ -46,11 +51,14 @@ done · uptodate · disabled · busy · idle · none · confirm (PairStatus `con
 comparison awaiting ConfirmPairing(bool))
 
 ## Daemon hooks (added this milestone — see the drift report `docs/handoff/drift-report.md`)
-Five reactive **signals** — `WatchesChanged()` (re-call ListWatches), `FirmwareProgress(s phase,
+Six reactive **signals** — `WatchesChanged()` (re-call ListWatches), `FirmwareProgress(s phase,
 i percent, s detail)` (push flash progress, same phase vocabulary as `FirmwareStatus`),
 `LockerChanged()` (re-call ListApps), `LanguageProgress(s phase, i percent, s detail)` (push
-language-install progress, same phase vocabulary as `LanguageStatus`), and `ExtensionsChanged()`
-(re-call ExtList) — consumed on top of polling (see Hard rules).
+language-install progress, same phase vocabulary as `LanguageStatus`), `ExtensionsChanged()`
+(re-call ExtList), and `ExtensionStateChanged(s name, s state)` (the finer companion to
+`ExtensionsChanged`: an unsolicited per-extension run-state transition — `state` ∈
+`ready`/`exited`/`quarantined` — that the list-level poke can't catch, so a crashed/quarantined
+extension shows live instead of a stale "running") — consumed on top of polling (see Hard rules).
 The GUI also consumes daemon-side hooks beyond the original 51 methods: `transport` on ListWatches +
 `synced` on ListApps (#4); `GetSyncStatus`/`SetSyncEnabled` (#5); `ExtList.config` + `ExtOpenConfig` +
 `ExtConfigSchema`/`ExtGetConfig`/`ExtSetConfig` (#7); `GetHealthSummary`/`GetHealthSeries` (#8);

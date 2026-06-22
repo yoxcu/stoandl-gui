@@ -16,6 +16,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QLoggingCategory>
+#include <QSet>
 
 #include <algorithm>
 
@@ -100,6 +101,8 @@ StoandlClient::StoandlClient(QObject *parent)
                   this, SLOT(onLanguageProgress(QString, int, QString)));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("ExtensionsChanged"),
                   this, SLOT(onExtensionsChanged()));
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("ExtensionStateChanged"),
+                  this, SLOT(onExtensionStateChanged(QString, QString)));
 
     recheckDaemon();
 }
@@ -338,19 +341,42 @@ QVariantList StoandlClient::extList()
     // Record (HOOK #7): name \t installed|missing \t enabled|disabled \t
     //                   running|stopped \t config(none|url|schema) \t description
     QVariantList rows;
+    QSet<QString> seen;
     const QVariantList records = list(QStringLiteral("ExtList"));
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
+        const QString name = f.value(0);
         const QString cfg = f.value(4);
+        seen.insert(name);
         QVariantMap m;
-        m[QStringLiteral("name")]        = f.value(0);
+        m[QStringLiteral("name")]        = name;
         m[QStringLiteral("installed")]   = (f.value(1) == QStringLiteral("installed"));
         m[QStringLiteral("enabled")]     = (f.value(2) == QStringLiteral("enabled"));
         m[QStringLiteral("running")]     = (f.value(3) == QStringLiteral("running"));
         m[QStringLiteral("config")]      = cfg.isEmpty() ? QStringLiteral("none") : cfg;
         m[QStringLiteral("hasConfig")]   = (cfg == QStringLiteral("url") || cfg == QStringLiteral("schema"));
         m[QStringLiteral("description")] = f.value(5);
+        // Merge the live ExtensionStateChanged override (ready/exited/quarantined). The polled
+        // `running|stopped` can't see a quarantine (the daemon keeps a quarantined ext in its
+        // `running` map), so an override wins for the QML's `runtimeState` field. Map a bare
+        // `ready` back to the polled running/stopped so it doesn't override with a less specific
+        // word; keep `exited`/`quarantined` as-is (those are the whole point of this signal).
+        const QString override = m_extState.value(name);
+        QString runtimeState;
+        if (override == QStringLiteral("quarantined") || override == QStringLiteral("exited"))
+            runtimeState = override;
+        else
+            runtimeState = m[QStringLiteral("running")].toBool() ? QStringLiteral("running")
+                                                                 : QStringLiteral("stopped");
+        m[QStringLiteral("runtimeState")] = runtimeState;
         rows.append(m);
+    }
+    // Drop overrides for extensions ExtList no longer reports (uninstalled / renamed away).
+    for (auto it = m_extState.begin(); it != m_extState.end();) {
+        if (seen.contains(it.key()))
+            ++it;
+        else
+            it = m_extState.erase(it);
     }
     return rows;
 }
@@ -1182,6 +1208,16 @@ void StoandlClient::onExtensionsChanged()
 {
     qCDebug(lcStoandl) << "signal ExtensionsChanged → refreshExtensions()";
     refreshExtensions(); // emits extensionsChanged (covers CLI/other-client install/enable/disable/restart)
+}
+
+void StoandlClient::onExtensionStateChanged(const QString &name, const QString &state)
+{
+    qCDebug(lcStoandl).noquote().nospace()
+        << "signal ExtensionStateChanged: " << name << " → " << state;
+    // Record the override so extList() can surface a quarantined/exited extension that the polled
+    // running|stopped flag can't reveal, then re-sync the list (the coarse part, like the poke).
+    m_extState.insert(name, state);
+    refreshExtensions(); // emits extensionsChanged with the merged runtimeState
 }
 
 bool StoandlClient::startDaemon()
