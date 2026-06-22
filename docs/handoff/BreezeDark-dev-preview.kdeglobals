@@ -1,0 +1,103 @@
+# Breeze Dark color scheme for Qt/KDE apps — NO packages required.
+#
+# qqc2-desktop-style reads colors from KColorScheme, which reads the [Colors:*]
+# groups below out of ~/.config/kdeglobals. Dropping these in gives any Kirigami
+# app (incl. stoandl-gui) the Breeze Dark palette — without plasma-integration or
+# any KDE apps polluting your GNOME box.
+#
+# INSTALL (dev box only):
+#   1. Back up if you have one:   cp ~/.config/kdeglobals ~/.config/kdeglobals.bak 2>/dev/null
+#   2. Merge/append the groups below into ~/.config/kdeglobals
+#      (or just copy this whole file there if you don't have one).
+#   3. Run with the desktop style + KDE platform theme bits:
+#        QT_QUICK_CONTROLS_STYLE=org.kde.desktop ./stoandl-gui
+#      (QT_QPA_PLATFORMTHEME=kde needs plasma-integration; you DON'T need it —
+#       KColorScheme picks these up from kdeglobals directly.)
+#   4. To go back to light, delete the [Colors:*] groups or restore your backup.
+#
+# This is a DEV-PREVIEW convenience only. Ship NOTHING from here — the real phone
+# supplies its own scheme. Never hardcode these values in the app.
+
+[General]
+ColorScheme=BreezeDark
+
+[Colors:Window]
+BackgroundNormal=42,46,50
+BackgroundAlternate=49,54,59
+ForegroundNormal=252,252,252
+ForegroundInactive=161,169,177
+ForegroundActive=61,174,233
+ForegroundLink=41,128,185
+ForegroundNegative=218,68,83
+ForegroundNeutral=246,116,0
+ForegroundPositive=39,174,96
+DecorationFocus=61,174,233
+DecorationHover=61,174,233
+
+[Colors:View]
+BackgroundNormal=35,38,41
+BackgroundAlternate=42,46,50
+ForegroundNormal=252,252,252
+ForegroundInactive=161,169,177
+ForegroundActive=61,174,233
+ForegroundLink=41,128,185
+ForegroundNegative=218,68,83
+ForegroundNeutral=246,116,0
+ForegroundPositive=39,174,96
+DecorationFocus=61,174,233
+DecorationHover=61,174,233
+
+[Colors:Button]
+BackgroundNormal=49,54,59
+BackgroundAlternate=30,87,116
+ForegroundNormal=252,252,252
+ForegroundInactive=161,169,177
+ForegroundActive=61,174,233
+ForegroundNegative=218,68,83
+ForegroundNeutral=246,116,0
+ForegroundPositive=39,174,96
+DecorationFocus=61,174,233
+DecorationHover=61,174,233
+
+[Colors:Selection]
+BackgroundNormal=61,174,233
+BackgroundAlternate=49,84,112
+ForegroundNormal=252,252,252
+ForegroundInactive=161,169,177
+ForegroundActive=252,252,252
+ForegroundLink=253,188,75
+ForegroundNegative=176,55,69
+ForegroundNeutral=198,92,0
+ForegroundPositive=23,104,57
+DecorationFocus=61,174,233
+DecorationHover=61,174,233
+
+[Colors:Tooltip]
+BackgroundNormal=49,54,59
+BackgroundAlternate=42,46,50
+ForegroundNormal=252,252,252
+ForegroundInactive=161,169,177
+ForegroundActive=61,174,233
+
+[Colors:Complementary]
+BackgroundNormal=42,46,50
+BackgroundAlternate=49,54,59
+ForegroundNormal=252,252,252
+ForegroundInactive=161,169,177
+ForegroundActive=61,174,233
+ForegroundPositive=39,174,96
+ForegroundNegative=218,68,83
+ForegroundNeutral=246,116,0
+
+[Colors:Header]
+BackgroundNormal=49,54,59
+BackgroundAlternate=42,46,50
+ForegroundNormal=252,252,252
+ForegroundInactive=161,169,177
+ForegroundActive=61,174,233
+
+[WM]
+activeBackground=49,54,59
+activeForeground=252,252,252
+inactiveBackground=42,46,50
+inactiveForeground=161,169,177

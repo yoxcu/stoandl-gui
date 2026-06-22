@@ -1,0 +1,91 @@
+import QtQuick
+import QtQuick.Controls as QQC2
+import org.kde.kirigami as Kirigami
+import org.stoandl.gui
+
+Kirigami.ApplicationWindow {
+    id: root
+
+    title: "stoandl"
+
+    minimumWidth: Kirigami.Units.gridUnit * 22
+    minimumHeight: Kirigami.Units.gridUnit * 30
+    width: Kirigami.Units.gridUnit * 30
+    height: Kirigami.Units.gridUnit * 48
+
+    // Which destination is showing. Watch (0) is the launch view.
+    property int currentTab: 0
+
+    // 5 destinations -> Kirigami.NavigationTabBar (KDE HIG: <=5 = tabs, not a drawer).
+    // Watch · Health · Apps · Notifications · Settings.
+    readonly property var pageComponents: [
+        watchComponent, healthComponent, appsComponent, notificationsComponent, settingsComponent
+    ]
+
+    Component { id: watchComponent;         WatchPage {} }
+    Component { id: healthComponent;        HealthPage {} }
+    Component { id: appsComponent;          AppsPage {} }
+    Component { id: notificationsComponent; NotificationsPage {} }
+    Component { id: settingsComponent;      SettingsPage {} }
+
+    function showTab(index) {
+        if (index === currentTab && pageStack.depth > 0)
+            return;
+        currentTab = index;
+        // Single-column tab navigation: swap the (only) page in place.
+        pageStack.replace(pageComponents[index]);
+    }
+
+    // No global drawer — navigation is the (responsive) tab bar. Putting the
+    // NavigationTabBar in the window footer makes it sit BELOW content on mobile
+    // and relocate ABOVE content on desktop, per the KDE HIG.
+    globalDrawer: null
+    contextDrawer: null
+
+    pageStack.initialPage: watchComponent
+
+    footer: Kirigami.NavigationTabBar {
+        id: tabBar
+        // Hide nav entirely when the daemon is down — nothing works without it
+        // (handoff §5 states; CLAUDE.md daemon-down rule).
+        visible: StoandlClient.daemonUp
+        height: visible ? implicitHeight : 0
+        actions: [
+            Kirigami.Action {
+                icon.name: "smartwatch-symbolic"
+                text: "Watch"
+                checkable: true
+                checked: root.currentTab === 0
+                onTriggered: root.showTab(0)
+            },
+            Kirigami.Action {
+                icon.name: "heart-symbolic"
+                text: "Health"
+                checkable: true
+                checked: root.currentTab === 1
+                onTriggered: root.showTab(1)
+            },
+            Kirigami.Action {
+                icon.name: "view-list-icons-symbolic"
+                text: "Apps"
+                checkable: true
+                checked: root.currentTab === 2
+                onTriggered: root.showTab(2)
+            },
+            Kirigami.Action {
+                icon.name: "notifications-symbolic"
+                text: "Notifications"
+                checkable: true
+                checked: root.currentTab === 3
+                onTriggered: root.showTab(3)
+            },
+            Kirigami.Action {
+                icon.name: "settings-configure-symbolic"
+                text: "Settings"
+                checkable: true
+                checked: root.currentTab === 4
+                onTriggered: root.showTab(4)
+            }
+        ]
+    }
+}

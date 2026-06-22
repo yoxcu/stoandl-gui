@@ -1,0 +1,876 @@
+#!/usr/bin/env python3
+"""Mock of the stoandl daemon's de.yoxcu.stoandl.Control interface.
+
+A stand-in for the real (JVM + BLE) daemon so the Kirigami GUI can be exercised
+headlessly. It is STATEFUL: mutating calls update in-memory state, and the
+long-running ops (Pair/Firmware/Language) walk pending -> terminal over a few
+polls — so the GUI's "re-fetch after every mutation" path and the poll loops both
+light up.
+
+Covers the full surface the GUI uses: the 51 documented control methods that the
+new screens touch (Watch, Apps/Faces, Extensions, Notifications, Settings) PLUS
+the daemon-side hooks added in this milestone (handoff §5). The hooks are flagged
+"HOOK #n" inline; they are the new D-Bus contract the real Kotlin daemon must grow
+to match (see the drift report). Returns follow docs/handoff/dbus-interface.md:
+status strings are "kind:tail" with tab-separated fields; list methods return one
+tab-joined record per element.
+
+Run inside a session bus, e.g.:  dbus-run-session -- python3 mock_stoandl.py
+"""
+
+import base64
+import json
+
+import dbus
+import dbus.service
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import GLib
+
+BUS_NAME = "de.yoxcu.stoandl"
+OBJ_PATH = "/de/yoxcu/stoandl"
+IFACE = "de.yoxcu.stoandl.Control"
+
+# Number of PairStatus polls to report "pending" before succeeding.
+PAIR_PENDING_POLLS = 3
+PAIR_CODE = "481516"
+
+# PebbleOS changelog (HOOK: appended to CheckFirmware so the GUI's "What's new" works).
+CHANGELOG_URL = "https://ndocs.repebble.com/PebbleOS-Changelog-25efbb55ea84801da04bfcf73c9346e1"
+
+
+def rec(*fields):
+    """Join fields into one tab-separated record (the `as` element format)."""
+    return "\t".join(str(f) for f in fields)
+
+
+class MockStoandl(dbus.service.Object):
+    def __init__(self, bus, path):
+        super().__init__(bus, path)
+        # name -> {state, battery, transport, model, platform, firmware, serial,
+        #          code, lastSync}. state in connected|connecting|disconnected.
+        self.watches = {
+            "Time Steel": {
+                "state": "connected", "battery": "72", "transport": "classic",
+                "model": "Pebble Time Steel", "platform": "BASALT", "firmware": "4.4.2",
+                "serial": "Q402445E00GR", "code": "B349", "lastSync": "2 min ago",
+            },
+            "Time 2": {
+                "state": "disconnected", "battery": "41", "transport": "ble",
+                "model": "Pebble Time 2", "platform": "EMERY", "firmware": "4.4.2",
+                "serial": "Q403118E01AA", "code": "A1F0", "lastSync": "yesterday",
+            },
+        }
+        # Pairing op state: None when idle, else a dict tracking poll count.
+        self.pairing = None
+        # Locker contents (apps + faces). flags ⊆ {active,sideloaded,config,system,synced}.
+        # HOOK #4: `synced` is now surfaced in the flags set.
+        self.apps = [
+            {"uuid": "8f3c8985", "type": "watchface", "order": 0,
+             "flags": ["active", "system", "synced"], "title": "Tic Toc", "developer": "Pebble"},
+            {"uuid": "3af56a2b", "type": "watchface", "order": 1,
+             "flags": ["synced"], "title": "Isotime", "developer": "Pebble"},
+            {"uuid": "d2cd8de2", "type": "watchface", "order": 2,
+             "flags": ["synced"], "title": "Beam Up", "developer": "Pebble"},
+            {"uuid": "5e5da3f1", "type": "watchface", "order": 3,
+             "flags": ["config"], "title": "Kalk", "developer": "Vinch"},
+            {"uuid": "1f03293d", "type": "watchapp", "order": 4,
+             "flags": ["system", "synced"], "title": "Music", "developer": "Pebble"},
+            {"uuid": "36d8c6ed", "type": "watchapp", "order": 5,
+             "flags": ["system", "synced"], "title": "Health", "developer": "Pebble"},
+            {"uuid": "07e0d9cb", "type": "watchapp", "order": 6,
+             "flags": ["system", "synced"], "title": "Settings", "developer": "Pebble"},
+            {"uuid": "a4d3f0b9", "type": "watchapp", "order": 7,
+             "flags": ["sideloaded", "config", "synced"], "title": "Pebblemap", "developer": "katharostech"},
+            {"uuid": "c91b77a0", "type": "watchapp", "order": 8,
+             "flags": ["sideloaded"], "title": "Tezel", "developer": "lavers"},
+        ]
+        self._sideload_seq = 0
+        # Extensions. HOOK #7: `config` (none|url|schema) + `description` fields added.
+        self.exts = [
+            {"name": "Matrix", "installed": True, "enabled": True, "running": True,
+             "config": "url", "description": "Messages on the wrist + canned replies, E2EE"},
+            {"name": "Find My Phone", "installed": True, "enabled": True, "running": True,
+             "config": "none", "description": "Ring this device from the watch"},
+            {"name": "Signal", "installed": True, "enabled": False, "running": False,
+             "config": "schema", "description": "Signal messages + quick replies"},
+            {"name": "SMS Bridge", "installed": False, "enabled": False, "running": False,
+             "config": "schema", "description": "Forward & reply to SMS over ModemManager"},
+        ]
+        self._ext_seq = 0
+        # HOOK #7 (schema backend): per-extension typed config. schema = the manifest;
+        # values = current settings. Two extensions declare config=schema above.
+        self.ext_schema = {
+            "Signal": [
+                {"key": "phone", "type": "string", "label": "Linked phone number"},
+                {"key": "token", "type": "string", "label": "Device token", "secret": True},
+                {"key": "interval", "type": "int", "label": "Poll interval (s)"},
+                {"key": "replies", "type": "bool", "label": "Allow quick replies"},
+            ],
+            "SMS Bridge": [
+                {"key": "modem", "type": "enum", "label": "Modem", "options": ["ModemManager", "oFono"]},
+                {"key": "country", "type": "string", "label": "Default country code"},
+                {"key": "delivery", "type": "bool", "label": "Delivery reports"},
+            ],
+        }
+        self.ext_values = {
+            "Signal": {"phone": "+1 555 0123", "token": "", "interval": 20, "replies": True},
+            "SMS Bridge": {"modem": "ModemManager", "country": "+1", "delivery": False},
+        }
+        # HOOK #5: sync services — runtime master on/off + availability + last-sync.
+        # service -> {enabled, available, lastSync}.
+        self.sync = {
+            "notifications": {"enabled": True, "available": True, "lastSync": "live"},
+            "weather": {"enabled": True, "available": True, "lastSync": "8 min ago"},
+            "calendar": {"enabled": True, "available": True, "lastSync": "12 min ago"},
+            "music": {"enabled": True, "available": True, "lastSync": "live"},
+            "health": {"enabled": False, "available": True, "lastSync": "never"},
+            "dnd": {"enabled": True, "available": True, "lastSync": "synced"},
+        }
+        self.calendars = [
+            {"id": "personal@local", "name": "Personal", "enabled": True},
+            {"id": "work@corp",      "name": "Work",     "enabled": True},
+            {"id": "holidays@public","name": "Holidays", "enabled": False},
+        ]
+        # HOOK: watch advanced settings (ListWatchPrefs / SetWatchPref).
+        # id, type, current, default, allowed, flags, name, description.
+        self.prefs = [
+            {"id": "quick_launch_up", "type": "enum", "current": "Music", "default": "(none)",
+             "allowed": "(none),Music,Health,Pebblemap,Tezel", "flags": "",
+             "name": "Quick launch · Up", "description": "App launched by a long up-press"},
+            {"id": "quick_launch_down", "type": "enum", "current": "Pebblemap", "default": "(none)",
+             "allowed": "(none),Music,Health,Pebblemap,Tezel", "flags": "",
+             "name": "Quick launch · Down", "description": "App launched by a long down-press"},
+            {"id": "backlight", "type": "bool", "current": "true", "default": "true",
+             "allowed": "", "flags": "", "name": "Backlight",
+             "description": "Light the screen on button press"},
+            {"id": "backlight_timeout", "type": "int", "current": "3", "default": "3",
+             "allowed": "1..8", "flags": "", "name": "Backlight timeout",
+             "description": "Seconds the backlight stays on"},
+            {"id": "motion_backlight", "type": "bool", "current": "true", "default": "true",
+             "allowed": "", "flags": "", "name": "Motion backlight",
+             "description": "Wake the screen on a wrist flick"},
+            {"id": "ambient_threshold", "type": "int", "current": "200", "default": "150",
+             "allowed": "0..400", "flags": "", "name": "Ambient light threshold",
+             "description": "Light level below which the backlight engages (lx)"},
+        ]
+        # System screen: firmware + language op state, language catalog.
+        self.fw = None    # None when idle, else {"polls": n}
+        self.lang = None  # None when idle, else {"polls": n, "name": ...}
+        self.languages = [
+            {"id": "en_US", "iso": "English (US)", "name": "English (US)", "installed": True,  "source": "github"},
+            {"id": "de_DE", "iso": "Deutsch",      "name": "German",       "installed": False, "source": "rebble"},
+            {"id": "fr_FR", "iso": "Francais",     "name": "French",       "installed": False, "source": "rebble"},
+            {"id": "ja_JP", "iso": "Nihongo",      "name": "Japanese",     "installed": False, "source": "github"},
+        ]
+        # HOOK #10: daemon config (stoandl.conf) over D-Bus, schema-driven.
+        self.config_schema = [
+            {"key": "units", "type": "combo", "label": "Units",
+             "options": "Metric,Imperial", "desc": ""},
+            {"key": "weather_provider", "type": "combo", "label": "Weather provider",
+             "options": "Open-Meteo", "desc": ""},
+            {"key": "auto_reconnect", "type": "toggle", "label": "Reconnect automatically",
+             "options": "", "desc": "Reconnect when the watch comes back in range"},
+            {"key": "calendar_window", "type": "combo", "label": "Timeline window",
+             "options": "1 day,3 days,7 days", "desc": ""},
+            {"key": "log_level", "type": "combo", "label": "Log level",
+             "options": "error,info,debug", "desc": ""},
+        ]
+        self.config = {
+            "units": "Metric", "weather_provider": "Open-Meteo", "auto_reconnect": "true",
+            "calendar_window": "3 days", "log_level": "info",
+        }
+        # HOOK #8: health activity series + today totals.
+        self.health = {
+            "stepsToday": 7432, "stepGoal": 10000, "distanceKm": "5.4", "kcal": 312, "activeMin": 52,
+            "stepWeekAvg": 6890, "stepTrendPct": 8,
+            "sleepTotalMin": 444, "sleepDeepMin": 108, "sleepLightMin": 252, "sleepRemMin": 84,
+            "sleepAvgMin": 426, "sleepTrendPct": 6,
+            "restingHr": 58, "currentHr": 72, "hrMin": 54, "hrMax": 121, "hrAvailable": "yes",
+            "lastSync": "2 min ago",
+            "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+            "stepWeek": [6210, 8140, 5390, 9320, 7432, None, None],
+            "sleepWeek": [408, 432, 366, 474, 444, None, None],
+            "heartDay": [60, 58, 57, 59, 61, 64, 70, 88, 95, 79, 72, 68,
+                         66, 64, 70, 82, 90, 78, 71, 66, 61, 58, 57, 60],
+        }
+        # Notifications (per-app store + master forwarding via sync["notifications"]).
+        self.notif_apps = [
+            {"name": "Signal",   "mute": "never",  "color": "default", "icon": "default", "vibe": "Double",   "last": 1718900000},
+            {"name": "Matrix",   "mute": "never",  "color": "default", "icon": "default", "vibe": "Standard", "last": 1718901200},
+            {"name": "Gmail",    "mute": "never",  "color": "default", "icon": "default", "vibe": "Subtle",   "last": 1718890000},
+            {"name": "Phone",    "mute": "never",  "color": "default", "icon": "default", "vibe": "Long",     "last": 1718880000},
+            {"name": "Calendar", "mute": "always", "color": "default", "icon": "calendar","vibe": "Standard", "last": 1718800000},
+        ]
+        # HOOK (notifications): quiet hours + regex filters (config-backed today).
+        self.quiet = {"enabled": True, "from": "23:00", "to": "07:00", "now": ""}
+        self.filters = [
+            {"pattern": "(?i)verification code", "action": "allow"},
+            {"pattern": "Slack: .* is typing", "action": "block"},
+        ]
+        # Developer connection (StartDevConnection / Stop / Status).
+        self.dev_active = False
+
+    # --- helpers -----------------------------------------------------------
+    def _connected_name(self):
+        for name, w in self.watches.items():
+            if w["state"] == "connected":
+                return name
+        return None
+
+    def _set_connected(self, name):
+        for n, w in self.watches.items():
+            w["state"] = "connected" if n == name else "disconnected"
+        if name in self.watches and not self.watches[name]["battery"]:
+            self.watches[name]["battery"] = "88"
+
+    # --- ListWatches / Battery / WatchDetails ------------------------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def ListWatches(self):
+        # HOOK #4: `transport` (ble|classic, empty when disconnected) appended.
+        return [rec(n, w["state"], w["battery"],
+                    w["transport"] if w["state"] == "connected" else "")
+                for n, w in self.watches.items()]
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def Battery(self):
+        name = self._connected_name()
+        if name is None:
+            return "notready:"
+        level = self.watches[name]["battery"] or "0"
+        return f"ok:{rec(name, level)}"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def WatchDetails(self):
+        # HOOK (identity): structured details for the connected watch — the fields
+        # the Watch-details dialog shows. Board intentionally omitted (handoff §4d).
+        # ok:name\tcode\tmodel\tplatform\ttransport\tfirmware\tserial\tbattery\tlastSync
+        name = self._connected_name()
+        if name is None:
+            return "notready:"
+        w = self.watches[name]
+        transport = "Bluetooth Classic" if w["transport"] == "classic" else "Bluetooth LE"
+        return "ok:" + rec(name, w["code"], w["model"], w["platform"], transport,
+                           w["firmware"], w["serial"], w["battery"], w["lastSync"])
+
+    # --- Connect -----------------------------------------------------------
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def Connect(self, name):
+        match = self._resolve(name)
+        if match is None:
+            return f"notfound:no known watch matching '{name}'"
+        self._set_connected(match)
+        return f"ok:connected to {match}"
+
+    def _resolve(self, query):
+        if query in self.watches:
+            return query
+        hits = [n for n in self.watches if query.lower() in n.lower()]
+        return hits[0] if len(hits) == 1 else None
+
+    # --- Pair / PairStatus / Repair / Unpair -------------------------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def Pair(self):
+        self.pairing = {"polls": 0, "newName": "Pebble (new)"}
+        return "ok:pairing window open"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def Repair(self, name):
+        match = self._resolve(name)
+        if match is None:
+            return f"notfound:no known watch matching '{name}'"
+        info = self.watches.pop(match)
+        self.pairing = {"polls": 0, "newName": match, "restore": info}
+        return "ok:re-pairing window open"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def PairStatus(self):
+        if self.pairing is None:
+            return "timeout:no pairing in progress"
+        self.pairing["polls"] += 1
+        if self.pairing["polls"] < PAIR_PENDING_POLLS:
+            return f"pending:Confirm code {PAIR_CODE} on the watch"
+        name = self.pairing["newName"]
+        restore = self.pairing.get("restore")
+        self.watches[name] = restore or {
+            "state": "disconnected", "battery": "", "transport": "ble",
+            "model": "Pebble 2 HR", "platform": "DIORITE", "firmware": "4.4.2",
+            "serial": "Q40NEW00000", "code": "NEW1", "lastSync": "just now",
+        }
+        self._set_connected(name)
+        self.pairing = None
+        return "ok:paired"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def Unpair(self, name):
+        if name == "":
+            self.watches.clear()
+            return "ok:forgot all watches"
+        match = self._resolve(name)
+        if match is None:
+            return f"notfound:no known watch matching '{name}'"
+        self.watches.pop(match, None)
+        return f"ok:forgot {match}"
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def SetWatchNickname(self, query, nickname):
+        # HOOK #9: rename a known watch (libpebble3 KnownPebbleDevice.setNickname()).
+        match = self._resolve(query)
+        if match is None:
+            return f"notfound:no known watch matching '{query}'"
+        nickname = nickname.strip()
+        if not nickname:
+            return "error:nickname must not be empty"
+        if nickname != match:
+            self.watches[nickname] = self.watches.pop(match)
+        return f"ok:renamed to {nickname}"
+
+    # --- FindWatch / WatchInfoText ----------------------------------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="b")
+    def FindWatch(self):
+        return self._connected_name() is not None
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def WatchInfoText(self):
+        name = self._connected_name()
+        if name is None:
+            return "notready:"
+        w = self.watches[name]
+        text = (
+            f"Name:        {name}\n"
+            f"Model:       {w['model']}\n"
+            f"Firmware:    {w['firmware']}\n"
+            f"Platform:    {w['platform']}\n"
+            f"Serial:      {w['serial']}\n"
+            f"Battery:     {w['battery'] or '?'}%\n"
+            f"Capabilities: appglance, health, timeline, weather"
+        )
+        return f"ok:{text}"
+
+    # --- Apps & Faces ------------------------------------------------------
+    def _resolve_app(self, query):
+        for a in self.apps:
+            if a["uuid"] == query:
+                return a
+        hits = [a for a in self.apps if query.lower() in a["title"].lower()]
+        return hits[0] if len(hits) == 1 else (None if not hits else "ambiguous")
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def ListApps(self):
+        return [rec(a["uuid"], a["type"], a["order"], ",".join(a["flags"]),
+                    a["title"], a["developer"]) for a in self.apps]
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def LaunchApp(self, query):
+        app = self._resolve_app(query)
+        if app is None:
+            return f"notfound:no app matching '{query}'"
+        if app == "ambiguous":
+            return f"ambiguous:'{query}' matches several apps"
+        if app["type"] == "watchface":
+            for a in self.apps:
+                if a["type"] == "watchface" and "active" in a["flags"]:
+                    a["flags"].remove("active")
+            if "active" not in app["flags"]:
+                app["flags"].insert(0, "active")
+        return f"ok:launched {app['title']}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def RemoveApp(self, query):
+        app = self._resolve_app(query)
+        if app is None:
+            return f"notfound:no app matching '{query}'"
+        if app == "ambiguous":
+            return f"ambiguous:'{query}' matches several apps"
+        if "system" in app["flags"]:
+            return "error:system apps cannot be removed"
+        self.apps.remove(app)
+        return f"ok:removed {app['title']}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def SideloadApp(self, path):
+        if not path:
+            return "error:empty path"
+        base = path.rsplit("/", 1)[-1]
+        title = base[:-4] if base.endswith(".pbw") else base
+        self._sideload_seq += 1
+        order = max((a["order"] for a in self.apps), default=-1) + 1
+        self.apps.append({
+            "uuid": f"side{self._sideload_seq:04d}", "type": "watchapp",
+            "order": order, "flags": ["sideloaded"], "title": title, "developer": "Sideloaded",
+        })
+        return f"ok:installed {title}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def OpenConfig(self, query):
+        app = self._resolve_app(query)
+        if app is None or app == "ambiguous":
+            return ""  # no config / not resolvable
+        if "config" not in app["flags"]:
+            return ""  # app has no config page
+        return f"ok:https://clay.local/config?uuid={app['uuid']}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="")
+    def WebviewClose(self, settings_json):
+        pass  # v1 GUI skips the round-trip
+
+    # --- Extensions / plugins ----------------------------------------------
+    def _resolve_ext(self, query):
+        for e in self.exts:
+            if e["name"] == query:
+                return e
+        hits = [e for e in self.exts if query.lower() in e["name"].lower()]
+        return hits[0] if len(hits) == 1 else ("ambiguous" if hits else None)
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def ExtList(self):
+        # HOOK #7: `config` (none|url|schema) + `description` appended to the record.
+        return [rec(e["name"],
+                    "installed" if e["installed"] else "missing",
+                    "enabled" if e["enabled"] else "disabled",
+                    "running" if e["running"] else "stopped",
+                    e["config"], e["description"]) for e in self.exts]
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def ExtEnable(self, query):
+        e = self._resolve_ext(query)
+        if e is None or e == "ambiguous":
+            return f"notfound:no extension matching '{query}'"
+        e["enabled"] = True
+        e["running"] = e["installed"]
+        return f"ok:enabled {e['name']}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def ExtDisable(self, query):
+        e = self._resolve_ext(query)
+        if e is None or e == "ambiguous":
+            return f"notfound:no extension matching '{query}'"
+        e["enabled"] = False
+        e["running"] = False
+        return f"ok:disabled {e['name']}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def ExtRestart(self, query):
+        e = self._resolve_ext(query)
+        if e is None or e == "ambiguous":
+            return f"notfound:no extension matching '{query}'"
+        if not e["enabled"]:
+            return f"error:{e['name']} is disabled"
+        e["running"] = e["installed"]
+        return f"ok:restarted {e['name']}"
+
+    @dbus.service.method(IFACE, in_signature="sb", out_signature="s")
+    def ExtUninstall(self, query, keep_config):
+        e = self._resolve_ext(query)
+        if e is None or e == "ambiguous":
+            return f"notfound:no extension matching '{query}'"
+        self.exts.remove(e)
+        kept = " (config kept)" if keep_config else ""
+        return f"ok:uninstalled {e['name']}{kept}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def ExtInstall(self, path):
+        if not path:
+            return "error:empty path"
+        base = path.rsplit("/", 1)[-1]
+        for suffix in (".tar.gz", ".tgz", ".tar", ".zip"):
+            if base.endswith(suffix):
+                base = base[: -len(suffix)]
+                break
+        self._ext_seq += 1
+        self.exts.append({"name": base, "installed": True, "enabled": True, "running": True,
+                          "config": "none", "description": "Sideloaded extension"})
+        return f"ok:installed {base}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def ExtOpenConfig(self, query):
+        # HOOK #7 (url backend): config URL on stoandl's embedded HTTP server.
+        e = self._resolve_ext(query)
+        if e is None or e == "ambiguous":
+            return f"notfound:no extension matching '{query}'"
+        if e["config"] == "url":
+            return f"ok:http://127.0.0.1:8718/ext/{e['name'].lower().replace(' ', '-')}"
+        if e["config"] == "schema":
+            return "error:this extension uses a native config form"
+        return "none:"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def ExtConfigSchema(self, query):
+        # HOOK #7 (schema backend): typed manifest as JSON.
+        e = self._resolve_ext(query)
+        if e is None or e == "ambiguous":
+            return f"notfound:no extension matching '{query}'"
+        schema = self.ext_schema.get(e["name"])
+        if not schema:
+            return "none:"
+        return "ok:" + json.dumps(schema)
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def ExtGetConfig(self, query):
+        e = self._resolve_ext(query)
+        if e is None or e == "ambiguous":
+            return f"notfound:no extension matching '{query}'"
+        return "ok:" + json.dumps(self.ext_values.get(e["name"], {}))
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def ExtSetConfig(self, query, payload):
+        e = self._resolve_ext(query)
+        if e is None or e == "ambiguous":
+            return f"notfound:no extension matching '{query}'"
+        try:
+            values = json.loads(payload)
+        except ValueError as exc:
+            return f"error:bad json: {exc}"
+        self.ext_values.setdefault(e["name"], {}).update(values)
+        return f"ok:saved {e['name']} settings"
+
+    # --- Sync (force-sync + HOOK #5 master toggles / status) ---------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def SyncWeather(self):
+        if not self.sync["weather"]["enabled"]:
+            return "error:weather is not enabled in config"
+        self.sync["weather"]["lastSync"] = "just now"
+        return "ok:weather pushed"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def SyncCalendar(self):
+        if not self.sync["calendar"]["enabled"]:
+            return "error:calendar is not enabled in config"
+        self.sync["calendar"]["lastSync"] = "just now"
+        return "ok:calendar pins updated"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def SyncHealth(self):
+        if not self.sync["health"]["enabled"]:
+            return "error:health is not enabled in config"
+        self.sync["health"]["lastSync"] = "just now"
+        self.health["lastSync"] = "just now"
+        return "ok:health data refreshed"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def GetSyncStatus(self):
+        # HOOK #5: service\tenabled\tavailable\tlastSync.
+        return [rec(s, "enabled" if v["enabled"] else "disabled",
+                    "available" if v["available"] else "unavailable", v["lastSync"])
+                for s, v in self.sync.items()]
+
+    @dbus.service.method(IFACE, in_signature="sb", out_signature="s")
+    def SetSyncEnabled(self, service, enabled):
+        # HOOK #5: rewrite stoandl.conf + start/stop the live service.
+        if service not in self.sync:
+            return f"notfound:no sync service '{service}'"
+        self.sync[service]["enabled"] = bool(enabled)
+        return f"ok:{service} {'enabled' if enabled else 'disabled'}"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def ListCalendars(self):
+        return [rec(c["id"], c["name"], "enabled" if c["enabled"] else "disabled")
+                for c in self.calendars]
+
+    @dbus.service.method(IFACE, in_signature="sb", out_signature="s")
+    def SetCalendarEnabled(self, query, enabled):
+        cal = None
+        for c in self.calendars:
+            if c["id"] == query:
+                cal = c
+                break
+        if cal is None:
+            hits = [c for c in self.calendars if query.lower() in c["name"].lower()]
+            cal = hits[0] if len(hits) == 1 else None
+        if cal is None:
+            return f"notfound:no calendar matching '{query}'"
+        cal["enabled"] = bool(enabled)
+        return f"ok:{cal['name']} {'enabled' if enabled else 'disabled'}"
+
+    # --- Watch settings (ListWatchPrefs / SetWatchPref) --------------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def ListWatchPrefs(self):
+        return [rec(p["id"], p["type"], p["current"], p["default"], p["allowed"],
+                    p["flags"], p["name"], p["description"]) for p in self.prefs]
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def SetWatchPref(self, pref_id, value):
+        for p in self.prefs:
+            if p["id"] == pref_id:
+                p["current"] = value
+                return f"ok:{p['name']} set to {value}"
+        return f"notfound:no setting '{pref_id}'"
+
+    # --- Notifications -----------------------------------------------------
+    def _resolve_notif(self, query):
+        for a in self.notif_apps:
+            if a["name"].lower() == query.lower():
+                return a
+        hits = [a for a in self.notif_apps if query.lower() in a["name"].lower()]
+        return hits[0] if len(hits) == 1 else None
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def NotifList(self):
+        return [rec(a["name"], a["mute"], a["color"], a["icon"], a["vibe"], a["last"])
+                for a in self.notif_apps]
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def NotifSetMute(self, query, spec):
+        a = self._resolve_notif(query)
+        if a is None:
+            return f"notfound:no app matching '{query}'"
+        a["mute"] = spec if spec else "never"
+        return f"ok:{a['name']} mute = {a['mute']}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def NotifSetMuteAll(self, spec):
+        for a in self.notif_apps:
+            a["mute"] = spec if spec else "never"
+        return f"ok:all apps mute = {spec or 'never'}"
+
+    @dbus.service.method(IFACE, in_signature="ssss", out_signature="s")
+    def NotifSetStyle(self, query, color, icon, vibe):
+        a = self._resolve_notif(query)
+        if a is None:
+            return f"notfound:no app matching '{query}'"
+        for field, val in (("color", color), ("icon", icon), ("vibe", vibe)):
+            if val == "":
+                continue
+            a[field] = "default" if val == "default" else val
+        return f"ok:{a['name']} style updated"
+
+    # HOOK (notifications): quiet hours + regex filters (config-backed).
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def NotifGetQuietHours(self):
+        q = self.quiet
+        return "ok:" + rec("on" if q["enabled"] else "off", q["from"], q["to"], q["now"] or "off")
+
+    @dbus.service.method(IFACE, in_signature="bss", out_signature="s")
+    def NotifSetQuietHours(self, enabled, frm, to):
+        self.quiet["enabled"] = bool(enabled)
+        if frm:
+            self.quiet["from"] = frm
+        if to:
+            self.quiet["to"] = to
+        return "ok:quiet hours updated"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def NotifSetQuietNow(self, spec):
+        self.quiet["now"] = "" if spec in ("", "off") else spec
+        return f"ok:quiet now = {self.quiet['now'] or 'off'}"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def NotifListFilters(self):
+        return [rec(f["pattern"], f["action"]) for f in self.filters]
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def NotifAddFilter(self, pattern, action):
+        if not pattern:
+            return "error:empty pattern"
+        action = action if action in ("allow", "block") else "block"
+        self.filters.append({"pattern": pattern, "action": action})
+        return f"ok:added {action} filter"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def NotifRemoveFilter(self, pattern):
+        before = len(self.filters)
+        self.filters = [f for f in self.filters if f["pattern"] != pattern]
+        if len(self.filters) == before:
+            return f"notfound:no filter matching '{pattern}'"
+        return "ok:filter removed"
+
+    # --- Health (HOOK #8) --------------------------------------------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def GetHealthSummary(self):
+        h = self.health
+        return "ok:" + rec(
+            h["stepsToday"], h["stepGoal"], h["distanceKm"], h["kcal"], h["activeMin"],
+            h["stepWeekAvg"], h["stepTrendPct"],
+            h["sleepTotalMin"], h["sleepDeepMin"], h["sleepLightMin"], h["sleepRemMin"],
+            h["sleepAvgMin"], h["sleepTrendPct"],
+            h["restingHr"], h["currentHr"], h["hrMin"], h["hrMax"], h["hrAvailable"],
+            h["lastSync"])
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="as")
+    def GetHealthSeries(self, metric):
+        h = self.health
+        if metric == "steps":
+            return [rec(d, "" if v is None else v) for d, v in zip(h["days"], h["stepWeek"])]
+        if metric == "sleep":
+            return [rec(d, "" if v is None else v) for d, v in zip(h["days"], h["sleepWeek"])]
+        if metric == "heart":
+            if h["hrAvailable"] != "yes":
+                return []
+            return [rec(i, v) for i, v in enumerate(h["heartDay"])]
+        return []
+
+    # --- Daemon config (HOOK #10) ------------------------------------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def GetConfigSchema(self):
+        return [rec(c["key"], c["type"], c["label"], c["options"], c["desc"])
+                for c in self.config_schema]
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def GetConfig(self):
+        return [rec(k, v) for k, v in self.config.items()]
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def SetConfig(self, key, value):
+        known = {c["key"] for c in self.config_schema}
+        if key not in known:
+            return f"notfound:no config key '{key}'"
+        self.config[key] = value
+        return f"ok:{key} = {value}"
+
+    # --- Firmware ----------------------------------------------------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def CheckFirmware(self):
+        # HOOK: changelog URL appended as a 7th field for the "What's new" link.
+        # ok:<board>\t<current>\t<latest>\t<asset>\t<yes|no>\t<source>\t<changelogUrl>
+        return rec("ok:snowy_s3", "4.4.2", "4.4.3", "core-fw.pbz", "yes", "github", CHANGELOG_URL)
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def UpdateFirmware(self):
+        self.fw = {"polls": 0}
+        return rec("ok:snowy_s3", "4.4.2", "4.4.3", "core-fw.pbz")
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def SideloadFirmware(self, path):
+        if not path:
+            return "error:empty path"
+        self.fw = {"polls": 0}
+        return f"ok:flashing {path.rsplit('/', 1)[-1]}"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def FirmwareStatus(self):
+        if self.fw is None:
+            return "idle:"
+        p = self.fw["polls"]
+        self.fw["polls"] += 1
+        if p <= 1:
+            return "downloading:core-fw.pbz"
+        if p == 2:
+            return "waiting:"
+        if 3 <= p <= 7:
+            return f"inprogress:{(p - 2) * 20}"   # 20,40,60,80,100
+        self.fw = None
+        return "reboot:"                           # success -> watch reboots
+
+    # --- Language packs ----------------------------------------------------
+    def _resolve_lang(self, query):
+        if not query:
+            return self.languages[0]
+        for L in self.languages:
+            if query in (L["id"], L["iso"], L["name"]):
+                return L
+        hits = [L for L in self.languages if query.lower() in L["name"].lower()]
+        return hits[0] if len(hits) == 1 else None
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def ListLanguages(self):
+        return [rec(L["id"], L["iso"], L["name"],
+                    "yes" if L["installed"] else "no", L["source"]) for L in self.languages]
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def InstallLanguage(self, query):
+        L = self._resolve_lang(query)
+        if L is None:
+            return f"notfound:no language matching '{query}'"
+        self.lang = {"polls": 0, "name": L["name"], "target": L}
+        return f"ok:{L['name']}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def SideloadLanguage(self, path):
+        if not path:
+            return "error:empty path"
+        name = path.rsplit("/", 1)[-1]
+        self.lang = {"polls": 0, "name": name, "target": None}
+        return f"ok:installing {name}"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def LanguageStatus(self):
+        if self.lang is None:
+            return "idle:"
+        p = self.lang["polls"]
+        self.lang["polls"] += 1
+        if p == 0:
+            return f"downloading:{self.lang['name']}"
+        if 1 <= p <= 4:
+            return f"installing:{p * 25}"          # 25,50,75,100
+        name = self.lang["name"]
+        if self.lang.get("target"):
+            self.lang["target"]["installed"] = True
+        self.lang = None
+        return f"done:{name}"
+
+    # --- Developer connection ----------------------------------------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def StartDevConnection(self):
+        if self._connected_name() is None:
+            return "notready:"
+        self.dev_active = True
+        return "ok:9000"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def StopDevConnection(self):
+        self.dev_active = False
+        return "ok:stopped"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def DevConnectionStatus(self):
+        if self._connected_name() is None:
+            return "notready:"
+        return "ok:active" if self.dev_active else "ok:inactive"
+
+    # --- Diagnostics -------------------------------------------------------
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def TakeScreenshot(self, path):
+        png = base64.b64decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+        try:
+            with open(path, "wb") as f:
+                f.write(png)
+        except OSError as e:
+            return f"error:{e}"
+        return rec(f"ok:{path}", "1", "1")
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def GatherLogs(self, path):
+        try:
+            with open(path, "w") as f:
+                f.write("[mock] stoandl watch log\nbattery 72%\nfw 4.4.2\n")
+        except OSError as e:
+            return f"error:{e}"
+        return f"ok:{path}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def GetCoreDump(self, path):
+        if self._connected_name() is None:
+            return "notready:"
+        try:
+            with open(path, "wb") as f:
+                f.write(b"\x7fCORE[mock coredump]")
+        except OSError as e:
+            return f"error:{e}"
+        return f"ok:{path}"
+
+    # --- Reset -------------------------------------------------------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def ResetIntoRecovery(self):
+        return "ok:queued"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def FactoryReset(self):
+        return "ok:queued"
+
+    # --- Version (soft) ----------------------------------------------------
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def Version(self):
+        return "mock-0.2.0"
+
+
+def main():
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    name = dbus.service.BusName(BUS_NAME, bus)  # claim the well-known name
+    MockStoandl(bus, OBJ_PATH)
+    print(f"[mock] {BUS_NAME} owning {OBJ_PATH} ({IFACE}) — ready", flush=True)
+    GLib.MainLoop().run()
+
+
+if __name__ == "__main__":
+    main()
