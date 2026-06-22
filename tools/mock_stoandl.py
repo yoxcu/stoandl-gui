@@ -20,6 +20,7 @@ Run inside a session bus, e.g.:  dbus-run-session -- python3 mock_stoandl.py
 
 import base64
 import json
+import time
 
 import dbus
 import dbus.service
@@ -181,16 +182,26 @@ class MockStoandl(dbus.service.Object):
             "calendar_window": "3 days", "log_level": "info",
         }
         # HOOK #8: health activity series + today totals.
+        # Last night ~23:20 → 07:04 (epoch seconds, midnight-of-today anchored).
+        midnight = int(time.time()) // 86400 * 86400
+        bedtime = midnight - 40 * 60        # 23:20 yesterday
+        wakeup = midnight + 7 * 3600 + 4 * 60  # 07:04 today
         self.health = {
             "stepsToday": 7432, "stepGoal": 10000, "distanceKm": "5.4", "kcal": 312, "activeMin": 52,
             "stepWeekAvg": 6890, "stepTrendPct": 8,
-            "sleepTotalMin": 444, "sleepDeepMin": 108, "sleepLightMin": 252, "sleepRemMin": 84,
+            "sleepTotalMin": 444, "sleepDeepMin": 108, "sleepLightMin": 336,
+            "sleepBedtime": bedtime, "sleepWakeup": wakeup, "sleepTypicalMin": 426,
             "sleepAvgMin": 426, "sleepTrendPct": 6,
             "restingHr": 58, "currentHr": 72, "hrMin": 54, "hrMax": 121, "hrAvailable": "yes",
             "lastSync": "2 min ago",
             "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
             "stepWeek": [6210, 8140, 5390, 9320, 7432, None, None],
-            "sleepWeek": [408, 432, 366, 474, 444, None, None],
+            # Sleep timeline (startFraction, widthFraction, isDeep) over a 6 PM→noon window;
+            # light container first, deep blocks last (drawn on top).
+            "sleepTimeline": [
+                (0.296, 0.435, 0),
+                (0.35, 0.03, 1), (0.46, 0.035, 1), (0.58, 0.03, 1), (0.66, 0.025, 1),
+            ],
             "heartDay": [60, 58, 57, 59, 61, 64, 70, 88, 95, 79, 72, 68,
                          66, 64, 70, 82, 90, 78, 71, 66, 61, 58, 57, 60],
         }
@@ -782,7 +793,8 @@ class MockStoandl(dbus.service.Object):
         return "ok:" + rec(
             h["stepsToday"], h["stepGoal"], h["distanceKm"], h["kcal"], h["activeMin"],
             h["stepWeekAvg"], h["stepTrendPct"],
-            h["sleepTotalMin"], h["sleepDeepMin"], h["sleepLightMin"], h["sleepRemMin"],
+            h["sleepTotalMin"], h["sleepDeepMin"], h["sleepLightMin"],
+            h["sleepBedtime"], h["sleepWakeup"], h["sleepTypicalMin"],
             h["sleepAvgMin"], h["sleepTrendPct"],
             h["restingHr"], h["currentHr"], h["hrMin"], h["hrMax"], h["hrAvailable"],
             h["lastSync"])
@@ -793,7 +805,8 @@ class MockStoandl(dbus.service.Object):
         if metric == "steps":
             return [rec(d, "" if v is None else v) for d, v in zip(h["days"], h["stepWeek"])]
         if metric == "sleep":
-            return [rec(d, "" if v is None else v) for d, v in zip(h["days"], h["sleepWeek"])]
+            # Last night's light/deep timeline: startFraction \t widthFraction \t isDeep(0|1).
+            return [rec(s, w, deep) for (s, w, deep) in h["sleepTimeline"]]
         if metric == "heart":
             if h["hrAvailable"] != "yes":
                 return []

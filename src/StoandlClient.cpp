@@ -1075,16 +1075,36 @@ QVariantMap StoandlClient::healthSummary()
     m[QStringLiteral("sleepTotalMin")]  = f.value(7).toInt();
     m[QStringLiteral("sleepDeepMin")]   = f.value(8).toInt();
     m[QStringLiteral("sleepLightMin")]  = f.value(9).toInt();
-    m[QStringLiteral("sleepRemMin")]    = f.value(10).toInt();
-    m[QStringLiteral("sleepAvgMin")]    = f.value(11).toInt();
-    m[QStringLiteral("sleepTrendPct")]  = f.value(12).toInt();
-    m[QStringLiteral("restingHr")]      = f.value(13).toInt();
-    m[QStringLiteral("currentHr")]      = f.value(14).toInt();
-    m[QStringLiteral("hrMin")]          = f.value(15).toInt();
-    m[QStringLiteral("hrMax")]          = f.value(16).toInt();
-    m[QStringLiteral("hrAvailable")]    = (f.value(17) == QStringLiteral("yes"));
-    m[QStringLiteral("lastSync")]       = f.value(18);
+    // Epoch seconds (0 = no session); QML formats to a clock time.
+    m[QStringLiteral("sleepBedtime")]   = f.value(10).toLongLong();
+    m[QStringLiteral("sleepWakeup")]    = f.value(11).toLongLong();
+    m[QStringLiteral("sleepTypicalMin")]= f.value(12).toInt();
+    m[QStringLiteral("sleepAvgMin")]    = f.value(13).toInt();
+    m[QStringLiteral("sleepTrendPct")]  = f.value(14).toInt();
+    m[QStringLiteral("restingHr")]      = f.value(15).toInt();
+    m[QStringLiteral("currentHr")]      = f.value(16).toInt();
+    m[QStringLiteral("hrMin")]          = f.value(17).toInt();
+    m[QStringLiteral("hrMax")]          = f.value(18).toInt();
+    m[QStringLiteral("hrAvailable")]    = (f.value(19) == QStringLiteral("yes"));
+    m[QStringLiteral("lastSync")]       = f.value(20);
     return m;
+}
+
+QVariantList StoandlClient::sleepTimeline()
+{
+    // Record: startFraction \t widthFraction \t isDeep(0|1) — fractions of an 18 h window
+    // (6 PM yesterday → noon today). Light intervals come first, deep last (draw deep on top).
+    QVariantList rows;
+    const QVariantList records = list(QStringLiteral("GetHealthSeries"), {QStringLiteral("sleep")});
+    for (const QVariant &v : records) {
+        const QStringList f = v.toStringList();
+        QVariantMap m;
+        m[QStringLiteral("start")] = f.value(0).toDouble();
+        m[QStringLiteral("width")] = f.value(1).toDouble();
+        m[QStringLiteral("deep")]  = (f.value(2).toInt() != 0);
+        rows.append(m);
+    }
+    return rows;
 }
 
 QVariantList StoandlClient::healthSeries(const QString &metric)

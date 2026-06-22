@@ -46,8 +46,8 @@ because the daemon isn't D-Bus-activated (a late/reconnecting client can miss a 
 | `ExtConfigSchema` | `(s) → s` | `ok:<json-array>` of `{key,type,label,secret?,options?}` | #7 (schema backend) |
 | `ExtGetConfig` | `(s) → s` | `ok:<json-object>` of current values | #7 |
 | `ExtSetConfig` | `(s,s) → s` | save the JSON values | #7 |
-| `GetHealthSummary` | `() → s` | `ok:` + 19 tab fields (today totals + week avgs + trends + resting/current HR + hrMin/hrMax + **hrAvailable** + lastSync) | #8 |
-| `GetHealthSeries` | `(s) → as` | metric `steps`\|`sleep`\|`heart` → `label\tvalue`; **`heart` returns `[]` when HR unavailable** | #8 |
+| `GetHealthSummary` | `() → s` | `ok:` + 21 tab fields (today totals + week avgs + trends + **sleep light/deep + bedtime/wakeup/typical** + resting/current HR + hrMin/hrMax + **hrAvailable** + lastSync) | #8 |
+| `GetHealthSeries` | `(s) → as` | `steps`/`heart` → `label\tvalue`; **`sleep` → last night's light/deep timeline `startFraction\twidthFraction\tisDeep`**; `heart` returns `[]` when HR unavailable | #8 |
 | `GetConfigSchema` | `() → as` | `key\ttype\tlabel\toptions\tdesc` | #10 |
 | `GetConfig` | `() → as` | `key\tvalue` | #10 |
 | `SetConfig` | `(s,s) → s` | set one config key | #10 |

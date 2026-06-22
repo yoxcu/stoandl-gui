@@ -127,8 +127,9 @@ public:
     Q_INVOKABLE QVariantMap  notifRemoveFilter(const QString &pattern);
 
     // --- typed wrappers: Health screen (read-only) — HOOK #8 ---------------
-    Q_INVOKABLE QVariantMap  healthSummary();            // GetHealthSummary() -> today totals + trends + hrAvailable
-    Q_INVOKABLE QVariantList healthSeries(const QString &metric); // GetHealthSeries(steps|sleep|heart) -> [{label,value,hasValue}]
+    Q_INVOKABLE QVariantMap  healthSummary();            // GetHealthSummary() -> today totals + trends + sleep + hrAvailable
+    Q_INVOKABLE QVariantList healthSeries(const QString &metric); // GetHealthSeries(steps|heart) -> [{label,value,hasValue}]
+    Q_INVOKABLE QVariantList sleepTimeline();            // GetHealthSeries("sleep") -> [{start,width,deep}] (fractions of last night)
 
     // --- typed wrappers: System screen (Milestone 5) -----------------------
     // Firmware (flash is async -> firmwareStatus poll, 0.8 s, 600 s ceiling).

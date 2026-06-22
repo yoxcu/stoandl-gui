@@ -16,7 +16,7 @@ Kirigami.ScrollablePage {
     // Latest snapshots (parsed in C++). summary.kind !== "ok" => no data yet.
     property var summary: ({})
     property var stepSeries: []
-    property var sleepSeries: []
+    property var sleepSegments: []   // last night's light/deep timeline (fractions of a 6 PM→noon window)
     property var heartSeries: []
 
     readonly property bool hasData: summary && summary.kind === "ok"
@@ -28,13 +28,13 @@ Kirigami.ScrollablePage {
         if (!StoandlClient.daemonUp) {
             page.summary = ({});
             page.stepSeries = [];
-            page.sleepSeries = [];
+            page.sleepSegments = [];
             page.heartSeries = [];
             return;
         }
         page.summary = StoandlClient.healthSummary();
         page.stepSeries = StoandlClient.healthSeries("steps");
-        page.sleepSeries = StoandlClient.healthSeries("sleep");
+        page.sleepSegments = StoandlClient.sleepTimeline();
         page.heartSeries = page.hrAvailable ? StoandlClient.healthSeries("heart") : [];
     }
 
@@ -57,6 +57,29 @@ Kirigami.ScrollablePage {
         var mm = String(m % 60);
         if (mm.length < 2) mm = "0" + mm;
         return Math.floor(m / 60) + "h " + mm + "m";
+    }
+
+    // epoch seconds (local) -> "H:MM AM/PM"; 0/unset -> "—"
+    function fmtClock(epoch) {
+        if (!epoch || epoch <= 0) return "—";
+        var d = new Date(epoch * 1000);
+        var h = d.getHours(), mm = d.getMinutes();
+        var ap = h < 12 ? "AM" : "PM";
+        var h12 = h % 12; if (h12 === 0) h12 = 12;
+        return h12 + ":" + (mm < 10 ? "0" + mm : mm) + " " + ap;
+    }
+
+    // Header for the sleep card — "Sleep · last night" when we woke today, else the wake date, since the
+    // most recent night with data isn't always last night (derived from the summary's wakeup epoch).
+    function sleepRecency() {
+        var w = page.hasData ? (page.summary.sleepWakeup || 0) : 0;
+        if (!w || w <= 0) return "Sleep";
+        var wake = new Date(w * 1000), now = new Date();
+        var dWake = new Date(wake.getFullYear(), wake.getMonth(), wake.getDate());
+        var dNow = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        var days = Math.round((dNow - dWake) / 86400000);
+        if (days <= 0) return "Sleep · last night";
+        return "Sleep · " + wake.toLocaleDateString(Qt.locale(), "ddd d MMM");
     }
 
     // Index of the most recent day that has a value (prototype's todayIndex).
@@ -99,7 +122,7 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp && !page.hasData
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
-            icon.name: "heart-symbolic"
+            icon.name: "love-symbolic"
             text: "No health data yet"
             explanation: "Sync your watch to pull steps, sleep, and heart-rate history. "
                        + "Health tracking must be enabled in Settings."
@@ -342,10 +365,12 @@ Kirigami.ScrollablePage {
             }
         }
 
-        // ============ SLEEP · LAST NIGHT ============
+        // ============ SLEEP (most recent night) ============
         FormCard.FormHeader {
             visible: StoandlClient.daemonUp && page.hasData
-            title: "Sleep · last night"
+            // "last night" when we woke today, otherwise the date of the most recent night with data
+            // (the watch may have been syncing elsewhere, so the freshest sleep we hold can be older).
+            title: page.sleepRecency()
         }
 
         FormCard.FormCard {
@@ -356,76 +381,116 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
 
                 contentItem: ColumnLayout {
+                    id: sleepCol
                     spacing: Kirigami.Units.largeSpacing
 
                     readonly property int deepMin: page.hasData ? (page.summary.sleepDeepMin || 0) : 0
                     readonly property int lightMin: page.hasData ? (page.summary.sleepLightMin || 0) : 0
-                    readonly property int remMin: page.hasData ? (page.summary.sleepRemMin || 0) : 0
                     readonly property int totalMin: page.hasData ? (page.summary.sleepTotalMin || 0) : 0
+                    readonly property int typicalMin: page.hasData ? (page.summary.sleepTypicalMin || 0) : 0
+                    readonly property real bedtime: page.hasData ? (page.summary.sleepBedtime || 0) : 0
+                    readonly property real wakeup: page.hasData ? (page.summary.sleepWakeup || 0) : 0
+                    readonly property bool haveSleep: totalMin > 0
 
-                    // Three distinct theme-derived tints for the stages.
+                    // Pebble models two stages: light (the Sleep container) and deep (nested). One hue,
+                    // deep solid + light faded, so the timeline reads as a single theme-driven band.
                     readonly property color deepTint: Kirigami.Theme.highlightColor
-                    readonly property color lightTint: Kirigami.Theme.positiveTextColor
-                    readonly property color remTint: Kirigami.Theme.neutralTextColor
+                    readonly property color lightTint: Qt.rgba(Kirigami.Theme.highlightColor.r,
+                                                               Kirigami.Theme.highlightColor.g,
+                                                               Kirigami.Theme.highlightColor.b, 0.35)
 
+                    // Total + asleep, with the bedtime→wakeup span trailing.
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: Kirigami.Units.smallSpacing
                         Kirigami.Heading {
                             level: 1
-                            text: page.hasData ? page.fmtMin(parent.totalMin) : "—"
+                            text: sleepCol.haveSleep ? page.fmtMin(sleepCol.totalMin) : "—"
                         }
                         QQC2.Label {
                             text: "asleep"
                             opacity: 0.7
                             Layout.alignment: Qt.AlignBaseline
                         }
+                        Item { Layout.fillWidth: true }
+                        QQC2.Label {
+                            visible: sleepCol.haveSleep
+                            text: page.fmtClock(sleepCol.bedtime) + " → " + page.fmtClock(sleepCol.wakeup)
+                            opacity: 0.7
+                            font: Kirigami.Theme.smallFont
+                            Layout.alignment: Qt.AlignBaseline
+                        }
                     }
 
-                    // Stacked horizontal bar.
-                    RowLayout {
-                        id: sleepBar
+                    // No-sleep empty state (steps may still exist for today).
+                    QQC2.Label {
+                        visible: !sleepCol.haveSleep
                         Layout.fillWidth: true
-                        Layout.preferredHeight: Kirigami.Units.gridUnit * 0.75
-                        spacing: Kirigami.Units.smallSpacing / 2
+                        text: "No sleep data yet — sync your watch to pull recent nights."
+                        opacity: 0.6
+                        font: Kirigami.Theme.smallFont
+                    }
+
+                    // Timeline: light/deep segments at their real times across a 6 PM→noon window.
+                    Item {
+                        id: sleepTrack
+                        visible: sleepCol.haveSleep
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Kirigami.Units.gridUnit * 1.5
 
                         Rectangle {
-                            Layout.fillHeight: true
-                            Layout.preferredWidth: 1
-                            Layout.fillWidth: sleepBar.parent.deepMin > 0
-                            Layout.horizontalStretchFactor: Math.max(0, sleepBar.parent.deepMin)
-                            visible: sleepBar.parent.deepMin > 0
-                            radius: height / 4
-                            color: sleepBar.parent.deepTint
+                            anchors.fill: parent
+                            radius: height / 5
+                            color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
+                                           Kirigami.Theme.textColor.b, 0.07)
                         }
-                        Rectangle {
-                            Layout.fillHeight: true
-                            Layout.preferredWidth: 1
-                            Layout.fillWidth: sleepBar.parent.lightMin > 0
-                            Layout.horizontalStretchFactor: Math.max(0, sleepBar.parent.lightMin)
-                            visible: sleepBar.parent.lightMin > 0
-                            radius: height / 4
-                            color: sleepBar.parent.lightTint
-                        }
-                        Rectangle {
-                            Layout.fillHeight: true
-                            Layout.preferredWidth: 1
-                            Layout.fillWidth: sleepBar.parent.remMin > 0
-                            Layout.horizontalStretchFactor: Math.max(0, sleepBar.parent.remMin)
-                            visible: sleepBar.parent.remMin > 0
-                            radius: height / 4
-                            color: sleepBar.parent.remTint
+                        Repeater {
+                            model: page.sleepSegments
+                            delegate: Rectangle {
+                                required property var modelData
+                                y: 0
+                                height: parent.height
+                                x: modelData.start * sleepTrack.width
+                                width: Math.max(2, modelData.width * sleepTrack.width)
+                                radius: height / 5
+                                color: modelData.deep ? sleepCol.deepTint : sleepCol.lightTint
+                            }
                         }
                     }
 
-                    // Legend.
+                    // Axis ticks for the 18 h window (6 PM yesterday → noon today).
+                    Item {
+                        id: sleepAxis
+                        visible: sleepCol.haveSleep
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Kirigami.Units.gridUnit
+                        Repeater {
+                            model: [["6 PM", 0.0], ["12 AM", 0.3333], ["6 AM", 0.6667], ["noon", 1.0]]
+                            delegate: QQC2.Label {
+                                required property var modelData
+                                text: modelData[0]
+                                font: Kirigami.Theme.smallFont
+                                opacity: 0.5
+                                x: Math.max(0, Math.min(sleepAxis.width - width,
+                                                        modelData[1] * sleepAxis.width - width / 2))
+                            }
+                        }
+                    }
+
+                    // Legend (deep / light) + 30-day typical.
                     RowLayout {
+                        visible: sleepCol.haveSleep
                         Layout.fillWidth: true
                         spacing: Kirigami.Units.largeSpacing
-                        SleepLegend { tint: sleepBar.parent.deepTint; name: "Deep"; mins: page.fmtMin(sleepBar.parent.deepMin) }
-                        SleepLegend { tint: sleepBar.parent.lightTint; name: "Light"; mins: page.fmtMin(sleepBar.parent.lightMin) }
-                        SleepLegend { tint: sleepBar.parent.remTint; name: "REM"; mins: page.fmtMin(sleepBar.parent.remMin) }
+                        SleepLegend { tint: sleepCol.deepTint; name: "Deep"; mins: page.fmtMin(sleepCol.deepMin) }
+                        SleepLegend { tint: sleepCol.lightTint; name: "Light"; mins: page.fmtMin(sleepCol.lightMin) }
                         Item { Layout.fillWidth: true }
+                        QQC2.Label {
+                            visible: sleepCol.typicalMin > 0
+                            text: "Typical " + page.fmtMin(sleepCol.typicalMin)
+                            opacity: 0.7
+                            font: Kirigami.Theme.smallFont
+                        }
                     }
 
                     Kirigami.Separator { Layout.fillWidth: true }
@@ -472,7 +537,8 @@ Kirigami.ScrollablePage {
                                 spacing: Kirigami.Units.smallSpacing / 2
                                 Kirigami.Heading {
                                     level: 1
-                                    text: page.hrAvailable ? String(page.summary.restingHr) : "—"
+                                    // Resting HR is derived from sleep — show — until a sleep session exists.
+                                    text: (page.hrAvailable && page.summary.restingHr > 0) ? String(page.summary.restingHr) : "—"
                                     color: Kirigami.Theme.negativeTextColor
                                 }
                                 QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
@@ -486,7 +552,7 @@ Kirigami.ScrollablePage {
                                 spacing: Kirigami.Units.smallSpacing / 2
                                 Kirigami.Heading {
                                     level: 3
-                                    text: page.hrAvailable ? String(page.summary.currentHr) : "—"
+                                    text: (page.hrAvailable && page.summary.currentHr > 0) ? String(page.summary.currentHr) : "—"
                                 }
                                 QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
                             }
