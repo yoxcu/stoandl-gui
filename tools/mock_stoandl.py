@@ -470,6 +470,7 @@ class MockStoandl(dbus.service.Object):
             return f"notfound:no extension matching '{query}'"
         e["enabled"] = True
         e["running"] = e["installed"]
+        self.ExtensionsChanged()
         return f"ok:enabled {e['name']}"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
@@ -479,6 +480,7 @@ class MockStoandl(dbus.service.Object):
             return f"notfound:no extension matching '{query}'"
         e["enabled"] = False
         e["running"] = False
+        self.ExtensionsChanged()
         return f"ok:disabled {e['name']}"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
@@ -489,6 +491,7 @@ class MockStoandl(dbus.service.Object):
         if not e["enabled"]:
             return f"error:{e['name']} is disabled"
         e["running"] = e["installed"]
+        self.ExtensionsChanged()
         return f"ok:restarted {e['name']}"
 
     @dbus.service.method(IFACE, in_signature="sb", out_signature="s")
@@ -498,6 +501,7 @@ class MockStoandl(dbus.service.Object):
             return f"notfound:no extension matching '{query}'"
         self.exts.remove(e)
         kept = " (config kept)" if keep_config else ""
+        self.ExtensionsChanged()
         return f"ok:uninstalled {e['name']}{kept}"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
@@ -512,6 +516,7 @@ class MockStoandl(dbus.service.Object):
         self._ext_seq += 1
         self.exts.append({"name": base, "installed": True, "enabled": True, "running": True,
                           "config": "none", "description": "Sideloaded extension"})
+        self.ExtensionsChanged()
         return f"ok:installed {base}"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
@@ -785,7 +790,7 @@ class MockStoandl(dbus.service.Object):
         L = self._resolve_lang(query)
         if L is None:
             return f"notfound:no language matching '{query}'"
-        self.lang = {"polls": 0, "name": L["name"], "target": L}
+        self._start_lang_push(L["name"], L)
         return f"ok:{L['name']}"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
@@ -793,24 +798,22 @@ class MockStoandl(dbus.service.Object):
         if not path:
             return "error:empty path"
         name = path.rsplit("/", 1)[-1]
-        self.lang = {"polls": 0, "name": name, "target": None}
+        self._start_lang_push(name, None)
         return f"ok:installing {name}"
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def LanguageStatus(self):
+        # Non-advancing SNAPSHOT of the op the _lang_tick walker drives — the GLib walker owns
+        # the step counter and pushes LanguageProgress; this is just the polled fallback that
+        # reports the current phase (so polling and the signal never double-advance the walk).
         if self.lang is None:
             return "idle:"
         p = self.lang["polls"]
-        self.lang["polls"] += 1
         if p == 0:
             return f"downloading:{self.lang['name']}"
         if 1 <= p <= 4:
             return f"installing:{p * 25}"          # 25,50,75,100
-        name = self.lang["name"]
-        if self.lang.get("target"):
-            self.lang["target"]["installed"] = True
-        self.lang = None
-        return f"done:{name}"
+        return f"done:{self.lang['name']}"
 
     # --- Developer connection ----------------------------------------------
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
@@ -897,6 +900,17 @@ class MockStoandl(dbus.service.Object):
         # poke: re-call ListApps. Fired on sideload/remove/launch (active-face change).
         pass
 
+    @dbus.service.signal(IFACE, signature="sis")
+    def LanguageProgress(self, phase, percent, detail):
+        # phase ∈ {downloading,installing,done,idle,failed,notready} (LanguageStatus vocabulary);
+        # percent 0–100 while installing else -1; detail = language name / failure reason.
+        pass
+
+    @dbus.service.signal(IFACE, signature="")
+    def ExtensionsChanged(self):
+        # poke: re-call ExtList. Fired on enable/disable/restart/install/uninstall.
+        pass
+
     # --- firmware progress walker (pushes FirmwareProgress on a GLib tick) --
     def _fw_tick(self):
         """Drive a firmware op forward one step and PUSH the phase via FirmwareProgress.
@@ -924,6 +938,34 @@ class MockStoandl(dbus.service.Object):
     def _start_fw_push(self):
         self.fw = {"polls": 0}
         GLib.timeout_add(700, self._fw_tick)  # ~match the CLI/GUI firmware poll cadence
+
+    # --- language progress walker (pushes LanguageProgress on a GLib tick) --
+    def _lang_tick(self):
+        """Drive a language install forward one step and PUSH the phase via LanguageProgress.
+
+        Mirrors LanguageStatus()'s walk so the polled path still works as a fallback;
+        returns True to keep the GLib timer running, False to stop it once terminal.
+        """
+        if self.lang is None:
+            return False
+        p = self.lang["polls"]
+        self.lang["polls"] += 1
+        if p == 0:
+            self.LanguageProgress("downloading", -1, self.lang["name"])
+        elif 1 <= p <= 4:
+            self.LanguageProgress("installing", p * 25, "")  # 25,50,75,100
+        else:
+            name = self.lang["name"]
+            if self.lang.get("target"):
+                self.lang["target"]["installed"] = True
+            self.lang = None
+            self.LanguageProgress("done", -1, name)  # success → installed
+            return False
+        return True
+
+    def _start_lang_push(self, name, target):
+        self.lang = {"polls": 0, "name": name, "target": target}
+        GLib.timeout_add(700, self._lang_tick)  # ~match the firmware push cadence
 
 
 def main():

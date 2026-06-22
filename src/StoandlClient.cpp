@@ -48,8 +48,10 @@ constexpr int WATCH_INTERVAL_MS = 20000;
 constexpr int FW_INTERVAL_MS = 800;
 constexpr int FW_TIMEOUT_MS  = 600000;
 
-// Language install poll: 0.6 s cadence, 180 s ceiling.
-constexpr int LANG_INTERVAL_MS = 600;
+// Language install poll: 3 s watchdog cadence, 180 s ceiling. The LanguageProgress signal now
+// carries the live %, so this poll is relaxed from a chatty 0.6 s to a watchdog tick — it stays
+// as the reboot/disconnect watchdog + terminal-state catch (and the missed-signal fallback).
+constexpr int LANG_INTERVAL_MS = 3000;
 constexpr int LANG_TIMEOUT_MS  = 180000;
 } // namespace
 
@@ -94,6 +96,10 @@ StoandlClient::StoandlClient(QObject *parent)
                   this, SLOT(onFirmwareProgress(QString, int, QString)));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("LockerChanged"),
                   this, SLOT(onLockerChanged()));
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("LanguageProgress"),
+                  this, SLOT(onLanguageProgress(QString, int, QString)));
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("ExtensionsChanged"),
+                  this, SLOT(onExtensionsChanged()));
 
     recheckDaemon();
 }
@@ -565,34 +571,42 @@ void StoandlClient::languagePollOnce()
         return;
     }
     const Status s = callStatus(QStringLiteral("LanguageStatus"));
-    const QString k = s.kind;
-
-    // Skip one stale sticky terminal on the first poll (previous install's value).
+    // Skip one stale sticky terminal on the first poll (previous install's value). This is a
+    // poll-only guard: the LanguageStatus method can snapshot the *prior* install's terminal,
+    // whereas the LanguageProgress signal is always live, so the signal path must never drop one.
     if (m_langFirstPoll) {
         m_langFirstPoll = false;
-        if (k == QStringLiteral("done") || k == QStringLiteral("idle") || k == QStringLiteral("failed"))
+        if (s.kind == QStringLiteral("done") || s.kind == QStringLiteral("idle")
+            || s.kind == QStringLiteral("failed"))
             return;
     }
-    if (k == QStringLiteral("downloading") || k == QStringLiteral("installing"))
+    const int pct = (s.kind == QStringLiteral("installing")) ? parsePercent(s.tail) : -1;
+    emitLanguageStatus(s.kind, pct, s.tail);
+}
+
+void StoandlClient::emitLanguageStatus(const QString &phase, int percent, const QString &detail)
+{
+    // Track activity so a `notready` (link dropping mid-install) counts as a disconnect only
+    // *after* real progress — same rule whether it arrived via the poll or the signal.
+    if (phase == QStringLiteral("downloading") || phase == QStringLiteral("installing"))
         m_langSeenActivity = true;
 
-    if (k == QStringLiteral("done")) {
+    if (phase == QStringLiteral("done")) {
         stopLanguagePoll();
-        Q_EMIT languageStatus(QStringLiteral("success"), 100, s.tail);
+        Q_EMIT languageStatus(QStringLiteral("success"), 100, detail);
         return;
     }
-    if (k == QStringLiteral("failed")) {
+    if (phase == QStringLiteral("failed")) {
         stopLanguagePoll();
-        Q_EMIT languageStatus(QStringLiteral("failed"), -1, s.tail);
+        Q_EMIT languageStatus(QStringLiteral("failed"), -1, detail);
         return;
     }
-    if (k == QStringLiteral("notready") && m_langSeenActivity) {
+    if (phase == QStringLiteral("notready") && m_langSeenActivity) {
         stopLanguagePoll();
         Q_EMIT languageStatus(QStringLiteral("disconnected"), -1, QStringLiteral("Watch disconnected"));
         return;
     }
-    const int pct = (k == QStringLiteral("installing")) ? parsePercent(s.tail) : -1;
-    Q_EMIT languageStatus(k, pct, s.tail);
+    Q_EMIT languageStatus(phase, percent, detail); // idle / downloading / installing / pre-activity notready
 }
 
 // --- typed wrappers: System / diagnostics ----------------------------------
@@ -1155,6 +1169,19 @@ void StoandlClient::onFirmwareProgress(const QString &phase, int percent, const 
     qCDebug(lcStoandl).noquote().nospace()
         << "signal FirmwareProgress: " << phase << " " << percent << "% " << detail;
     emitFirmwareStatus(phase, percent, detail);
+}
+
+void StoandlClient::onLanguageProgress(const QString &phase, int percent, const QString &detail)
+{
+    qCDebug(lcStoandl).noquote().nospace()
+        << "signal LanguageProgress: " << phase << " " << percent << "% " << detail;
+    emitLanguageStatus(phase, percent, detail);
+}
+
+void StoandlClient::onExtensionsChanged()
+{
+    qCDebug(lcStoandl) << "signal ExtensionsChanged → refreshExtensions()";
+    refreshExtensions(); // emits extensionsChanged (covers CLI/other-client install/enable/disable/restart)
 }
 
 bool StoandlClient::startDaemon()

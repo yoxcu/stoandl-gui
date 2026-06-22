@@ -20,7 +20,7 @@ and consumed by the GUI; the real Kotlin daemon must grow the same surface. Form
 
 ### New signals (reactive layer — augment polling)
 
-The daemon gained **three signals** on `de.yoxcu.stoandl.Control`. They are a push layer ON TOP of
+The daemon gained **five signals** on `de.yoxcu.stoandl.Control`. They are a push layer ON TOP of
 polling — the GUI subscribes to them but keeps the slow safety-net watch poll + the daemonUp re-sync,
 because the daemon isn't D-Bus-activated (a late/reconnecting client can miss a signal).
 
@@ -29,6 +29,8 @@ because the daemon isn't D-Bus-activated (a late/reconnecting client can miss a 
 | `WatchesChanged` | `()` | poke → re-call `ListWatches` (connect/disconnect/pair-completion) | #1 (partial) |
 | `FirmwareProgress` | `(s phase, i percent, s detail)` | push flash progress; phase vocabulary = `FirmwareStatus`'s; percent 0–100 while `inprogress` else -1 | #2 (partial) |
 | `LockerChanged` | `()` | poke → re-call `ListApps` (install/remove + active-watchface change) | #3 (partial) |
+| `LanguageProgress` | `(s phase, i percent, s detail)` | push language-install progress; phase vocabulary = `LanguageStatus`'s; percent 0–100 while `installing` else -1 | #2 (partial) |
+| `ExtensionsChanged` | `()` | poke → re-call `ExtList` (enable/disable/restart/install/uninstall, incl. CLI/other-client) | #3 (partial) |
 
 ### New methods (the hooks)
 
@@ -103,18 +105,21 @@ the notification regex-filter hooks. (The notification **quiet-hours** hooks —
 mirrors desktop Do Not Disturb ↔ the watch's native Quiet Time, so the daemon won't implement them and
 the GUI no longer calls them.)
 
-**Reactive signals — partially landed (the three pokes, consumed on top of polling):**
-- #1 `WatchesChanged()`, #2 `FirmwareProgress(s,i,s)`, #3 `LockerChanged()` now exist and the GUI
-  subscribes to them in `StoandlClient` (re-using `refreshWatches()`/`refreshApps()`/the
-  `firmwareStatus` emit — QML unchanged). They **augment** polling rather than replace it: the daemon
-  is not D-Bus-activated, so a late/reconnecting client can miss a signal → the watch poll stays (now
-  a **20 s** safety-net cadence, still the `BluetoothStatus` carrier) and the GUI re-syncs on
-  `daemonUpChanged`. The op-pollers stay too (the firmware op-poll is the reboot/disconnect watchdog;
-  `FirmwareProgress` just smooths the % between its ticks). The mock emits all three from its state
-  mutations so PUSH mode can be exercised.
-- **Still open** in this trio: the richer `WatchStateChanged(s name, s state, i battery)` (per-watch
-  payload + mid-session reconnect), `LanguageProgress` (language install stays poll-only), and
-  `ExtensionStateChanged` (Plugins screen still re-polls `ExtList`).
+**Reactive signals — partially landed (five signals, consumed on top of polling):**
+- #1 `WatchesChanged()`, #2 `FirmwareProgress(s,i,s)`, #3 `LockerChanged()`, plus
+  `LanguageProgress(s,i,s)` and `ExtensionsChanged()` now exist and the GUI subscribes to them in
+  `StoandlClient` (re-using `refreshWatches()`/`refreshApps()`/`refreshExtensions()`/the
+  `firmwareStatus`+`languageStatus` emit helpers — QML unchanged). They **augment** polling rather
+  than replace it: the daemon is not D-Bus-activated, so a late/reconnecting client can miss a signal
+  → the watch poll stays (now a **20 s** safety-net cadence, still the `BluetoothStatus` carrier) and
+  the GUI re-syncs on `daemonUpChanged`. The op-pollers stay too (the firmware/language op-poll is the
+  reboot/disconnect watchdog; `FirmwareProgress`/`LanguageProgress` just smooth the % between its
+  ticks, so the language op-poll relaxes from 0.6 s to a **3 s** watchdog cadence). The mock emits all
+  five from its state mutations so PUSH mode can be exercised.
+- **Still open**: the richer `WatchStateChanged(s name, s state, i battery)` (per-watch payload +
+  mid-session reconnect) and the fine-grained `ExtensionStateChanged(s name, s state)` (per-extension
+  crash/quarantine run-state — the list-level `ExtensionsChanged` poke doesn't carry it, so the
+  Plugins screen still re-polls `ExtList` for that).
 
 **Deferred:**
 - #6 byte-returning variants (`TakeScreenshotBytes`, `GatherLogsText`, `GetCoreDumpBytes`, `BackupTo`/

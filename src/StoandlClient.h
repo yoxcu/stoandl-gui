@@ -186,6 +186,8 @@ private Q_SLOTS:
     void onWatchesChanged();                                          // poke → refreshWatches()
     void onFirmwareProgress(const QString &phase, int percent, const QString &detail); // → firmwareStatus()
     void onLockerChanged();                                           // poke → refreshApps()
+    void onLanguageProgress(const QString &phase, int percent, const QString &detail); // → languageStatus()
+    void onExtensionsChanged();                                       // poke → refreshExtensions()
     void pollPairOnce();
     void firmwarePollOnce();
     void languagePollOnce();
@@ -203,6 +205,12 @@ private:
     // loop and the FirmwareProgress signal so both map reboot→success, post-activity notready→
     // success, failed→failed identically, and ignore an idle/notready poke when nothing's in flight.
     void         emitFirmwareStatus(const QString &phase, int percent, const QString &detail);
+    // Normalise a raw language phase (LanguageStatus kind OR LanguageProgress phase) to the
+    // terminal/progress `kind` the QML expects and Q_EMIT languageStatus. Shared by the poll
+    // loop and the LanguageProgress signal so both map done→success, post-activity notready→
+    // disconnected, failed→failed identically. (The first-poll stale-terminal skip stays in
+    // languagePollOnce — it guards a stale poll snapshot; the signal is always live.)
+    void         emitLanguageStatus(const QString &phase, int percent, const QString &detail);
     void         runCli(const QString &op, const QStringList &args);
 
     QDBusConnection m_bus;
