@@ -18,6 +18,18 @@ and consumed by the GUI; the real Kotlin daemon must grow the same surface. Form
 | `ExtList` | `name\tinstalled\tenabled\trunning` | `name\tinstalled\tenabled\trunning\t**config**\t**description**` (config ∈ `none`\|`url`\|`schema`) | #7 |
 | `CheckFirmware` | `ok:board\tcurrent\tlatest\tasset\tyes\|no\tsource` | …`\t**changelogUrl**` (7th field) | new — the Watch banner's "What's new" link needs it; nothing in the 51 carries a changelog URL |
 
+### New signals (reactive layer — augment polling)
+
+The daemon gained **three signals** on `de.yoxcu.stoandl.Control`. They are a push layer ON TOP of
+polling — the GUI subscribes to them but keeps the slow safety-net watch poll + the daemonUp re-sync,
+because the daemon isn't D-Bus-activated (a late/reconnecting client can miss a signal).
+
+| Signal | Sig | Meaning | Hook |
+|---|---|---|---|
+| `WatchesChanged` | `()` | poke → re-call `ListWatches` (connect/disconnect/pair-completion) | #1 (partial) |
+| `FirmwareProgress` | `(s phase, i percent, s detail)` | push flash progress; phase vocabulary = `FirmwareStatus`'s; percent 0–100 while `inprogress` else -1 | #2 (partial) |
+| `LockerChanged` | `()` | poke → re-call `ListApps` (install/remove + active-watchface change) | #3 (partial) |
+
 ### New methods (the hooks)
 
 | Method | Sig | Returns | Hook |
@@ -91,11 +103,20 @@ the notification regex-filter hooks. (The notification **quiet-hours** hooks —
 mirrors desktop Do Not Disturb ↔ the watch's native Quiet Time, so the daemon won't implement them and
 the GUI no longer calls them.)
 
-**Deferred (the GUI ships on polling — handoff "when you want polling → live"):**
-- #1 `WatchStateChanged`, #2 `FirmwareProgress`/`LanguageProgress`, #3 `LockerChanged`/
-  `ExtensionStateChanged`. These are pure-wiring reactive upgrades. The GUI works today via the 4 s
-  `ListWatches` focus poll, the Pair/Firmware/Language op-pollers, and the refresh-after-every-mutation
-  rule. Landing the signals would let `StoandlClient` drop its timers; no UI change required.
+**Reactive signals — partially landed (the three pokes, consumed on top of polling):**
+- #1 `WatchesChanged()`, #2 `FirmwareProgress(s,i,s)`, #3 `LockerChanged()` now exist and the GUI
+  subscribes to them in `StoandlClient` (re-using `refreshWatches()`/`refreshApps()`/the
+  `firmwareStatus` emit — QML unchanged). They **augment** polling rather than replace it: the daemon
+  is not D-Bus-activated, so a late/reconnecting client can miss a signal → the watch poll stays (now
+  a **20 s** safety-net cadence, still the `BluetoothStatus` carrier) and the GUI re-syncs on
+  `daemonUpChanged`. The op-pollers stay too (the firmware op-poll is the reboot/disconnect watchdog;
+  `FirmwareProgress` just smooths the % between its ticks). The mock emits all three from its state
+  mutations so PUSH mode can be exercised.
+- **Still open** in this trio: the richer `WatchStateChanged(s name, s state, i battery)` (per-watch
+  payload + mid-session reconnect), `LanguageProgress` (language install stays poll-only), and
+  `ExtensionStateChanged` (Plugins screen still re-polls `ExtList`).
+
+**Deferred:**
 - #6 byte-returning variants (`TakeScreenshotBytes`, `GatherLogsText`, `GetCoreDumpBytes`, `BackupTo`/
   `RestoreFrom`, `SupportBundle`) — not needed; the GUI is co-located with the daemon and uses the
   path-returning methods + the `stoandl` CLI for backup/restore/support.
@@ -117,7 +138,7 @@ the GUI no longer calls them.)
   so it even catches rfkill / airplane-mode (which leave `Powered=true`) — and **logs every transition**
   ("Bluetooth disabled — pausing…" / "Bluetooth re-enabled — resuming"). The only gap was D-Bus
   exposure. That gap is closed: **`BluetoothStatus() → ok:on | ok:off`** (wiring-only — the state was
-  already in `StoandlControlImpl` as `btOn()`). The GUI should poll it (e.g. on the same 4 s focus tick
+  already in `StoandlControlImpl` as `btOn()`). The GUI should poll it (e.g. on the same 20 s watch tick
   as `ListWatches`) and render the prototype's Bluetooth-off state instead of an empty no-watch screen.
 - **Reconnecting — still not surfaced.** This transient genuinely needs per-connection state tracking
   (`WatchStateChanged`); there's no signal. The polled `ListWatches` `state` field gives `connecting`,

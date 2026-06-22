@@ -14,8 +14,10 @@ class QTimer;
 // (`StoandlClient` in module org.stoandl.gui). Three jobs: call, parse, poll.
 //
 // Contract: de.yoxcu.stoandl.Control on the *session* bus, path /de/yoxcu/stoandl.
-// The interface has no signals and no properties, so every live value is polled
-// here; the QML never polls and never parses. See docs/handoff/dbus-interface.md.
+// The interface exposes three reactive signals (WatchesChanged/FirmwareProgress/
+// LockerChanged) that augment polling; polling stays as the fallback (the daemon is not
+// D-Bus-activated, so a late/reconnecting client can miss a signal). The QML never polls
+// and never parses — all of that lives here. See docs/handoff/dbus-interface.md.
 class StoandlClient : public QObject
 {
     Q_OBJECT
@@ -23,7 +25,7 @@ class StoandlClient : public QObject
     QML_SINGLETON
 
     Q_PROPERTY(bool daemonUp READ daemonUp NOTIFY daemonUpChanged)
-    // Host Bluetooth on/usable (BluetoothStatus, polled on the 4 s watch tick). The daemon detects
+    // Host Bluetooth on/usable (BluetoothStatus, polled on the 20 s watch tick). The daemon detects
     // adapter-off / rfkill / airplane-mode; the GUI shows a "Bluetooth is off" state when this is false.
     Q_PROPERTY(bool bluetoothOn READ bluetoothOn NOTIFY bluetoothOnChanged)
 
@@ -150,7 +152,7 @@ public:
     Q_INVOKABLE void         supportBundle(const QUrl &outFile); // stoandl support [path]
 
     // --- polling control (driven by the Watch page lifecycle) --------------
-    Q_INVOKABLE void startWatchPoll();   // 4 s focus poll of ListWatches
+    Q_INVOKABLE void startWatchPoll();   // 20 s safety-net poll of ListWatches (+ BluetoothStatus)
     Q_INVOKABLE void stopWatchPoll();
     Q_INVOKABLE void refreshWatches();   // immediate poll + watchesChanged (call after any mutation)
 
@@ -164,7 +166,7 @@ public:
 Q_SIGNALS:
     void daemonUpChanged();
     void bluetoothOnChanged();                       // host Bluetooth on/off (BluetoothStatus, watch tick)
-    void watchesChanged(const QVariantList &rows);   // 4 s focus poll
+    void watchesChanged(const QVariantList &rows);   // WatchesChanged signal + 20 s safety-net poll
     void pairStatus(const QString &kind, const QString &msg); // Pair/Repair poll
     void findWatchResult(bool ok);
     void appsChanged(const QVariantList &rows);      // ListApps refresh (Apps screen)
@@ -179,6 +181,11 @@ Q_SIGNALS:
 
 private Q_SLOTS:
     void onNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
+    // Reactive D-Bus signals (de.yoxcu.stoandl.Control) — augment polling, never replace it
+    // (the daemon isn't D-Bus-activated, so a late/reconnecting client can miss a signal).
+    void onWatchesChanged();                                          // poke → refreshWatches()
+    void onFirmwareProgress(const QString &phase, int percent, const QString &detail); // → firmwareStatus()
+    void onLockerChanged();                                           // poke → refreshApps()
     void pollPairOnce();
     void firmwarePollOnce();
     void languagePollOnce();
@@ -191,6 +198,11 @@ private:
     static int   parsePercent(const QString &s);
     void         startFirmwarePoll();
     void         startLanguagePoll();
+    // Normalise a raw firmware phase (FirmwareStatus kind OR FirmwareProgress phase) to the
+    // terminal/progress `kind` the QML expects and Q_EMIT firmwareStatus. Shared by the poll
+    // loop and the FirmwareProgress signal so both map reboot→success, post-activity notready→
+    // success, failed→failed identically, and ignore an idle/notready poke when nothing's in flight.
+    void         emitFirmwareStatus(const QString &phase, int percent, const QString &detail);
     void         runCli(const QString &op, const QStringList &args);
 
     QDBusConnection m_bus;

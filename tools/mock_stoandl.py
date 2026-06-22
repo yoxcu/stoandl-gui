@@ -222,6 +222,8 @@ class MockStoandl(dbus.service.Object):
             w["state"] = "connected" if n == name else "disconnected"
         if name in self.watches and not self.watches[name]["battery"]:
             self.watches[name]["battery"] = "88"
+        # Push: connect/disconnect/pair-completion all funnel through here.
+        self.WatchesChanged()
 
     # --- ListWatches / Battery / WatchDetails ------------------------------
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
@@ -400,6 +402,7 @@ class MockStoandl(dbus.service.Object):
                     a["flags"].remove("active")
             if "active" not in app["flags"]:
                 app["flags"].insert(0, "active")
+        self.LockerChanged()   # active-face change is a locker change
         return f"ok:launched {app['title']}"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
@@ -412,6 +415,7 @@ class MockStoandl(dbus.service.Object):
         if "system" in app["flags"]:
             return "error:system apps cannot be removed"
         self.apps.remove(app)
+        self.LockerChanged()
         return f"ok:removed {app['title']}"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
@@ -426,6 +430,7 @@ class MockStoandl(dbus.service.Object):
             "uuid": f"side{self._sideload_seq:04d}", "type": "watchapp",
             "order": order, "flags": ["sideloaded"], "title": title, "developer": "Sideloaded",
         })
+        self.LockerChanged()
         return f"ok:installed {title}"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
@@ -734,29 +739,30 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def UpdateFirmware(self):
-        self.fw = {"polls": 0}
+        self._start_fw_push()   # walk + push FirmwareProgress on a GLib tick
         return rec("ok:snowy_s3", "4.4.2", "4.4.3", "core-fw.pbz")
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def SideloadFirmware(self, path):
         if not path:
             return "error:empty path"
-        self.fw = {"polls": 0}
+        self._start_fw_push()
         return f"ok:flashing {path.rsplit('/', 1)[-1]}"
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def FirmwareStatus(self):
+        # Non-advancing SNAPSHOT of the op the _fw_tick walker drives — the GLib walker owns
+        # the step counter and pushes FirmwareProgress; this is just the polled fallback that
+        # reports the current phase (so polling and the signal never double-advance the walk).
         if self.fw is None:
             return "idle:"
         p = self.fw["polls"]
-        self.fw["polls"] += 1
         if p <= 1:
             return "downloading:core-fw.pbz"
         if p == 2:
             return "waiting:"
         if 3 <= p <= 7:
             return f"inprogress:{(p - 2) * 20}"   # 20,40,60,80,100
-        self.fw = None
         return "reboot:"                           # success -> watch reboots
 
     # --- Language packs ----------------------------------------------------
@@ -870,6 +876,54 @@ class MockStoandl(dbus.service.Object):
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def Version(self):
         return "mock-0.2.0"
+
+    # --- Reactive signals --------------------------------------------------
+    # The real daemon gained three signals on de.yoxcu.stoandl.Control. The GUI consumes
+    # them as a push layer ON TOP of polling. We fire them from the same state mutations the
+    # polled methods read, so a subscribed GUI updates without waiting for its next poll tick.
+    @dbus.service.signal(IFACE, signature="")
+    def WatchesChanged(self):
+        # poke: re-call ListWatches. Fired on connect/disconnect/pair-completion.
+        pass
+
+    @dbus.service.signal(IFACE, signature="sis")
+    def FirmwareProgress(self, phase, percent, detail):
+        # phase ∈ {downloading,waiting,inprogress,reboot,failed,idle,notready};
+        # percent 0–100 while inprogress else -1; detail = asset / failure reason.
+        pass
+
+    @dbus.service.signal(IFACE, signature="")
+    def LockerChanged(self):
+        # poke: re-call ListApps. Fired on sideload/remove/launch (active-face change).
+        pass
+
+    # --- firmware progress walker (pushes FirmwareProgress on a GLib tick) --
+    def _fw_tick(self):
+        """Drive a firmware op forward one step and PUSH the phase via FirmwareProgress.
+
+        Mirrors FirmwareStatus()'s walk so the polled path still works as a fallback;
+        returns True to keep the GLib timer running, False to stop it once terminal.
+        """
+        if self.fw is None:
+            return False
+        p = self.fw["polls"]
+        self.fw["polls"] += 1
+        if p <= 1:
+            self.FirmwareProgress("downloading", -1, "core-fw.pbz")
+        elif p == 2:
+            self.FirmwareProgress("waiting", -1, "")
+        elif 3 <= p <= 7:
+            self.FirmwareProgress("inprogress", (p - 2) * 20, "")  # 20,40,60,80,100
+        else:
+            self.fw = None
+            self.FirmwareProgress("reboot", -1, "")  # success → watch reboots
+            self.WatchesChanged()                     # link drops → list state changes
+            return False
+        return True
+
+    def _start_fw_push(self):
+        self.fw = {"polls": 0}
+        GLib.timeout_add(700, self._fw_tick)  # ~match the CLI/GUI firmware poll cadence
 
 
 def main():

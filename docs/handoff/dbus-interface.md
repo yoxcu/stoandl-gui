@@ -19,7 +19,8 @@ document is the contract between the daemon and any out-of-process front-end.
 > gdbus introspect --session --dest de.yoxcu.stoandl --object-path /de/yoxcu/stoandl
 > ```
 >
-> A live introspection should show exactly the 51 methods below and **no** signals or properties.
+> A live introspection should show the 51 methods below, **three signals**
+> (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`, see below), and **no** properties.
 
 ## Service summary
 
@@ -30,7 +31,7 @@ document is the contract between the daemon and any out-of-process front-end.
 | **Object path** | `/de/yoxcu/stoandl` |
 | **Interface** | `de.yoxcu.stoandl.Control` |
 | **Methods** | 51 |
-| **Signals** | **0** |
+| **Signals** | **3** (`WatchesChanged`, `FirmwareProgress`, `LockerChanged` — see below) |
 | **Properties** | **0** |
 | **Activation** | **not** D-Bus-activated — a systemd **user** service ([`packaging/stoandl.service`](../packaging/stoandl.service); also OpenRC via `packaging/stoandl.openrc`). The daemon calls `requestBusName("de.yoxcu.stoandl")` at startup (`Main.kt:69`) and `releaseBusName` on shutdown (`Main.kt:90`). There is no `dbus-1/services/*.service` activation file — a caller that finds the name unowned must start/`enable` the service itself. |
 
@@ -39,14 +40,24 @@ The session connection is `DBusConnectionBuilder.forSessionBus().withShared(fals
 `Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus` so the headless daemon reaches the user
 session bus with no graphical login.
 
-### No signals, no properties — everything is request/response
+### Three signals augment polling; no properties
 
-`de.yoxcu.stoandl.Control` is a **pure method interface**. It declares no D-Bus signals and no
-D-Bus properties, so the daemon never *pushes* anything: a client learns about a watch connecting,
-a battery change, a finished firmware flash, or a locker change only by **calling a method again**.
-Long-running operations are surfaced as *polled status strings*, not signals (see
-[Long-running operations](#long-running-operations)). This is the single biggest constraint for a
-reactive GUI and drives most of the [gap analysis](#gui-gap-analysis).
+`de.yoxcu.stoandl.Control` declares **three D-Bus signals** and **no** properties:
+
+| Signal | Args | Meaning |
+|---|---|---|
+| `WatchesChanged` | *(none)* | A poke — re-call `ListWatches`. Fires on connect / disconnect / pair-completion. |
+| `FirmwareProgress` | `(s phase, i percent, s detail)` | Push flash progress. `phase` uses the same vocabulary as `FirmwareStatus` (`downloading`/`waiting`/`inprogress`/`reboot`/`failed`/`idle`/`notready`); `percent` is 0–100 while `inprogress`, else `-1`; `detail` = asset name / failure reason (empty while `inprogress`). |
+| `LockerChanged` | *(none)* | A poke — re-call `ListApps`. Fires on on-watch / CLI install/remove + active-watchface change. |
+
+The signals **augment** polling, they don't replace it. Because the daemon is **not** D-Bus-activated
+(below), a late or reconnecting client can miss a signal, so a reactive client must still keep a slow
+safety-net poll and re-sync after the name is (re)owned. Beyond these three, the daemon still doesn't
+push battery changes, extension-state changes, or language-install progress — those are learned only
+by **calling a method again**. Long-running operations are surfaced as *polled status strings* (see
+[Long-running operations](#long-running-operations)); `FirmwareProgress` now also pushes the firmware
+op's progress between poll ticks. See the [gap analysis](#gui-gap-analysis) for the still-missing
+reactive members.
 
 The only other object stoandl exports on any bus is an internal **BlueZ pairing agent**
 (`org.bluez.Agent1` at `/io/stoandl/agent`, on the **system** bus, from
@@ -283,8 +294,11 @@ is down — and a reminder that **backup/restore are not daemon capabilities**:
 
 A planned Kirigami GUI has five screens. For each, this lists the existing control members that
 satisfy it and the **gaps** — data or actions it needs that the daemon does not expose over D-Bus.
-The recurring theme: **there are no signals or properties**, so every "live update" need is a gap,
-and several values the daemon already computes are simply dropped from a return or never surfaced.
+The recurring theme: **there are still no properties, and signals cover only three pokes**
+(`WatchesChanged`/`FirmwareProgress`/`LockerChanged` — see [Three signals](#three-signals-augment-polling-no-properties)),
+so most "live update" needs are still gaps, and several values the daemon already computes are simply
+dropped from a return or never surfaced. (The gap rows below that those three signals now address are
+called out as *landed* in the cross-cutting priority list.)
 
 A `feasibility` note marks each gap as **wiring-only** (the daemon/libpebble3 already computes it —
 just expose it), **needs bookkeeping** (a small new field/timestamp), or **design work** (lifecycle
@@ -378,16 +392,20 @@ language `ListLanguages`/`InstallLanguage`/`SideloadLanguage`/`LanguageStatus`; 
 
 ### Cross-cutting: the hooks worth adding first
 
-Most screens want the **same handful** of new members. In rough priority:
+Most screens want the **same handful** of new members. In rough priority (items 1–3 are **partially
+landed** — the three pokes `WatchesChanged`/`FirmwareProgress`/`LockerChanged` now exist and the GUI
+subscribes to them on top of polling; the rest of each item is still open):
 
-1. **A connection/state signal** — `WatchStateChanged(s name, s state, i battery)` (or a
-   `WatchesChanged()` poke). Serves the Watch screen's live list/battery, the post-reset reboot
-   confirmation, and is the canonical "stop polling `ListWatches`" fix. *Wiring-only.*
-2. **Progress signals** — `FirmwareProgress` and `LanguageProgress`. Replace the poll loops; both
-   back onto existing libpebble3 `StateFlow<Float>` progress. *Wiring-only.*
-3. **`LockerChanged()`** + **`ExtensionStateChanged`** — live Apps & Faces and Plugins screens.
-   *Wiring-only* (the live flows are already there; the daemon currently `.first()`-drops the locker
-   one).
+1. ✅ **A connection/state signal** — landed as the zero-arg **`WatchesChanged()`** poke (re-call
+   `ListWatches`). Serves the Watch screen's live list/battery and the post-reset reboot
+   confirmation. The richer `WatchStateChanged(s name, s state, i battery)` (per-watch state +
+   battery in the payload, mid-session reconnect) is *still open.* *Wiring-only.*
+2. ✅ **Progress signals** — **`FirmwareProgress(s phase, i percent, s detail)`** landed (pushes the
+   flash op's progress between poll ticks; the firmware op-poll stays as the reboot/disconnect
+   watchdog). `LanguageProgress` is *still open* (language install is still poll-only). *Wiring-only.*
+3. ✅ **`LockerChanged()`** landed (re-call `ListApps`; covers install/remove + active-face change).
+   **`ExtensionStateChanged`** is *still open* — the Plugins screen still re-polls `ExtList`.
+   *Wiring-only* (the live flows are already there).
 4. **Add dropped fields to existing records** — `transport` on `ListWatches`; `synced` on
    `ListApps`. *Wiring-only, one line each.*
 5. **`GetSyncStatus()`** + **`SetSyncEnabled()`** — the Sync screen's toggles and last-sync labels.

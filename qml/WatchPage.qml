@@ -87,7 +87,8 @@ Kirigami.ScrollablePage {
         }
     }
 
-    // 4 s focus poll runs only while this page is alive.
+    // 20 s safety-net poll runs only while this page is alive (live updates arrive via
+    // the WatchesChanged signal; this is the BluetoothStatus carrier + missed-signal fallback).
     Component.onCompleted: { StoandlClient.startWatchPoll(); page.checkFirmware(); }
     Component.onDestruction: StoandlClient.stopWatchPoll()
 

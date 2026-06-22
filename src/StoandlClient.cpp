@@ -38,8 +38,11 @@ constexpr int NAME_TIMEOUT_MS = 3000;
 constexpr int PAIR_INTERVAL_MS = 1500;
 constexpr int PAIR_TIMEOUT_MS  = 145000;
 
-// Focus poll of ListWatches: 4 s while a watch screen is foreground.
-constexpr int WATCH_INTERVAL_MS = 4000;
+// Watch poll of ListWatches: a 20 s safety-net cadence while a watch screen is foreground.
+// Live updates now arrive via the WatchesChanged signal; this poll stays as (a) the carrier
+// for the BluetoothStatus poll and (b) the missed-signal fallback (the daemon isn't
+// D-Bus-activated, so a late/reconnecting client can miss a WatchesChanged).
+constexpr int WATCH_INTERVAL_MS = 20000;
 
 // Firmware flash poll: 0.8 s cadence, 600 s ceiling.
 constexpr int FW_INTERVAL_MS = 800;
@@ -79,6 +82,18 @@ StoandlClient::StoandlClient(QObject *parent)
     // React to the daemon coming up / going down without polling NameHasOwner.
     m_bus.connect(DBUS_SERVICE, DBUS_PATH, DBUS_IFACE, QStringLiteral("NameOwnerChanged"),
                   this, SLOT(onNameOwnerChanged(QString, QString, QString)));
+
+    // Reactive signals on de.yoxcu.stoandl.Control — instant UI on connect/flash/locker change.
+    // These augment (don't replace) polling: the daemon isn't D-Bus-activated, so a late or
+    // reconnecting client can miss a signal — the slow watch poll + the daemonUp re-sync are the
+    // missed-signal safety net. Connecting before the name is owned is fine: QDBus installs a match
+    // rule and the signals arrive once the service appears (no reconnect-on-daemonUp needed).
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("WatchesChanged"),
+                  this, SLOT(onWatchesChanged()));
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("FirmwareProgress"),
+                  this, SLOT(onFirmwareProgress(QString, int, QString)));
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("LockerChanged"),
+                  this, SLOT(onLockerChanged()));
 
     recheckDaemon();
 }
@@ -459,23 +474,36 @@ void StoandlClient::firmwarePollOnce()
         return;
     }
     const Status s = callStatus(QStringLiteral("FirmwareStatus"));
-    const QString k = s.kind;
-    if (k == QStringLiteral("downloading") || k == QStringLiteral("waiting") || k == QStringLiteral("inprogress"))
+    const int pct = (s.kind == QStringLiteral("inprogress")) ? parsePercent(s.tail) : -1;
+    emitFirmwareStatus(s.kind, pct, s.tail);
+}
+
+void StoandlClient::emitFirmwareStatus(const QString &phase, int percent, const QString &detail)
+{
+    // Track activity so a `notready` (link dropping on reboot) counts as success only *after*
+    // we've seen real progress — same rule whether it arrived via the poll or the signal.
+    if (phase == QStringLiteral("downloading") || phase == QStringLiteral("waiting")
+        || phase == QStringLiteral("inprogress"))
         m_fwSeenActivity = true;
 
-    // Success = a `reboot:` OR a `notready:` seen *after* activity (link drops on reboot).
-    if (k == QStringLiteral("reboot") || (k == QStringLiteral("notready") && m_fwSeenActivity)) {
+    // Success = a `reboot` OR a `notready` seen after activity (the watch reboots → link drops).
+    if (phase == QStringLiteral("reboot")
+        || (phase == QStringLiteral("notready") && m_fwSeenActivity)) {
         stopFirmwarePoll();
         Q_EMIT firmwareStatus(QStringLiteral("success"), 100, QStringLiteral("Watch is rebooting"));
         return;
     }
-    if (k == QStringLiteral("failed")) {
+    if (phase == QStringLiteral("failed")) {
         stopFirmwarePoll();
-        Q_EMIT firmwareStatus(QStringLiteral("failed"), -1, s.tail);
+        Q_EMIT firmwareStatus(QStringLiteral("failed"), -1, detail);
         return;
     }
-    const int pct = (k == QStringLiteral("inprogress")) ? parsePercent(s.tail) : -1;
-    Q_EMIT firmwareStatus(k, pct, s.tail); // idle / downloading / waiting / inprogress / (pre-activity notready)
+    // An idle/(pre-activity) notready poke when nothing's in flight: don't flicker the UI.
+    // (Matches the poll, which only runs while m_fwTimer is active.)
+    if ((phase == QStringLiteral("idle") || phase == QStringLiteral("notready"))
+        && !m_fwTimer->isActive() && !m_fwSeenActivity)
+        return;
+    Q_EMIT firmwareStatus(phase, percent, detail); // idle / downloading / waiting / inprogress / pre-activity notready
 }
 
 // --- typed wrappers: System / language packs -------------------------------
@@ -1041,7 +1069,7 @@ void StoandlClient::refreshWatches()
 {
     recheckDaemon();
     if (m_daemonUp) {
-        // Fold the BluetoothStatus poll into the same 4 s tick. `ok:off` => off; anything else
+        // Fold the BluetoothStatus poll into the same 20 s tick. `ok:off` => off; anything else
         // (incl. an older daemon that lacks the method) => assume on, so we never flash a false
         // "Bluetooth is off" state.
         const Status s = callStatus(QStringLiteral("BluetoothStatus"));
@@ -1105,6 +1133,28 @@ void StoandlClient::onNameOwnerChanged(const QString &name, const QString &, con
         m_daemonUp = up;
         Q_EMIT daemonUpChanged();
     }
+}
+
+// --- reactive signals (de.yoxcu.stoandl.Control) ---------------------------
+// Each reuses the existing refresh/emit path so the QML side needs no change.
+
+void StoandlClient::onWatchesChanged()
+{
+    qCDebug(lcStoandl) << "signal WatchesChanged → refreshWatches()";
+    refreshWatches();   // re-fetches ListWatches + BluetoothStatus, emits watchesChanged/bluetoothOnChanged
+}
+
+void StoandlClient::onLockerChanged()
+{
+    qCDebug(lcStoandl) << "signal LockerChanged → refreshApps()";
+    refreshApps();      // emits appsChanged (covers on-watch/CLI installs/removes + active-face change)
+}
+
+void StoandlClient::onFirmwareProgress(const QString &phase, int percent, const QString &detail)
+{
+    qCDebug(lcStoandl).noquote().nospace()
+        << "signal FirmwareProgress: " << phase << " " << percent << "% " << detail;
+    emitFirmwareStatus(phase, percent, detail);
 }
 
 bool StoandlClient::startDaemon()

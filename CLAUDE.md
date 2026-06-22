@@ -16,10 +16,16 @@ are the 3rd segment of **Apps** (Faces / Apps / Extensions). Sync services live 
 is hidden when the daemon is down (nothing works without it).
 
 ## Hard rules
-- **The interface has NO signals/properties.** Every live value is polled. All polling lives in
-  `StoandlClient` (focus poll 4s for ListWatches; op pollers for Pair/Firmware/Language at the
-  CLI cadences). UI never polls directly.
-- **After any mutating call, re-fetch that screen's list.** There is no change event.
+- **The interface has THREE signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`) that
+  augment polling — polling stays as the fallback.** The daemon is NOT D-Bus-activated, so a late or
+  reconnecting client can miss a signal; therefore the GUI keeps a slow safety-net poll **and**
+  re-syncs on `daemonUpChanged`. All of this lives in `StoandlClient`: the signals re-use the
+  existing `refreshWatches()`/`refreshApps()`/`firmwareStatus(...)` paths (QML unchanged); a 20s
+  watch poll carries `BluetoothStatus` + is the missed-`WatchesChanged` net; op pollers for
+  Pair/Firmware/Language stay (the firmware op-poll is the reboot/disconnect watchdog — the
+  `FirmwareProgress` signal just smooths its % between ticks). UI never polls directly.
+- **After any mutating call, still re-fetch that screen's list.** The signal is a best-effort poke,
+  not a guarantee — the re-fetch is authoritative.
 - Returns are either `kind:message` (split on first `:`) or tab-separated `as` records. Parse in
   `StoandlClient`, never in QML. Handle `notready` as the "no watch / not ready" empty state.
 - The daemon is NOT D-Bus-activated. If the bus name is unowned → show "daemon not running", offer
@@ -38,7 +44,10 @@ done · uptodate · disabled · busy · idle · none · confirm (PairStatus `con
 comparison awaiting ConfirmPairing(bool))
 
 ## Daemon hooks (added this milestone — see the drift report `docs/handoff/drift-report.md`)
-The GUI now consumes daemon-side hooks beyond the original 51 methods: `transport` on ListWatches +
+Three reactive **signals** — `WatchesChanged()` (re-call ListWatches), `FirmwareProgress(s phase,
+i percent, s detail)` (push flash progress, same phase vocabulary as `FirmwareStatus`), and
+`LockerChanged()` (re-call ListApps) — consumed on top of polling (see Hard rules).
+The GUI also consumes daemon-side hooks beyond the original 51 methods: `transport` on ListWatches +
 `synced` on ListApps (#4); `GetSyncStatus`/`SetSyncEnabled` (#5); `ExtList.config` + `ExtOpenConfig` +
 `ExtConfigSchema`/`ExtGetConfig`/`ExtSetConfig` (#7); `GetHealthSummary`/`GetHealthSeries` (#8);
 `SetWatchNickname` (#9); `GetConfigSchema`/`GetConfig`/`SetConfig` (#10); `WatchDetails`; notification
