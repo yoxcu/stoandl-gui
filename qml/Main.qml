@@ -42,7 +42,13 @@ Kirigami.ApplicationWindow {
     globalDrawer: null
     contextDrawer: null
 
-    pageStack.initialPage: watchComponent
+    // Create the launch page (Watch, tab 0) once the window exists, rather than via
+    // pageStack.initialPage. Assigning a Component to initialPage instantiates it during
+    // window construction — a hair before the PageRow is in the scene graph — which Qt6
+    // flags as "QML WatchPage: Created graphical object was not placed in the graphics
+    // scene." The other four pages don't warn because they're created later (on a tab tap,
+    // window already realized). Deferring to onCompleted places it cleanly.
+    Component.onCompleted: pageStack.push(watchComponent)
 
     footer: Kirigami.NavigationTabBar {
         id: tabBar
