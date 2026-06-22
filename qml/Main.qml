@@ -42,13 +42,13 @@ Kirigami.ApplicationWindow {
     globalDrawer: null
     contextDrawer: null
 
-    // Create the launch page (Watch, tab 0) once the window exists, rather than via
-    // pageStack.initialPage. Assigning a Component to initialPage instantiates it during
-    // window construction — a hair before the PageRow is in the scene graph — which Qt6
-    // flags as "QML WatchPage: Created graphical object was not placed in the graphics
-    // scene." The other four pages don't warn because they're created later (on a tab tap,
-    // window already realized). Deferring to onCompleted places it cleanly.
-    Component.onCompleted: pageStack.push(watchComponent)
+    // Inline initial page (not the watchComponent Component). Assigning a *Component* to initialPage
+    // makes Kirigami createObject() it with a transient null parent → Qt6 warns "QML WatchPage: Created
+    // graphical object was not placed in the graphics scene" (verified: deferring via onCompleted/
+    // Qt.callLater doesn't help — it's the Component indirection, not the timing). An inline page is
+    // parented into the window tree at construction, so it's silent. watchComponent is still used by
+    // showTab()'s replace() for tab navigation.
+    pageStack.initialPage: WatchPage {}
 
     footer: Kirigami.NavigationTabBar {
         id: tabBar
