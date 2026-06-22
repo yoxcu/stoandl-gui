@@ -58,14 +58,14 @@ Kirigami.ApplicationWindow {
         height: visible ? implicitHeight : 0
         actions: [
             Kirigami.Action {
-                icon.name: "smartwatch-symbolic"
+                icon.name: "chronometer-symbolic"
                 text: "Watch"
                 checkable: true
                 checked: root.currentTab === 0
                 onTriggered: root.showTab(0)
             },
             Kirigami.Action {
-                icon.name: "heart-symbolic"
+                icon.name: "love-symbolic"
                 text: "Health"
                 checkable: true
                 checked: root.currentTab === 1

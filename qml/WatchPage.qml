@@ -143,7 +143,7 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp && StoandlClient.bluetoothOn && page.connectedWatch === null && page.watches.length === 0
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
-            icon.name: "smartwatch-symbolic"
+            icon.name: "chronometer-symbolic"
             text: "No watch connected"
             explanation: "Pair a Pebble to get started. The daemon is running and ready."
             helpfulAction: Kirigami.Action {
@@ -217,7 +217,7 @@ Kirigami.ScrollablePage {
                     spacing: Kirigami.Units.largeSpacing
 
                     Kirigami.Icon {
-                        source: "smartwatch-symbolic"
+                        source: "chronometer-symbolic"
                         implicitWidth: Kirigami.Units.iconSizes.huge
                         implicitHeight: Kirigami.Units.iconSizes.huge
                     }
@@ -300,7 +300,7 @@ Kirigami.ScrollablePage {
                         spacing: Kirigami.Units.largeSpacing
 
                         Kirigami.Icon {
-                            source: "smartwatch-symbolic"
+                            source: "chronometer-symbolic"
                             color: watchRow.modelData.connected ? Kirigami.Theme.positiveTextColor
                                                                 : Kirigami.Theme.disabledTextColor
                             implicitWidth: Kirigami.Units.iconSizes.medium
