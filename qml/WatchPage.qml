@@ -8,10 +8,7 @@ import org.stoandl.gui
 Kirigami.ScrollablePage {
     id: page
     objectName: "watch"
-    // No title text — the bottom navigation already shows the section. The action toolbar (header on
-    // desktop / footer on mobile) and pushed sub-page headers stay as Kirigami renders them.
-    title: ""
-    Accessible.name: "Watch"
+    title: "Watch"
 
     // Latest ListWatches snapshot (parsed in C++) + the connected row, if any.
     property var watches: []

@@ -12,9 +12,7 @@ import org.stoandl.gui
 Kirigami.ScrollablePage {
     id: page
     objectName: "notifications"
-    // No title text — the bottom navigation already shows the section.
-    title: ""
-    Accessible.name: "Notifications"
+    title: "Notifications"
 
     // --- live snapshots (all re-fetched in reload()) -----------------------
     property bool forward: false           // master "Forward notifications"

@@ -9,10 +9,7 @@ import org.stoandl.gui
 Kirigami.ScrollablePage {
     id: page
     objectName: "apps"
-    // No title text — the bottom navigation already shows the section. The Faces/Apps/Extensions
-    // segment switcher is pinned in the page header (below), not in the scrolling content.
-    title: ""
-    Accessible.name: "Apps & Faces"
+    title: "Apps & Faces"
 
     // Which segment is showing: "faces" | "apps" | "ext".
     property string segment: "faces"

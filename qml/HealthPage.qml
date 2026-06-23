@@ -13,10 +13,9 @@ import org.stoandl.gui
 Kirigami.ScrollablePage {
     id: page
     objectName: "health"
-    // No title text — the bottom navigation already shows the section. The Daily/Weekly/Monthly switcher
-    // + navigator are pinned in the page header (below). "Sync health" stays a standard page action.
-    title: ""
-    Accessible.name: "Health"
+    title: "Health"
+    // The Daily/Weekly/Monthly switcher + navigator are pinned in the page `header` (below) so they
+    // don't scroll; "Sync health" is a standard page action (header on desktop / footer on mobile).
 
     // --- period state ------------------------------------------------------
     property string periodType: "day"     // "day" | "week" | "month"
@@ -482,9 +481,11 @@ Kirigami.ScrollablePage {
                         }
                         Item { Layout.fillWidth: true }
                     }
-                    // Past day OR period: the average.
+                    // Past day OR period: the average, plus the resting HR (the most recent night's, for
+                    // a week/month) so you can compare effort vs rest.
                     RowLayout {
                         Layout.fillWidth: true
+                        spacing: Kirigami.Units.gridUnit
                         visible: !(page.isDay && page.periodOffset === 0) && (page.isDay ? page.hrStats.count > 0 : (page.hasData && page.summary.hrAvg > 0))
                         ColumnLayout {
                             spacing: 0
@@ -494,6 +495,20 @@ Kirigami.ScrollablePage {
                                 QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
                             }
                             QQC2.Label { text: "Average"; font: Kirigami.Theme.smallFont; opacity: 0.7 }
+                        }
+                        ColumnLayout {
+                            spacing: 0
+                            visible: page.summary.hrResting > 0
+                            RowLayout {
+                                spacing: Kirigami.Units.smallSpacing / 2
+                                Kirigami.Heading {
+                                    level: 3
+                                    text: String(page.summary.hrResting)
+                                    color: Kirigami.Theme.negativeTextColor
+                                }
+                                QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
+                            }
+                            QQC2.Label { text: "Resting"; font: Kirigami.Theme.smallFont; opacity: 0.7 }
                         }
                         Item { Layout.fillWidth: true }
                     }

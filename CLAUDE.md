@@ -73,14 +73,12 @@ data (quick-launch options, color presets) in a page-scope getter and have the d
   `systemctl --user start stoandl`. Never assume it's up.
 - Paths passed to SideloadApp/SideloadFirmware/etc. are **absolute, daemon-side**.
 - **Actions stay on the page `actions` (Kirigami renders them: header on desktop, footer toolbar on
-  mobile); never hand-place them, NO round floating FAB.** The five **tab pages**
-  (Watch/Health/Apps/Notifications/Settings) set **`title: ""`** — the bottom nav already names the
-  section, so the title TEXT is redundant (this is a deliberate, minor deviation from the KDE HIG, which
-  wants titled pages; the action toolbar itself stays). A page's **segment/period switcher**
-  (Health's Daily/Weekly/Monthly + navigator; Apps's Faces/Apps/Extensions) is **pinned in the page
-  `header`** (a `QQC2.ToolBar`, `height: visible ? implicitHeight : 0`) so it stays put while the content
-  scrolls — NOT inside the scrolling `ColumnLayout`. **Pushed sub-pages KEEP their title + back button**
-  (don't blank their title).
+  mobile); never hand-place them, NO round floating FAB.** Pages keep their `title`. A page's
+  **segment/period switcher** (Health's Daily/Weekly/Monthly + navigator; Apps's Faces/Apps/Extensions)
+  is **pinned in the page `header`** (a `QQC2.ToolBar`, `height: visible ? implicitHeight : 0`) so it
+  stays put while the content scrolls — NOT inside the scrolling `ColumnLayout`. (History: page titles
+  were briefly blanked to save space, then restored — the toolbar row is there for the actions anyway,
+  so the title may as well use it.)
 - **Never hardcode colors or fonts.** Use `Kirigami.Theme` roles + `Kirigami.Units` spacing. The
   prototype's dark hexes are a density spec, not a color spec.
 - Row actions are **inline** (trailing buttons in the delegate), **not kebabs**.
