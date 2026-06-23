@@ -126,6 +126,10 @@ Kirigami.ScrollablePage {
     // "asleep" for daily, "avg / night" for a multi-day period.
     function sleepUnit() { return page.isDay ? "asleep" : "avg / night"; }
     function stepsUnit() { return page.isDay ? "steps" : "avg / day"; }
+    // Compact step count for the y-axis (7432 → "7.4k", 12000 → "12k", 800 → "800").
+    function fmtK(v) {
+        return v >= 10000 ? Math.round(v / 1000) + "k" : v >= 1000 ? (v / 1000).toFixed(1) + "k" : String(Math.round(v));
+    }
 
     Connections {
         target: StoandlClient
@@ -267,6 +271,7 @@ Kirigami.ScrollablePage {
                         model: page.stepBarData
                         tint: Kirigami.Theme.highlightColor
                         hourly: true
+                        formatLabel: function (v) { return page.fmtK(v); }
                     }
 
                     // Daily: distance / calories / active tiles.
@@ -286,6 +291,7 @@ Kirigami.ScrollablePage {
                         model: page.stepBarData
                         tint: Kirigami.Theme.highlightColor
                         refLine: page.hasData ? page.summary.stepsTypical : 0
+                        formatLabel: function (v) { return page.fmtK(v); }
                     }
                     QQC2.Label {
                         visible: !page.isDay && page.hasData
@@ -397,13 +403,14 @@ Kirigami.ScrollablePage {
                         }
                     }
 
-                    // Weekly/Monthly: per-night stacked bars (deep solid over light).
+                    // Weekly/Monthly: per-night stacked bars (deep solid over light), y-axis in hours.
                     MetricBars {
                         visible: !page.isDay
                         Layout.fillWidth: true
                         model: page.sleepBarData
                         tint: Kirigami.Theme.highlightColor
-                        valueToHeight: function (v) { return v / 60.0; }   // minutes → hours for nicer scale
+                        valueToHeight: function (v) { return v / 60.0; }   // minutes → hours
+                        formatLabel: function (v) { return Math.round(v) + "h"; }
                     }
 
                     // Legend (deep / light) + typical — daily only (the bars are self-explanatory).
@@ -629,48 +636,90 @@ Kirigami.ScrollablePage {
         QQC2.Label { text: parent.mins; font.pointSize: Kirigami.Theme.smallFont.pointSize; font.bold: true }
     }
 
-    // --- a reusable bar chart (weekly/monthly) -----------------------------
-    // model rows: {label, value, hasValue, deep?(stacked), typical?}. `refLine` draws a faint
-    // horizontal "typical" line; `valueToHeight` rescales the value for the height axis (e.g. min→h);
-    // `baseline` floors the bars at the series min (nicer for HR, which never starts at 0).
+    // --- a reusable bar chart with a left y-axis (weekly/monthly/hourly) ----
+    // model rows: {label, value, hasValue, deep?(stacked)}. A 3-tick y-axis (0/50%/100% of the value
+    // range) with `formatLabel`-formatted ticks sits in the left `gutter`; `refLine` draws the metric's
+    // "typical" line; `valueToHeight` rescales for the height axis (sleep min→h); `floorAtMin` floors at
+    // the series min (HR never starts at 0). Non-floored charts round the top to a `niceCeil` ceiling.
     component MetricBars: ColumnLayout {
         id: bars
         property var model: []
         property color tint: Kirigami.Theme.highlightColor
         property real refLine: 0
-        property var valueToHeight: null
-        property bool floorAtMin: false
-        property bool hourly: false      // 24 bars → a 12a/6a/12p/6p time axis instead of per-bar labels
+        property var valueToHeight: null     // value → height-axis domain (e.g. sleep min → hours)
+        property var formatLabel: null        // height-axis value → y-tick string (default: rounded)
+        property bool floorAtMin: false       // floor the y-axis at the series min (HR, never starts at 0)
+        property bool hourly: false           // 24 bars → a 12a/6a/12p/6p time axis instead of per-bar labels
         spacing: Kirigami.Units.smallSpacing
 
+        // Width of the left y-axis gutter (holds the tick labels).
+        readonly property real gutter: Kirigami.Units.gridUnit * 2.2
         function h(v) { return bars.valueToHeight ? bars.valueToHeight(v) : v; }
+        function fmt(v) { return bars.formatLabel ? bars.formatLabel(v) : String(Math.round(v)); }
+        // Round a value up to a "nice" axis ceiling (1/1.2/1.5/2/2.5/3/4/5/7.5/10 × 10ⁿ).
+        function niceCeil(x) {
+            if (x <= 0) return 1;
+            var p = Math.pow(10, Math.floor(Math.log(x) / Math.LN10));
+            var n = x / p;
+            var c = n <= 1 ? 1 : n <= 1.2 ? 1.2 : n <= 1.5 ? 1.5 : n <= 2 ? 2 : n <= 2.5 ? 2.5
+                  : n <= 3 ? 3 : n <= 4 ? 4 : n <= 5 ? 5 : n <= 7.5 ? 7.5 : 10;
+            return c * p;
+        }
         readonly property real floor: {
             if (!bars.floorAtMin) return 0;
             var lo = 1e9;
             for (var i = 0; i < bars.model.length; ++i)
                 if (bars.model[i].hasValue && bars.h(bars.model[i].value) < lo) lo = bars.h(bars.model[i].value);
-            return lo === 1e9 ? 0 : lo * 0.85;
+            return lo === 1e9 ? 0 : lo;   // floor at the actual min so the bottom tick is a real value
         }
         readonly property real barTop: {
             var m = bars.h(bars.refLine);
             for (var i = 0; i < bars.model.length; ++i)
                 if (bars.model[i].hasValue && bars.h(bars.model[i].value) > m) m = bars.h(bars.model[i].value);
-            return Math.max(bars.floor + 1, m);
+            // For a zero-floored chart, round up to a clean ceiling so the y-axis labels read nicely.
+            return bars.floorAtMin ? Math.max(bars.floor + 1, m) : Math.max(1, bars.niceCeil(m));
         }
         readonly property int labelEvery: Math.max(1, Math.ceil(bars.model.length / 8))
 
         Item {
+            id: chart
             Layout.fillWidth: true
             Layout.preferredHeight: Kirigami.Units.gridUnit * 6
+            function yOf(frac) { return chart.height - frac * chart.height; }
 
-            Rectangle {   // typical reference line
-                visible: bars.refLine > 0
-                width: parent.width; height: 1
-                color: Kirigami.Theme.disabledTextColor; opacity: 0.6
-                y: parent.height - ((bars.h(bars.refLine) - bars.floor) / (bars.barTop - bars.floor)) * parent.height
+            // y-axis: faint gridlines + a tick label at 0 / 50% / 100% of the value range.
+            Repeater {
+                model: [0.0, 0.5, 1.0]
+                delegate: Item {
+                    required property real modelData
+                    anchors.fill: parent
+                    Rectangle {
+                        x: bars.gutter; width: chart.width - bars.gutter; height: 1
+                        y: chart.yOf(parent.modelData)
+                        color: Kirigami.Theme.disabledTextColor; opacity: 0.2
+                    }
+                    QQC2.Label {
+                        x: 0; width: bars.gutter - Kirigami.Units.smallSpacing
+                        // Keep the top/bottom ticks inside the chart rather than half-clipped on the edge.
+                        y: Math.max(0, Math.min(chart.height - height, chart.yOf(parent.modelData) - height / 2))
+                        horizontalAlignment: Text.AlignRight
+                        text: bars.fmt(bars.floor + parent.modelData * (bars.barTop - bars.floor))
+                        font: Kirigami.Theme.smallFont; opacity: 0.6; elide: Text.ElideRight
+                    }
+                }
             }
+
+            // typical reference line (the metric accent, so it stands apart from the grey gridlines).
+            Rectangle {
+                visible: bars.refLine > 0
+                x: bars.gutter; width: chart.width - bars.gutter; height: 1
+                color: bars.tint; opacity: 0.6
+                y: chart.yOf((bars.h(bars.refLine) - bars.floor) / (bars.barTop - bars.floor))
+            }
+
             RowLayout {
                 anchors.fill: parent
+                anchors.leftMargin: bars.gutter
                 spacing: Math.max(1, Kirigami.Units.smallSpacing / 2)
                 Repeater {
                     model: bars.model
@@ -704,6 +753,7 @@ Kirigami.ScrollablePage {
         }
         RowLayout {
             Layout.fillWidth: true
+            Layout.leftMargin: bars.gutter
             spacing: Math.max(1, Kirigami.Units.smallSpacing / 2)
             Repeater {
                 model: bars.model
