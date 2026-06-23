@@ -19,6 +19,7 @@ Run inside a session bus, e.g.:  dbus-run-session -- python3 mock_stoandl.py
 """
 
 import base64
+import datetime
 import json
 import math
 import time
@@ -249,28 +250,13 @@ class MockStoandl(dbus.service.Object):
             "units": "Metric", "weather_provider": "Open-Meteo", "auto_reconnect": "true",
             "calendar_window": "3 days", "log_level": "info",
         }
-        # HOOK #8: health activity series + today totals.
-        # Last night ~23:20 → 07:04 (epoch seconds, midnight-of-today anchored).
-        midnight = int(time.time()) // 86400 * 86400
-        bedtime = midnight - 40 * 60        # 23:20 yesterday
-        wakeup = midnight + 7 * 3600 + 4 * 60  # 07:04 today
+        # HOOK #8: health. Per-day data is GENERATED deterministically from each date's ordinal
+        # (see the _*_for/_window helpers) so the period-aware GetHealthSummary/GetHealthSeries
+        # (day/week/month + offset) all light up with realistic multi-day data. Global flags only:
         self.health = {
-            "stepsToday": 7432, "stepGoal": 10000, "distanceKm": "5.4", "kcal": 312, "activeMin": 52,
-            "stepWeekAvg": 6890, "stepTrendPct": 8,
-            "sleepTotalMin": 444, "sleepDeepMin": 108, "sleepLightMin": 336,
-            "sleepBedtime": bedtime, "sleepWakeup": wakeup, "sleepTypicalMin": 426,
-            "sleepAvgMin": 426, "sleepTrendPct": 6,
-            "restingHr": 58, "currentHr": 72, "hrMin": 54, "hrMax": 121, "hrAvailable": "yes",
+            "hrAvailable": "yes",
+            "sleepTypicalMin": 426,     # 30-day typical sleep (constant)
             "lastSync": "2 min ago",
-            "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-            "stepWeek": [6210, 8140, 5390, 9320, 7432, None, None],
-            # Sleep timeline (startFraction, widthFraction, isDeep) over a 6 PM→noon window;
-            # light container first, deep blocks last (drawn on top).
-            "sleepTimeline": [
-                (0.296, 0.435, 0),
-                (0.35, 0.03, 1), (0.46, 0.035, 1), (0.58, 0.03, 1), (0.66, 0.025, 1),
-            ],
-            # Heart rate is now minute-level + multi-day (see _hr_samples); no canned hourly array.
         }
         # Notifications (per-app store + master forwarding via sync["notifications"]).
         self.notif_apps = [
@@ -878,54 +864,185 @@ class MockStoandl(dbus.service.Object):
         return "ok:filter removed"
 
     # --- Health (HOOK #8) --------------------------------------------------
-    @dbus.service.method(IFACE, in_signature="", out_signature="s")
-    def GetHealthSummary(self):
-        h = self.health
-        return "ok:" + rec(
-            h["stepsToday"], h["stepGoal"], h["distanceKm"], h["kcal"], h["activeMin"],
-            h["stepWeekAvg"], h["stepTrendPct"],
-            h["sleepTotalMin"], h["sleepDeepMin"], h["sleepLightMin"],
-            h["sleepBedtime"], h["sleepWakeup"], h["sleepTypicalMin"],
-            h["sleepAvgMin"], h["sleepTrendPct"],
-            h["restingHr"], h["currentHr"], h["hrMin"], h["hrMax"], h["hrAvailable"],
-            h["lastSync"])
+    # Per-day data is generated deterministically from each date's ordinal so day/week/month all work.
+    # A day is "absent" (no data at all) on ~1/11 ordinals — exercises gaps + the empty states.
+    def _present(self, d):
+        return (d.toordinal() % 11) != 4
 
-    def _hr_samples(self, day_offset):
-        """Deterministic minute-level heart-rate samples for the day `today - day_offset`:
-        a list of (minuteOfDay, bpm) — mirroring the real daemon's per-minute getHealthDataForRange.
-        Day 3 is intentionally EMPTY (exercises the GUI's per-day empty state) and day 4 is SPARSE
-        (every 15 min) so the day-cycling + granularity paths are both visible."""
-        if day_offset == 3:
+    def _steps_for(self, d):
+        if not self._present(d):
+            return None
+        return 4200 + (d.toordinal() * 137) % 6000          # 4200..10199
+
+    def _typical_steps_for(self, d):
+        return 6200 + d.weekday() * 240                       # a per-weekday typical daily total
+
+    def _sleep_for(self, d):
+        """(totalMin, deepMin) for the night ending on d, or None."""
+        if not self._present(d):
+            return None
+        o = d.toordinal()
+        total = 360 + (o * 53) % 200                          # 6h00 .. 9h20
+        deep = int(total * (0.22 + (o % 5) * 0.02))
+        return (total, deep)
+
+    def _sleep_clock(self, d):
+        """(bedtime, wakeup) epoch seconds for the night ending the morning of d."""
+        midnight = int(datetime.datetime(d.year, d.month, d.day).timestamp())
+        o = d.toordinal()
+        bed = midnight - (20 + o % 90) * 60                   # ~23:20–23:50 the night before
+        wake = midnight + (6 * 3600) + (40 + o % 80) * 60     # ~06:40–08:00
+        return (bed, wake)
+
+    def _sleep_timeline(self, d):
+        """Light/deep segments (startFraction, widthFraction, isDeep) over a 6 PM→noon window."""
+        s = self._sleep_for(d)
+        if s is None:
             return []
-        base = 56 + (day_offset % 3) * 3            # small day-to-day baseline shift
+        o = d.toordinal()
+        start = 0.28 + (o % 7) * 0.01
+        width = 0.38 + (s[0] - 360) / 200.0 * 0.12
+        deeps = [(start + 0.06 + i * 0.11, 0.025 + (o + i) % 3 * 0.006, 1) for i in range(4)]
+        return [(round(start, 4), round(width, 4), 0)] + [(round(a, 4), round(b, 4), c) for a, b, c in deeps]
+
+    def _hr_samples(self, d):
+        """Deterministic minute-level (minuteOfDay, bpm) for day d, mirroring the daemon's per-minute
+        getHealthDataForRange. Absent days -> []; ~1/13 ordinals are SPARSE (every 15 min)."""
+        if not self._present(d):
+            return []
+        o = d.toordinal()
+        sparse = (o % 13) == 2
+        base = 56 + (o % 3) * 3
         samples = []
         for minute in range(0, 1440):
             hour = minute / 60.0
             awake = 6.5 <= hour <= 23.0
-            take = True if awake else (minute % 12 == 0)   # dense awake, sparse asleep
-            if day_offset == 4 and minute % 15 != 0:
-                take = False                                # a sparse day
+            take = True if awake else (minute % 12 == 0)
+            if sparse and minute % 15 != 0:
+                take = False
             if not take:
                 continue
             circadian = base + 20 * max(0.0, math.sin((hour - 6.0) / 18.0 * math.pi))
-            noise = ((minute * 2654435761 + day_offset * 40503) % 13) - 6     # -6..+6, deterministic
-            spike = 35 if (abs(hour - 8.2) < 0.25 or abs(hour - 18.5) < 0.30) else 0   # activity bursts
+            noise = ((minute * 2654435761 + o * 40503) % 13) - 6
+            spike = 35 if (abs(hour - 8.2) < 0.25 or abs(hour - 18.5) < 0.30) else 0
             bpm = int(round(circadian + noise + spike))
             samples.append((minute, max(45, min(165, bpm))))
         return samples
 
-    @dbus.service.method(IFACE, in_signature="si", out_signature="as")
-    def GetHealthSeries(self, metric, day_offset):
+    def _hr_avg_for(self, d):
+        s = self._hr_samples(d)
+        return None if not s else round(sum(b for _, b in s) / len(s))
+
+    # 24 hourly step buckets for day d (deterministic; sums ≈ the day's total) — the daily steps graph.
+    _STEP_HOURS = [0, 0, 0, 0, 0, 0, 2, 5, 8, 4, 3, 4, 6, 4, 3, 4, 7, 8, 6, 4, 3, 2, 1, 0]
+    def _hourly_steps(self, d):
+        total = self._steps_for(d)
+        if total is None:
+            return [0] * 24
+        sw = sum(self._STEP_HOURS)
+        return [int(total * w / sw) for w in self._STEP_HOURS]
+
+    def _window(self, period_type, offset):
+        """(days, labels) for a (periodType, offset) selection — mirrors the daemon's healthWindow."""
+        today = datetime.date.today()
+        off = max(0, int(offset))
+        if period_type == "week":
+            end = today - datetime.timedelta(days=off * 7)
+            start = end - datetime.timedelta(days=6)
+            days = [start + datetime.timedelta(days=i) for i in range(7)]
+            return days, [d.strftime("%a %-d") for d in days]
+        if period_type == "month":
+            y, m = today.year, today.month - off
+            while m <= 0:
+                m += 12
+                y -= 1
+            start = datetime.date(y, m, 1)
+            if off == 0:
+                last = today
+            elif m == 12:
+                last = datetime.date(y, 12, 31)
+            else:
+                last = datetime.date(y, m + 1, 1) - datetime.timedelta(days=1)
+            days, d = [], start
+            while d <= last:
+                days.append(d)
+                d += datetime.timedelta(days=1)
+            return days, [str(d.day) for d in days]
+        # day
+        d = today - datetime.timedelta(days=off)
+        return [d], [d.strftime("%a %-d")]
+
+    @dbus.service.method(IFACE, in_signature="si", out_signature="s")
+    def GetHealthSummary(self, period_type, offset):
         h = self.health
+        days, _ = self._window(period_type, offset)
+        is_day = period_type not in ("week", "month")
+
+        steps_vals = [s for s in (self._steps_for(d) for d in days) if s is not None]
+        days_with_data = max(1, len(steps_vals))
+        steps_total = sum(steps_vals)
+        steps_avg = steps_total // days_with_data
+        distance_km = "%.1f" % (steps_total / 1300.0 / days_with_data)
+        kcal = steps_total // 25 // days_with_data
+        active = sum(30 + d.toordinal() % 40 for d in days if self._present(d)) // days_with_data
+        typicals = [self._typical_steps_for(d) for d in days]
+        steps_typical = sum(typicals) // len(typicals) if typicals else 0
+
+        nights = [n for n in (self._sleep_for(d) for d in days) if n is not None]
+        if is_day:
+            s = nights[0] if nights else None
+            sleep_total = s[0] if s else 0
+            sleep_deep = s[1] if s else 0
+            bedtime, wakeup = self._sleep_clock(days[0]) if s else (0, 0)
+        else:
+            n = max(1, len(nights))
+            sleep_total = sum(t for t, _ in nights) // n
+            sleep_deep = sum(dp for _, dp in nights) // n
+            bedtime = wakeup = 0
+        sleep_light = max(0, sleep_total - sleep_deep)
+
+        hr_avgs = [a for a in (self._hr_avg_for(d) for d in days) if a is not None]
+        hr_avg = sum(hr_avgs) // len(hr_avgs) if hr_avgs else 0
+        if is_day:
+            bpms = [b for _, b in self._hr_samples(days[0])]
+            hr_min = min(bpms) if bpms else 0
+            hr_max = max(bpms) if bpms else 0
+            hr_resting = (54 + days[0].toordinal() % 8) if bpms else 0
+            hr_current = 72 if (offset == 0 and bpms) else 0
+        else:
+            hr_min = hr_max = hr_current = 0
+            hr_resting = next((54 + d.toordinal() % 8 for d in reversed(days) if self._present(d)), 0)
+
+        return "ok:" + rec(
+            steps_total, steps_avg, steps_typical, distance_km, kcal, active,
+            sleep_total, sleep_deep, sleep_light, h["sleepTypicalMin"], bedtime, wakeup,
+            hr_avg, hr_resting, hr_current, hr_min, hr_max, h["hrAvailable"], days_with_data,
+            h["lastSync"])
+
+    @dbus.service.method(IFACE, in_signature="ssi", out_signature="as")
+    def GetHealthSeries(self, metric, period_type, offset):
+        days, labels = self._window(period_type, offset)
+        is_day = period_type not in ("week", "month")
         if metric == "steps":
-            return [rec(d, "" if v is None else v) for d, v in zip(h["days"], h["stepWeek"])]
+            if is_day:
+                return [rec(h, v) for h, v in enumerate(self._hourly_steps(days[0]))]
+            return [rec(labels[i], self._steps_for(d) if self._steps_for(d) is not None else "",
+                        self._typical_steps_for(d)) for i, d in enumerate(days)]
         if metric == "sleep":
-            # Last night's light/deep timeline: startFraction \t widthFraction \t isDeep(0|1).
-            return [rec(s, w, deep) for (s, w, deep) in h["sleepTimeline"]]
+            if is_day:
+                return [rec(s, w, deep) for (s, w, deep) in self._sleep_timeline(days[0])]
+            rows = []
+            for i, d in enumerate(days):
+                n = self._sleep_for(d)
+                rows.append(rec(labels[i], n[0] if n else 0, n[1] if n else 0))
+            return rows
         if metric == "heart":
-            if h["hrAvailable"] != "yes":
+            if self.health["hrAvailable"] != "yes":
                 return []
-            return [rec(m, bpm) for (m, bpm) in self._hr_samples(max(0, int(day_offset)))]
+            if is_day:
+                return [rec(m, bpm) for (m, bpm) in self._hr_samples(days[0])]
+            return [rec(labels[i], self._hr_avg_for(d) if self._hr_avg_for(d) is not None else "")
+                    for i, d in enumerate(days)]
         return []
 
     # --- Daemon config (HOOK #10) ------------------------------------------

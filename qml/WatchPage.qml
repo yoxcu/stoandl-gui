@@ -9,6 +9,8 @@ Kirigami.ScrollablePage {
     id: page
     objectName: "watch"
     title: "Watch"
+    // No page-title header (the bottom nav shows the section); the actions move to an inline toolbar.
+    globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None
 
     // Latest ListWatches snapshot (parsed in C++) + the connected row, if any.
     property var watches: []
@@ -93,7 +95,8 @@ Kirigami.ScrollablePage {
     Component.onDestruction: StoandlClient.stopWatchPoll()
 
     // Page actions: header (desktop) / footer toolbar (mobile). NOT a Material FAB.
-    actions: [
+    // Page actions, rendered in an inline toolbar (the page header is hidden).
+    readonly property list<Kirigami.Action> pageActions: [
         Kirigami.Action {
             icon.name: "list-add"
             text: "Pair new watch"
@@ -116,6 +119,14 @@ Kirigami.ScrollablePage {
 
     ColumnLayout {
         spacing: 0
+
+        Kirigami.ActionToolBar {
+            visible: StoandlClient.daemonUp
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.smallSpacing
+            alignment: Qt.AlignRight
+            actions: page.pageActions
+        }
 
         // --- daemon-not-running state --------------------------------------
         DaemonPlaceholder {

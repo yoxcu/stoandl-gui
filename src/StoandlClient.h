@@ -127,11 +127,13 @@ public:
     Q_INVOKABLE QVariantMap  notifRemoveFilter(const QString &pattern);
 
     // --- typed wrappers: Health screen (read-only) — HOOK #8 ---------------
-    Q_INVOKABLE QVariantMap  healthSummary();            // GetHealthSummary() -> today totals + trends + sleep + hrAvailable
-    Q_INVOKABLE QVariantList healthSeries(const QString &metric); // GetHealthSeries(steps) -> [{label,value,hasValue}]
-    Q_INVOKABLE QVariantList sleepTimeline();            // GetHealthSeries("sleep") -> [{start,width,deep}] (fractions of last night)
-    // GetHealthSeries("heart", dayOffset) -> minute-level samples for today-dayOffset: [{minute(0-1439),bpm}].
-    Q_INVOKABLE QVariantList heartSeries(int dayOffset);
+    // Period-aware (periodType ∈ "day"|"week"|"month", offset = periods back, 0 = current).
+    Q_INVOKABLE QVariantMap  healthSummary(const QString &periodType, int offset); // -> 20-field period summary
+    Q_INVOKABLE QVariantList stepsBars(const QString &periodType, int offset);     // week/month -> [{label,value,typical,hasValue}]
+    Q_INVOKABLE QVariantList sleepTimeline(const QString &periodType, int offset); // day -> [{start,width,deep}]
+    Q_INVOKABLE QVariantList sleepBars(const QString &periodType, int offset);     // week/month -> [{label,value(totalMin),deep,hasValue}]
+    Q_INVOKABLE QVariantList heartSamples(const QString &periodType, int offset);  // day -> [{minute(0-1439),bpm}]
+    Q_INVOKABLE QVariantList heartBars(const QString &periodType, int offset);     // week/month -> [{label,value(avgBpm),hasValue}]
 
     // --- typed wrappers: System screen (Milestone 5) -----------------------
     // Firmware (flash is async -> firmwareStatus poll, 0.8 s, 600 s ceiling).

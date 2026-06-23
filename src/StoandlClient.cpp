@@ -1084,9 +1084,10 @@ QVariantMap StoandlClient::notifRemoveFilter(const QString &pattern)
 
 // --- Health (read-only graphs, HOOK #8) ------------------------------------
 
-QVariantMap StoandlClient::healthSummary()
+QVariantMap StoandlClient::healthSummary(const QString &periodType, int offset)
 {
-    const Status s = callStatus(QStringLiteral("GetHealthSummary"));
+    // GetHealthSummary(periodType, offset) -> 20 tab fields for the selected period (day/week/month).
+    const Status s = callStatus(QStringLiteral("GetHealthSummary"), {periodType, offset});
     QVariantMap m;
     m[QStringLiteral("kind")] = s.kind;
     if (s.kind != QStringLiteral("ok")) {
@@ -1094,38 +1095,56 @@ QVariantMap StoandlClient::healthSummary()
         return m;
     }
     const QStringList f = s.fields;
-    m[QStringLiteral("steps")]          = f.value(0).toInt();
-    m[QStringLiteral("stepGoal")]       = f.value(1).toInt();
-    m[QStringLiteral("distanceKm")]     = f.value(2);
-    m[QStringLiteral("kcal")]           = f.value(3).toInt();
-    m[QStringLiteral("activeMin")]      = f.value(4).toInt();
-    m[QStringLiteral("stepWeekAvg")]    = f.value(5).toInt();
-    m[QStringLiteral("stepTrendPct")]   = f.value(6).toInt();
-    m[QStringLiteral("sleepTotalMin")]  = f.value(7).toInt();
-    m[QStringLiteral("sleepDeepMin")]   = f.value(8).toInt();
-    m[QStringLiteral("sleepLightMin")]  = f.value(9).toInt();
-    // Epoch seconds (0 = no session); QML formats to a clock time.
+    m[QStringLiteral("stepsTotal")]     = f.value(0).toInt();
+    m[QStringLiteral("stepsAvgPerDay")] = f.value(1).toInt();
+    m[QStringLiteral("stepsTypical")]   = f.value(2).toInt();
+    m[QStringLiteral("distanceKm")]     = f.value(3);
+    m[QStringLiteral("kcal")]           = f.value(4).toInt();
+    m[QStringLiteral("activeMin")]      = f.value(5).toInt();
+    m[QStringLiteral("sleepTotalMin")]  = f.value(6).toInt();
+    m[QStringLiteral("sleepDeepMin")]   = f.value(7).toInt();
+    m[QStringLiteral("sleepLightMin")]  = f.value(8).toInt();
+    m[QStringLiteral("sleepTypicalMin")]= f.value(9).toInt();
+    // Epoch seconds (0 = n/a for week/month, or no session); QML formats to a clock time.
     m[QStringLiteral("sleepBedtime")]   = f.value(10).toLongLong();
     m[QStringLiteral("sleepWakeup")]    = f.value(11).toLongLong();
-    m[QStringLiteral("sleepTypicalMin")]= f.value(12).toInt();
-    m[QStringLiteral("sleepAvgMin")]    = f.value(13).toInt();
-    m[QStringLiteral("sleepTrendPct")]  = f.value(14).toInt();
-    m[QStringLiteral("restingHr")]      = f.value(15).toInt();
-    m[QStringLiteral("currentHr")]      = f.value(16).toInt();
-    m[QStringLiteral("hrMin")]          = f.value(17).toInt();
-    m[QStringLiteral("hrMax")]          = f.value(18).toInt();
-    m[QStringLiteral("hrAvailable")]    = (f.value(19) == QStringLiteral("yes"));
-    m[QStringLiteral("lastSync")]       = f.value(20);
+    m[QStringLiteral("hrAvg")]          = f.value(12).toInt();
+    m[QStringLiteral("hrResting")]      = f.value(13).toInt();
+    m[QStringLiteral("hrCurrent")]      = f.value(14).toInt();
+    m[QStringLiteral("hrMin")]          = f.value(15).toInt();
+    m[QStringLiteral("hrMax")]          = f.value(16).toInt();
+    m[QStringLiteral("hrAvailable")]    = (f.value(17) == QStringLiteral("yes"));
+    m[QStringLiteral("daysWithData")]   = f.value(18).toInt();
+    m[QStringLiteral("lastSync")]       = f.value(19);
     return m;
 }
 
-QVariantList StoandlClient::sleepTimeline()
+QVariantList StoandlClient::stepsBars(const QString &periodType, int offset)
 {
-    // Record: startFraction \t widthFraction \t isDeep(0|1) — fractions of an 18 h window
-    // (6 PM yesterday → noon today). Light intervals come first, deep last (draw deep on top).
+    // GetHealthSeries("steps", …) for week/month -> one bar per day: label \t steps \t typical.
     QVariantList rows;
-    // dayOffset is ignored by the daemon for "sleep" (always the most recent night) — pass 0.
-    const QVariantList records = list(QStringLiteral("GetHealthSeries"), {QStringLiteral("sleep"), 0});
+    const QVariantList records =
+        list(QStringLiteral("GetHealthSeries"), {QStringLiteral("steps"), periodType, offset});
+    for (const QVariant &v : records) {
+        const QStringList f = v.toStringList();
+        const QString val = f.value(1);
+        QVariantMap m;
+        m[QStringLiteral("label")]    = f.value(0);
+        m[QStringLiteral("value")]    = val.isEmpty() ? 0 : val.toInt();
+        m[QStringLiteral("hasValue")] = !val.isEmpty();
+        m[QStringLiteral("typical")]  = f.value(2).toInt();
+        rows.append(m);
+    }
+    return rows;
+}
+
+QVariantList StoandlClient::sleepTimeline(const QString &periodType, int offset)
+{
+    // Daily sleep: startFraction \t widthFraction \t isDeep(0|1) — fractions of an 18 h window
+    // (6 PM → noon). Light intervals first, deep last (draw deep on top).
+    QVariantList rows;
+    const QVariantList records =
+        list(QStringLiteral("GetHealthSeries"), {QStringLiteral("sleep"), periodType, offset});
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         QVariantMap m;
@@ -1137,12 +1156,48 @@ QVariantList StoandlClient::sleepTimeline()
     return rows;
 }
 
-QVariantList StoandlClient::healthSeries(const QString &metric)
+QVariantList StoandlClient::sleepBars(const QString &periodType, int offset)
 {
-    // Record: label \t value (value empty = no data for that point). Used for "steps" (the daemon
-    // ignores dayOffset for it — pass 0). Heart rate uses heartSeries() (minute-level, day-navigable).
+    // Week/month sleep: one bar per night: label \t totalMin \t deepMin.
     QVariantList rows;
-    const QVariantList records = list(QStringLiteral("GetHealthSeries"), {metric, 0});
+    const QVariantList records =
+        list(QStringLiteral("GetHealthSeries"), {QStringLiteral("sleep"), periodType, offset});
+    for (const QVariant &v : records) {
+        const QStringList f = v.toStringList();
+        const int total = f.value(1).toInt();
+        QVariantMap m;
+        m[QStringLiteral("label")]    = f.value(0);
+        m[QStringLiteral("value")]    = total;      // total minutes (bar height)
+        m[QStringLiteral("deep")]     = f.value(2).toInt();
+        m[QStringLiteral("hasValue")] = (total > 0);
+        rows.append(m);
+    }
+    return rows;
+}
+
+QVariantList StoandlClient::heartSamples(const QString &periodType, int offset)
+{
+    // Daily HR: minute-level samples for the day: minuteOfDay \t bpm. The QML plots each at its true
+    // time (x = minute/1440) and derives min/max/avg. Empty list = that day has no heart-rate data.
+    QVariantList rows;
+    const QVariantList records =
+        list(QStringLiteral("GetHealthSeries"), {QStringLiteral("heart"), periodType, offset});
+    for (const QVariant &v : records) {
+        const QStringList f = v.toStringList();
+        QVariantMap m;
+        m[QStringLiteral("minute")] = f.value(0).toInt();
+        m[QStringLiteral("bpm")]    = f.value(1).toInt();
+        rows.append(m);
+    }
+    return rows;
+}
+
+QVariantList StoandlClient::heartBars(const QString &periodType, int offset)
+{
+    // Week/month HR: one bar per day: label \t avgBpm (empty avg = no reading that day).
+    QVariantList rows;
+    const QVariantList records =
+        list(QStringLiteral("GetHealthSeries"), {QStringLiteral("heart"), periodType, offset});
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         const QString val = f.value(1);
@@ -1150,24 +1205,6 @@ QVariantList StoandlClient::healthSeries(const QString &metric)
         m[QStringLiteral("label")]    = f.value(0);
         m[QStringLiteral("value")]    = val.isEmpty() ? 0 : val.toInt();
         m[QStringLiteral("hasValue")] = !val.isEmpty();
-        rows.append(m);
-    }
-    return rows;
-}
-
-QVariantList StoandlClient::heartSeries(int dayOffset)
-{
-    // GetHealthSeries("heart", dayOffset) -> minute-level samples for the day `today - dayOffset`:
-    // one record per recorded minute `minuteOfDay\tbpm`. The QML plots each at its true time
-    // (x = minute/1440) and derives min/max/avg. Empty list = that day has no heart-rate data.
-    QVariantList rows;
-    const QVariantList records =
-        list(QStringLiteral("GetHealthSeries"), {QStringLiteral("heart"), dayOffset});
-    for (const QVariant &v : records) {
-        const QStringList f = v.toStringList();
-        QVariantMap m;
-        m[QStringLiteral("minute")] = f.value(0).toInt();
-        m[QStringLiteral("bpm")]    = f.value(1).toInt();
         rows.append(m);
     }
     return rows;

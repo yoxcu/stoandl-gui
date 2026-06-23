@@ -10,6 +10,8 @@ Kirigami.ScrollablePage {
     id: page
     objectName: "apps"
     title: "Apps & Faces"
+    // No page-title header (the bottom nav shows the section); the actions move to an inline toolbar.
+    globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None
 
     // Which segment is showing: "faces" | "apps" | "ext".
     property string segment: "faces"
@@ -96,7 +98,8 @@ Kirigami.ScrollablePage {
 
     // Segment-aware primary action (§4-0): install .pbw for faces/apps,
     // install an archive for extensions.
-    actions: [
+    // Page actions, rendered in an inline toolbar (the page header is hidden).
+    readonly property list<Kirigami.Action> pageActions: [
         Kirigami.Action {
             icon.name: "list-add"
             text: page.extSegment ? "Install extension" : "Install .pbw"
@@ -209,6 +212,14 @@ Kirigami.ScrollablePage {
 
     ColumnLayout {
         spacing: 0
+
+        Kirigami.ActionToolBar {
+            visible: StoandlClient.daemonUp
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.smallSpacing
+            alignment: Qt.AlignRight
+            actions: page.pageActions
+        }
 
         // --- daemon-not-running state --------------------------------------
         DaemonPlaceholder {

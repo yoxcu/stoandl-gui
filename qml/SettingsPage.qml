@@ -11,6 +11,8 @@ Kirigami.ScrollablePage {
     id: page
     objectName: "settings"
     title: "Settings"
+    // No page-title header (the bottom nav shows the section). Sub-pages keep their headers + back button.
+    globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None
 
     // Sub-pages are pushed onto the window's page stack (a back button / extra column appears).
     Component { id: syncPage;    SyncSettingsPage {} }

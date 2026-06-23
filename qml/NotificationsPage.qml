@@ -13,6 +13,8 @@ Kirigami.ScrollablePage {
     id: page
     objectName: "notifications"
     title: "Notifications"
+    // No page-title header (the bottom nav shows the section); the action moves to an inline toolbar.
+    globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None
 
     // --- live snapshots (all re-fetched in reload()) -----------------------
     property bool forward: false           // master "Forward notifications"
@@ -61,8 +63,8 @@ Kirigami.ScrollablePage {
 
     Component.onCompleted: page.reload()
 
-    // Page action: Add filter (header on desktop / footer toolbar on mobile).
-    actions: [
+    // Page action, rendered in an inline toolbar (the page header is hidden).
+    readonly property list<Kirigami.Action> pageActions: [
         Kirigami.Action {
             icon.name: "list-add"
             text: "Add filter"
@@ -73,6 +75,14 @@ Kirigami.ScrollablePage {
 
     ColumnLayout {
         spacing: 0
+
+        Kirigami.ActionToolBar {
+            visible: StoandlClient.daemonUp
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.smallSpacing
+            alignment: Qt.AlignRight
+            actions: page.pageActions
+        }
 
         // --- daemon-not-running state --------------------------------------
         DaemonPlaceholder {

@@ -23,6 +23,16 @@ surface): **`SyncSettingsPage`** (service toggles + force-sync + nested calendar
 (backup/restore/support CLI). `Main.qml`'s `showTab()` pops pushed sub-pages on tab-switch and on
 re-tapping the active tab.
 
+**Health is period-based** (mirrors the official Pebble app's `HealthTimeRange`). One selector
+(Daily/Weekly/Monthly) + one navigator (`periodType`/`periodOffset`) drive all three sections.
+`day` = rich per-day cards (hourly step bars, sleep timeline, minute-level HR line); `week`/`month` =
+per-day bar charts (reusable `MetricBars`: faded bar + solid stacked `deep` + a `refLine` typical +
+`floorAtMin` for HR + sparse labels). Daemon: `GetHealthSummary(periodType,offset)` (20 fields) +
+`GetHealthSeries(metric,periodType,offset)`; C++ `healthSummary/stepsBars/sleepTimeline/sleepBars/
+heartSamples/heartBars(pt,off)`. **No step goal** (dropped); "typical" comes from `getTypicalSteps().sum()`.
+`hrAvailable` only means "watch has an HRM" — gate the HR average/bars on `hrAvg > 0` and show an empty
+state otherwise (a real past month can be HRM-capable but have no readings).
+
 **WatchPrefs widgets (the gotchas).** `ListWatchPrefs` types are `{bool, number, enum, quicklaunch,
 color}` and the `allowed` field is **pipe-(`|`)-separated** for the option types (NOT comma — the daemon's
 `WatchPrefsControl.allowed()`). `StoandlClient::listWatchPrefs()` splits on `|`, pre-derives number
@@ -62,9 +72,13 @@ data (quick-launch options, color presets) in a page-scope getter and have the d
 - The daemon is NOT D-Bus-activated. If the bus name is unowned → show "daemon not running", offer
   `systemctl --user start stoandl`. Never assume it's up.
 - Paths passed to SideloadApp/SideloadFirmware/etc. are **absolute, daemon-side**.
-- **Actions go on the page `actions`, never hand-placed header buttons.** Kirigami renders page actions
-  in the header (desktop) and a bottom footer toolbar (mobile). There is **NO round floating FAB** — the
-  prototype's round "+" is a Material idiom; the footer toolbar is the by-the-book KDE rendering.
+- **Actions are declarative `Kirigami.Action`s, never hand-placed buttons; NO round floating FAB.** The
+  five **tab pages** (Watch/Health/Apps/Notifications/Settings) drop the page-title header
+  (`globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None`) — the bottom nav already shows the
+  section, so the title bar was wasted space. Their actions move INLINE: a `Kirigami.ActionToolBar`
+  (bound to a `readonly property list<Kirigami.Action> pageActions`) at the top of the content, or folded
+  into existing top chrome (Health's "Sync" sits in the period navigator). **Pushed sub-pages KEEP their
+  default header** (title + back button) — don't set None on them.
 - **Never hardcode colors or fonts.** Use `Kirigami.Theme` roles + `Kirigami.Units` spacing. The
   prototype's dark hexes are a density spec, not a color spec.
 - Row actions are **inline** (trailing buttons in the delegate), **not kebabs**.
