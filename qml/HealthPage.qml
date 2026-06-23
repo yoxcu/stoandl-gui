@@ -333,10 +333,12 @@ Kirigami.ScrollablePage {
                     readonly property real wakeup: page.hasData ? (page.summary.sleepWakeup || 0) : 0
                     readonly property bool haveSleep: totalMin > 0
 
-                    // Light = the bold/full accent, Deep = a lighter solid shade (swapped from before).
-                    // Both solid so the deep blocks stay visible drawn over the light band on the timeline.
-                    readonly property color lightTint: Kirigami.Theme.highlightColor
-                    readonly property color deepTint: Qt.lighter(Kirigami.Theme.highlightColor, 1.7)
+                    // Deep = the full accent (darker, solid so its blocks stay visible over the band);
+                    // Light = a translucent paler tint of the same accent.
+                    readonly property color deepTint: Kirigami.Theme.highlightColor
+                    readonly property color lightTint: Qt.rgba(Kirigami.Theme.highlightColor.r,
+                                                               Kirigami.Theme.highlightColor.g,
+                                                               Kirigami.Theme.highlightColor.b, 0.35)
 
                     // Headline: total (day) / avg per night (period) + bedtime→wakeup (day only).
                     RowLayout {
@@ -403,14 +405,12 @@ Kirigami.ScrollablePage {
                         }
                     }
 
-                    // Weekly/Monthly: per-night stacked bars (light = full band, deep = lighter base), y-axis in hours.
+                    // Weekly/Monthly: per-night stacked bars (faded total = light, solid base = deep), y-axis in hours.
                     MetricBars {
                         visible: !page.isDay
                         Layout.fillWidth: true
                         model: page.sleepBarData
                         tint: Kirigami.Theme.highlightColor
-                        barColor: sleepCol.lightTint
-                        deepColor: sleepCol.deepTint
                         valueToHeight: function (v) { return v / 60.0; }   // minutes → hours
                         formatLabel: function (v) { return Math.round(v) + "h"; }
                     }
@@ -461,68 +461,20 @@ Kirigami.ScrollablePage {
                 contentItem: ColumnLayout {
                     spacing: Kirigami.Units.largeSpacing
 
-                    // Daily headline: today = Resting + Now; a past day = its Average.
+                    // Heart-rate stats in one row: Resting · Average · Min · Max. Resting is the primary
+                    // (large) stat (or Average if there's no sleep-derived resting). Min/Max come from the
+                    // day's minute samples, so they show in the daily view only; week/month shows the first two.
                     RowLayout {
+                        id: hrStatsRow
                         Layout.fillWidth: true
-                        spacing: Kirigami.Units.gridUnit
-                        visible: page.isDay && page.periodOffset === 0
-                        ColumnLayout {
-                            spacing: 0
-                            RowLayout {
-                                spacing: Kirigami.Units.smallSpacing / 2
-                                Kirigami.Heading {
-                                    level: 1
-                                    text: (page.summary.hrResting > 0) ? String(page.summary.hrResting) : "—"
-                                    color: Kirigami.Theme.negativeTextColor
-                                }
-                                QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
-                            }
-                            QQC2.Label { text: "Resting"; font: Kirigami.Theme.smallFont; opacity: 0.7 }
-                        }
-                        ColumnLayout {
-                            spacing: 0
-                            RowLayout {
-                                spacing: Kirigami.Units.smallSpacing / 2
-                                Kirigami.Heading { level: 3; text: (page.summary.hrCurrent > 0) ? String(page.summary.hrCurrent) : "—" }
-                                QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
-                            }
-                            QQC2.Label { text: "Now"; font: Kirigami.Theme.smallFont; opacity: 0.7 }
-                        }
-                        Item { Layout.fillWidth: true }
-                    }
-                    // Past day OR period: Resting is the primary stat (matching today's Resting-first
-                    // layout), with the period/day Average as the secondary. Falls back to Average as the
-                    // primary if there's no resting HR (no sleep-derived resting in the window).
-                    RowLayout {
-                        id: hrPeriodRow
-                        Layout.fillWidth: true
-                        spacing: Kirigami.Units.gridUnit
-                        visible: !(page.isDay && page.periodOffset === 0) && (page.isDay ? page.hrStats.count > 0 : (page.hasData && page.summary.hrAvg > 0))
+                        spacing: Kirigami.Units.largeSpacing
+                        visible: page.isDay ? page.hrStats.count > 0 : (page.hasData && page.summary.hrAvg > 0)
                         readonly property bool restingPrimary: page.summary.hrResting > 0
                         readonly property int avgVal: page.isDay ? page.hrStats.avg : page.summary.hrAvg
-                        ColumnLayout {     // primary: Resting (or Average if no resting)
-                            spacing: 0
-                            RowLayout {
-                                spacing: Kirigami.Units.smallSpacing / 2
-                                Kirigami.Heading {
-                                    level: 1
-                                    text: String(hrPeriodRow.restingPrimary ? page.summary.hrResting : hrPeriodRow.avgVal)
-                                    color: hrPeriodRow.restingPrimary ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
-                                }
-                                QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
-                            }
-                            QQC2.Label { text: hrPeriodRow.restingPrimary ? "Resting" : "Average"; font: Kirigami.Theme.smallFont; opacity: 0.7 }
-                        }
-                        ColumnLayout {     // secondary: Average (shown when Resting is the primary)
-                            spacing: 0
-                            visible: hrPeriodRow.restingPrimary
-                            RowLayout {
-                                spacing: Kirigami.Units.smallSpacing / 2
-                                Kirigami.Heading { level: 3; text: String(hrPeriodRow.avgVal) }
-                                QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
-                            }
-                            QQC2.Label { text: "Average"; font: Kirigami.Theme.smallFont; opacity: 0.7 }
-                        }
+                        HrStat { visible: hrStatsRow.restingPrimary; primary: true; value: String(page.summary.hrResting); label: "Resting" }
+                        HrStat { visible: hrStatsRow.avgVal > 0; primary: !hrStatsRow.restingPrimary; value: String(hrStatsRow.avgVal); label: "Average" }
+                        HrStat { visible: page.isDay && page.hrStats.count > 0; value: String(page.hrStats.min); label: "Min" }
+                        HrStat { visible: page.isDay && page.hrStats.count > 0; value: String(page.hrStats.max); label: "Max" }
                         Item { Layout.fillWidth: true }
                     }
 
@@ -603,14 +555,6 @@ Kirigami.ScrollablePage {
                             Connections { target: page; function onHeartSamplesChanged() { hrCanvas.requestPaint(); } }
                             Connections { target: Kirigami.Theme; function onColorsChanged() { hrCanvas.requestPaint(); } }
                         }
-
-                        // min · max · avg overlaid at the top-right (saves a row below the chart).
-                        QQC2.Label {
-                            anchors.top: parent.top; anchors.right: parent.right
-                            anchors.topMargin: Kirigami.Units.smallSpacing; anchors.rightMargin: Kirigami.Units.smallSpacing
-                            text: "min " + page.hrStats.min + " · max " + page.hrStats.max + " · avg " + page.hrStats.avg + " bpm"
-                            font: Kirigami.Theme.smallFont; opacity: 0.6
-                        }
                     }
                     Item {
                         id: hrAxis
@@ -660,6 +604,25 @@ Kirigami.ScrollablePage {
         }
     }
 
+    // --- a heart-rate stat (number + "bpm" over a label; `primary` = large + accent) --------
+    component HrStat: ColumnLayout {
+        id: stat
+        property string value
+        property string label
+        property bool primary: false
+        spacing: 0
+        RowLayout {
+            spacing: Kirigami.Units.smallSpacing / 2
+            Kirigami.Heading {
+                level: stat.primary ? 1 : 3
+                text: stat.value
+                color: stat.primary ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+            }
+            QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
+        }
+        QQC2.Label { text: stat.label; font: Kirigami.Theme.smallFont; opacity: 0.7 }
+    }
+
     // --- a sleep-stage legend entry (swatch + "Name 1h 48m") ---------------
     component SleepLegend: RowLayout {
         property color tint
@@ -667,8 +630,8 @@ Kirigami.ScrollablePage {
         property string mins
         spacing: Kirigami.Units.smallSpacing
         Rectangle {
-            implicitWidth: Kirigami.Units.smallSpacing; implicitHeight: Kirigami.Units.smallSpacing
-            radius: 2; color: parent.tint; Layout.alignment: Qt.AlignVCenter
+            implicitWidth: Kirigami.Units.iconSizes.small; implicitHeight: Kirigami.Units.iconSizes.small
+            radius: height / 2; color: parent.tint; Layout.alignment: Qt.AlignVCenter   // a round dot
         }
         QQC2.Label { text: parent.name; font: Kirigami.Theme.smallFont; opacity: 0.7 }
         QQC2.Label { text: parent.mins; font.pointSize: Kirigami.Theme.smallFont.pointSize; font.bold: true }
