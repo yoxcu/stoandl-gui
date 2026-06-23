@@ -97,14 +97,13 @@ Kirigami.ScrollablePage {
             }
         }
 
-        FormCard.FormCard {
+        Kirigami.PlaceholderMessage {
             visible: StoandlClient.daemonUp && page.cfgSchema.length === 0
-            Layout.topMargin: Kirigami.Units.largeSpacing
-            FormCard.FormPlaceholderMessageDelegate {
-                icon.name: "settings-configure-symbolic"
-                text: "No configuration"
-                explanation: "The daemon exposes no editable configuration keys."
-            }
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.gridUnit * 4
+            icon.name: "settings-configure-symbolic"
+            text: "No configuration"
+            explanation: "The daemon exposes no editable configuration keys."
         }
 
         FormCard.FormSectionText {

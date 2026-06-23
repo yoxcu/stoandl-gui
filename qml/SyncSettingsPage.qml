@@ -31,7 +31,7 @@ Kirigami.ScrollablePage {
         if (service === "weather")  return "weather-clear-symbolic";
         if (service === "calendar") return "view-calendar-symbolic";
         if (service === "music")    return "media-playback-start-symbolic";
-        if (service === "health")   return "favorite-symbolic";
+        if (service === "health")   return "love-symbolic";
         if (service === "dnd")      return "notifications-disabled-symbolic";
         return "emblem-synchronizing-symbolic";
     }
@@ -134,7 +134,7 @@ Kirigami.ScrollablePage {
             FormCard.FormDelegateSeparator {}
             FormCard.FormButtonDelegate {
                 text: "Health"
-                icon.name: "favorite-symbolic"
+                icon.name: "love-symbolic"
                 onClicked: page.forceSync(StoandlClient.syncHealth, "Health")
             }
         }

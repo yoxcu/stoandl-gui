@@ -129,15 +129,15 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.gridUnit * 4
         }
 
-        // No watch connected (or no prefs synced yet).
-        FormCard.FormCard {
+        // No watch connected (or no prefs synced yet). Same top-level placeholder style as the
+        // Watch/Health/Apps/Notifications pages.
+        Kirigami.PlaceholderMessage {
             visible: StoandlClient.daemonUp && page.watchPrefs.length === 0
-            Layout.topMargin: Kirigami.Units.largeSpacing
-            FormCard.FormPlaceholderMessageDelegate {
-                icon.name: "chronometer-symbolic"
-                text: "No watch settings"
-                explanation: "Connect a watch to read and change its settings."
-            }
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.gridUnit * 4
+            icon.name: "chronometer-symbolic"
+            text: "No watch settings"
+            explanation: "Connect a watch to read and change its settings."
         }
 
         // One FormHeader + FormCard per non-empty section.

@@ -261,6 +261,13 @@ Kirigami.ScrollablePage {
         FormCard.FormHeader {
             visible: StoandlClient.daemonUp && page.hasData
             title: "Steps · this week"
+            trailing: Kirigami.Icon {
+                source: "view-statistics-symbolic"
+                implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                Layout.alignment: Qt.AlignVCenter
+                opacity: 0.7
+            }
         }
 
         FormCard.FormCard {
@@ -371,6 +378,13 @@ Kirigami.ScrollablePage {
             // "last night" when we woke today, otherwise the date of the most recent night with data
             // (the watch may have been syncing elsewhere, so the freshest sleep we hold can be older).
             title: page.sleepRecency()
+            trailing: Kirigami.Icon {
+                source: "weather-clear-night-symbolic"
+                implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                Layout.alignment: Qt.AlignVCenter
+                opacity: 0.7
+            }
         }
 
         FormCard.FormCard {
@@ -515,6 +529,13 @@ Kirigami.ScrollablePage {
         FormCard.FormHeader {
             visible: StoandlClient.daemonUp && page.hrAvailable
             title: "Heart rate"
+            trailing: Kirigami.Icon {
+                source: "love-symbolic"
+                implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                Layout.alignment: Qt.AlignVCenter
+                opacity: 0.7
+            }
         }
 
         FormCard.FormCard {
