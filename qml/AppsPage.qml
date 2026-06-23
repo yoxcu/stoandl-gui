@@ -9,9 +9,10 @@ import org.stoandl.gui
 Kirigami.ScrollablePage {
     id: page
     objectName: "apps"
-    title: "Apps & Faces"
-    // No page-title header (the bottom nav shows the section); the actions move to an inline toolbar.
-    globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None
+    // No title text — the bottom navigation already shows the section. The Faces/Apps/Extensions
+    // segment switcher is pinned in the page header (below), not in the scrolling content.
+    title: ""
+    Accessible.name: "Apps & Faces"
 
     // Which segment is showing: "faces" | "apps" | "ext".
     property string segment: "faces"
@@ -98,8 +99,7 @@ Kirigami.ScrollablePage {
 
     // Segment-aware primary action (§4-0): install .pbw for faces/apps,
     // install an archive for extensions.
-    // Page actions, rendered in an inline toolbar (the page header is hidden).
-    readonly property list<Kirigami.Action> pageActions: [
+    actions: [
         Kirigami.Action {
             icon.name: "list-add"
             text: page.extSegment ? "Install extension" : "Install .pbw"
@@ -210,64 +210,45 @@ Kirigami.ScrollablePage {
         }
     }
 
+    // Pinned segment switcher (Faces / Apps / Extensions) — stays at the top while the list scrolls.
+    header: QQC2.ToolBar {
+        visible: StoandlClient.daemonUp
+        height: visible ? implicitHeight : 0
+        position: QQC2.ToolBar.Header
+        contentItem: RowLayout {
+            spacing: Kirigami.Units.smallSpacing
+            QQC2.Button {
+                Layout.fillWidth: true
+                text: "Faces · " + page.faces.length
+                checkable: true; autoExclusive: true
+                checked: page.segment === "faces"
+                onClicked: page.segment = "faces"
+            }
+            QQC2.Button {
+                Layout.fillWidth: true
+                text: "Apps · " + page.others.length
+                checkable: true; autoExclusive: true
+                checked: page.segment === "apps"
+                onClicked: page.segment = "apps"
+            }
+            QQC2.Button {
+                Layout.fillWidth: true
+                text: "Extensions · " + page.extensions.length
+                checkable: true; autoExclusive: true
+                checked: page.segment === "ext"
+                onClicked: page.segment = "ext"
+            }
+        }
+    }
+
     ColumnLayout {
         spacing: 0
-
-        Kirigami.ActionToolBar {
-            visible: StoandlClient.daemonUp
-            Layout.fillWidth: true
-            Layout.topMargin: Kirigami.Units.smallSpacing
-            alignment: Qt.AlignRight
-            actions: page.pageActions
-        }
 
         // --- daemon-not-running state --------------------------------------
         DaemonPlaceholder {
             visible: !StoandlClient.daemonUp
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
-        }
-
-        // --- segmented control (Faces / Apps / Extensions) -----------------
-        FormCard.FormCard {
-            visible: StoandlClient.daemonUp
-            Layout.topMargin: Kirigami.Units.largeSpacing
-
-            QQC2.Pane {
-                Layout.fillWidth: true
-                Layout.margins: Kirigami.Units.largeSpacing
-                padding: Kirigami.Units.smallSpacing
-                background: null
-
-                contentItem: RowLayout {
-                    spacing: Kirigami.Units.smallSpacing
-
-                    QQC2.Button {
-                        Layout.fillWidth: true
-                        text: "Faces · " + page.faces.length
-                        checkable: true
-                        autoExclusive: true
-                        checked: page.segment === "faces"
-                        onClicked: page.segment = "faces"
-                    }
-                    QQC2.Button {
-                        Layout.fillWidth: true
-                        text: "Apps · " + page.others.length
-                        checkable: true
-                        autoExclusive: true
-                        checked: page.segment === "apps"
-                        onClicked: page.segment = "apps"
-                    }
-                    QQC2.Button {
-                        Layout.fillWidth: true
-                        text: "Extensions · " + page.extensions.length
-                        checkable: true
-                        autoExclusive: true
-                        checked: page.segment === "ext"
-                        onClicked: page.segment = "ext"
-                    }
-                }
-            }
         }
 
         // --- Faces / Apps empty state --------------------------------------

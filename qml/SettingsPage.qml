@@ -10,9 +10,9 @@ import org.stoandl.gui
 Kirigami.ScrollablePage {
     id: page
     objectName: "settings"
-    title: "Settings"
-    // No page-title header (the bottom nav shows the section). Sub-pages keep their headers + back button.
-    globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None
+    // No title text — the bottom navigation already shows the section. Sub-pages keep their titles + back button.
+    title: ""
+    Accessible.name: "Settings"
 
     // Sub-pages are pushed onto the window's page stack (a back button / extra column appears).
     Component { id: syncPage;    SyncSettingsPage {} }

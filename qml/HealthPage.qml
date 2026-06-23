@@ -13,10 +13,10 @@ import org.stoandl.gui
 Kirigami.ScrollablePage {
     id: page
     objectName: "health"
-    title: "Health"
-    // No page-title header — the bottom navigation already shows the section, so the title bar is just
-    // wasted space. The "Sync" action moves inline (the period navigator). Sub-pages keep their headers.
-    globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None
+    // No title text — the bottom navigation already shows the section. The Daily/Weekly/Monthly switcher
+    // + navigator are pinned in the page header (below). "Sync health" stays a standard page action.
+    title: ""
+    Accessible.name: "Health"
 
     // --- period state ------------------------------------------------------
     property string periodType: "day"     // "day" | "week" | "month"
@@ -135,51 +135,41 @@ Kirigami.ScrollablePage {
 
     Component.onCompleted: page.reload()
 
-    ColumnLayout {
-        spacing: 0
-
-        DaemonPlaceholder {
-            visible: !StoandlClient.daemonUp
-            Layout.fillWidth: true
-            Layout.topMargin: Kirigami.Units.gridUnit * 4
+    actions: [
+        Kirigami.Action {
+            icon.name: "view-refresh-symbolic"
+            text: "Sync health"
+            enabled: StoandlClient.daemonUp
+            onTriggered: page.syncHealth()
         }
+    ]
 
-        // --- period selector + navigator (drives all sections) -------------
-        FormCard.FormCard {
-            visible: StoandlClient.daemonUp
-            Layout.topMargin: Kirigami.Units.largeSpacing
-
-            QQC2.Pane {
+    // Pinned period control — the Daily/Weekly/Monthly switcher + navigator stay at the top while the
+    // metric cards scroll. Drives all three sections.
+    header: QQC2.ToolBar {
+        visible: StoandlClient.daemonUp
+        height: visible ? implicitHeight : 0
+        position: QQC2.ToolBar.Header
+        contentItem: ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+            RowLayout {
                 Layout.fillWidth: true
-                Layout.margins: Kirigami.Units.largeSpacing
-                padding: Kirigami.Units.smallSpacing
-                background: null
-                contentItem: RowLayout {
-                    spacing: Kirigami.Units.smallSpacing
-                    Repeater {
-                        model: [["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"]]
-                        delegate: QQC2.Button {
-                            required property var modelData
-                            Layout.fillWidth: true
-                            text: modelData[1]
-                            checkable: true
-                            autoExclusive: true
-                            checked: page.periodType === modelData[0]
-                            onClicked: page.setPeriodType(modelData[0])
-                        }
+                spacing: Kirigami.Units.smallSpacing
+                Repeater {
+                    model: [["day", "Daily"], ["week", "Weekly"], ["month", "Monthly"]]
+                    delegate: QQC2.Button {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        text: modelData[1]
+                        checkable: true
+                        autoExclusive: true
+                        checked: page.periodType === modelData[0]
+                        onClicked: page.setPeriodType(modelData[0])
                     }
                 }
             }
-
-            FormCard.FormDelegateSeparator {}
-
-            // Navigator: ← earlier · label · later →
             RowLayout {
                 Layout.fillWidth: true
-                Layout.leftMargin: Kirigami.Units.largeSpacing
-                Layout.rightMargin: Kirigami.Units.largeSpacing
-                Layout.topMargin: Kirigami.Units.smallSpacing
-                Layout.bottomMargin: Kirigami.Units.smallSpacing
                 QQC2.ToolButton {
                     icon.name: "go-previous-symbolic"
                     enabled: page.periodOffset < page.maxOffsetFor(page.periodType)
@@ -203,16 +193,17 @@ Kirigami.ScrollablePage {
                     QQC2.ToolTip.text: "Later"
                     QQC2.ToolTip.visible: hovered
                 }
-                Kirigami.Separator { Layout.fillHeight: true; Layout.preferredHeight: Kirigami.Units.gridUnit }
-                QQC2.ToolButton {
-                    icon.name: "view-refresh-symbolic"
-                    enabled: StoandlClient.daemonUp
-                    onClicked: page.syncHealth()
-                    Accessible.name: "Sync health"
-                    QQC2.ToolTip.text: "Sync health"
-                    QQC2.ToolTip.visible: hovered
-                }
             }
+        }
+    }
+
+    ColumnLayout {
+        spacing: 0
+
+        DaemonPlaceholder {
+            visible: !StoandlClient.daemonUp
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.gridUnit * 4
         }
 
         // --- no-data empty state -------------------------------------------

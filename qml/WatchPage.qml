@@ -8,9 +8,10 @@ import org.stoandl.gui
 Kirigami.ScrollablePage {
     id: page
     objectName: "watch"
-    title: "Watch"
-    // No page-title header (the bottom nav shows the section); the actions move to an inline toolbar.
-    globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None
+    // No title text — the bottom navigation already shows the section. The action toolbar (header on
+    // desktop / footer on mobile) and pushed sub-page headers stay as Kirigami renders them.
+    title: ""
+    Accessible.name: "Watch"
 
     // Latest ListWatches snapshot (parsed in C++) + the connected row, if any.
     property var watches: []
@@ -95,8 +96,7 @@ Kirigami.ScrollablePage {
     Component.onDestruction: StoandlClient.stopWatchPoll()
 
     // Page actions: header (desktop) / footer toolbar (mobile). NOT a Material FAB.
-    // Page actions, rendered in an inline toolbar (the page header is hidden).
-    readonly property list<Kirigami.Action> pageActions: [
+    actions: [
         Kirigami.Action {
             icon.name: "list-add"
             text: "Pair new watch"
@@ -119,14 +119,6 @@ Kirigami.ScrollablePage {
 
     ColumnLayout {
         spacing: 0
-
-        Kirigami.ActionToolBar {
-            visible: StoandlClient.daemonUp
-            Layout.fillWidth: true
-            Layout.topMargin: Kirigami.Units.smallSpacing
-            alignment: Qt.AlignRight
-            actions: page.pageActions
-        }
 
         // --- daemon-not-running state --------------------------------------
         DaemonPlaceholder {

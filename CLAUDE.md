@@ -72,13 +72,15 @@ data (quick-launch options, color presets) in a page-scope getter and have the d
 - The daemon is NOT D-Bus-activated. If the bus name is unowned → show "daemon not running", offer
   `systemctl --user start stoandl`. Never assume it's up.
 - Paths passed to SideloadApp/SideloadFirmware/etc. are **absolute, daemon-side**.
-- **Actions are declarative `Kirigami.Action`s, never hand-placed buttons; NO round floating FAB.** The
-  five **tab pages** (Watch/Health/Apps/Notifications/Settings) drop the page-title header
-  (`globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None`) — the bottom nav already shows the
-  section, so the title bar was wasted space. Their actions move INLINE: a `Kirigami.ActionToolBar`
-  (bound to a `readonly property list<Kirigami.Action> pageActions`) at the top of the content, or folded
-  into existing top chrome (Health's "Sync" sits in the period navigator). **Pushed sub-pages KEEP their
-  default header** (title + back button) — don't set None on them.
+- **Actions stay on the page `actions` (Kirigami renders them: header on desktop, footer toolbar on
+  mobile); never hand-place them, NO round floating FAB.** The five **tab pages**
+  (Watch/Health/Apps/Notifications/Settings) set **`title: ""`** — the bottom nav already names the
+  section, so the title TEXT is redundant (this is a deliberate, minor deviation from the KDE HIG, which
+  wants titled pages; the action toolbar itself stays). A page's **segment/period switcher**
+  (Health's Daily/Weekly/Monthly + navigator; Apps's Faces/Apps/Extensions) is **pinned in the page
+  `header`** (a `QQC2.ToolBar`, `height: visible ? implicitHeight : 0`) so it stays put while the content
+  scrolls — NOT inside the scrolling `ColumnLayout`. **Pushed sub-pages KEEP their title + back button**
+  (don't blank their title).
 - **Never hardcode colors or fonts.** Use `Kirigami.Theme` roles + `Kirigami.Units` spacing. The
   prototype's dark hexes are a density spec, not a color spec.
 - Row actions are **inline** (trailing buttons in the delegate), **not kebabs**.
