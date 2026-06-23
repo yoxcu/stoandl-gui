@@ -333,10 +333,10 @@ Kirigami.ScrollablePage {
                     readonly property real wakeup: page.hasData ? (page.summary.sleepWakeup || 0) : 0
                     readonly property bool haveSleep: totalMin > 0
 
-                    readonly property color deepTint: Kirigami.Theme.highlightColor
-                    readonly property color lightTint: Qt.rgba(Kirigami.Theme.highlightColor.r,
-                                                               Kirigami.Theme.highlightColor.g,
-                                                               Kirigami.Theme.highlightColor.b, 0.35)
+                    // Light = the bold/full accent, Deep = a lighter solid shade (swapped from before).
+                    // Both solid so the deep blocks stay visible drawn over the light band on the timeline.
+                    readonly property color lightTint: Kirigami.Theme.highlightColor
+                    readonly property color deepTint: Qt.lighter(Kirigami.Theme.highlightColor, 1.7)
 
                     // Headline: total (day) / avg per night (period) + bedtime→wakeup (day only).
                     RowLayout {
@@ -403,12 +403,14 @@ Kirigami.ScrollablePage {
                         }
                     }
 
-                    // Weekly/Monthly: per-night stacked bars (deep solid over light), y-axis in hours.
+                    // Weekly/Monthly: per-night stacked bars (light = full band, deep = lighter base), y-axis in hours.
                     MetricBars {
                         visible: !page.isDay
                         Layout.fillWidth: true
                         model: page.sleepBarData
                         tint: Kirigami.Theme.highlightColor
+                        barColor: sleepCol.lightTint
+                        deepColor: sleepCol.deepTint
                         valueToHeight: function (v) { return v / 60.0; }   // minutes → hours
                         formatLabel: function (v) { return Math.round(v) + "h"; }
                     }
@@ -488,34 +490,38 @@ Kirigami.ScrollablePage {
                         }
                         Item { Layout.fillWidth: true }
                     }
-                    // Past day OR period: the average, plus the resting HR (the most recent night's, for
-                    // a week/month) so you can compare effort vs rest.
+                    // Past day OR period: Resting is the primary stat (matching today's Resting-first
+                    // layout), with the period/day Average as the secondary. Falls back to Average as the
+                    // primary if there's no resting HR (no sleep-derived resting in the window).
                     RowLayout {
+                        id: hrPeriodRow
                         Layout.fillWidth: true
                         spacing: Kirigami.Units.gridUnit
                         visible: !(page.isDay && page.periodOffset === 0) && (page.isDay ? page.hrStats.count > 0 : (page.hasData && page.summary.hrAvg > 0))
-                        ColumnLayout {
+                        readonly property bool restingPrimary: page.summary.hrResting > 0
+                        readonly property int avgVal: page.isDay ? page.hrStats.avg : page.summary.hrAvg
+                        ColumnLayout {     // primary: Resting (or Average if no resting)
                             spacing: 0
-                            RowLayout {
-                                spacing: Kirigami.Units.smallSpacing / 2
-                                Kirigami.Heading { level: 1; text: String(page.isDay ? page.hrStats.avg : page.summary.hrAvg) }
-                                QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
-                            }
-                            QQC2.Label { text: "Average"; font: Kirigami.Theme.smallFont; opacity: 0.7 }
-                        }
-                        ColumnLayout {
-                            spacing: 0
-                            visible: page.summary.hrResting > 0
                             RowLayout {
                                 spacing: Kirigami.Units.smallSpacing / 2
                                 Kirigami.Heading {
-                                    level: 3
-                                    text: String(page.summary.hrResting)
-                                    color: Kirigami.Theme.negativeTextColor
+                                    level: 1
+                                    text: String(hrPeriodRow.restingPrimary ? page.summary.hrResting : hrPeriodRow.avgVal)
+                                    color: hrPeriodRow.restingPrimary ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
                                 }
                                 QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
                             }
-                            QQC2.Label { text: "Resting"; font: Kirigami.Theme.smallFont; opacity: 0.7 }
+                            QQC2.Label { text: hrPeriodRow.restingPrimary ? "Resting" : "Average"; font: Kirigami.Theme.smallFont; opacity: 0.7 }
+                        }
+                        ColumnLayout {     // secondary: Average (shown when Resting is the primary)
+                            spacing: 0
+                            visible: hrPeriodRow.restingPrimary
+                            RowLayout {
+                                spacing: Kirigami.Units.smallSpacing / 2
+                                Kirigami.Heading { level: 3; text: String(hrPeriodRow.avgVal) }
+                                QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
+                            }
+                            QQC2.Label { text: "Average"; font: Kirigami.Theme.smallFont; opacity: 0.7 }
                         }
                         Item { Layout.fillWidth: true }
                     }
@@ -530,48 +536,87 @@ Kirigami.ScrollablePage {
                         font: Kirigami.Theme.smallFont
                     }
 
-                    // Daily: minute-level sparkline (each sample at its true time of day).
-                    Canvas {
-                        id: hrCanvas
+                    // Daily: minute-level HR line with a left bpm y-axis + min/max/avg overlaid top-right.
+                    Item {
+                        id: hrChart
                         visible: page.isDay && page.hrStats.count > 0
                         Layout.fillWidth: true
-                        Layout.preferredHeight: Kirigami.Units.gridUnit * 3
-                        onPaint: {
-                            var ctx = getContext("2d");
-                            ctx.reset();
-                            var data = page.heartSamples;
-                            if (!data || data.length < 1) return;
-                            var lo = page.hrStats.min, hi = page.hrStats.max;
-                            var span = (hi - lo) || 1;
-                            var w = width, h = height, pad = 3;
-                            function px(min) { return (min / 1440) * w; }
-                            function py(v) { return h - ((v - lo) / span) * (h - 2 * pad) - pad; }
-                            var hr = Kirigami.Theme.negativeTextColor;
-                            var n = data.length;
-                            if (n === 1) {
-                                ctx.beginPath(); ctx.arc(px(data[0].minute), py(data[0].bpm), 3, 0, 2 * Math.PI);
-                                ctx.fillStyle = hr; ctx.fill(); return;
+                        Layout.preferredHeight: Kirigami.Units.gridUnit * 5
+                        readonly property real gutter: Kirigami.Units.gridUnit * 2.2
+                        readonly property int plotPad: 3
+                        function yOf(frac) { return hrChart.height - frac * (hrChart.height - 2 * hrChart.plotPad) - hrChart.plotPad; }
+
+                        // y-axis: gridlines + bpm tick labels (min / mid / max).
+                        Repeater {
+                            model: [0.0, 0.5, 1.0]
+                            delegate: Item {
+                                required property real modelData
+                                anchors.fill: parent
+                                Rectangle {
+                                    x: hrChart.gutter; width: hrChart.width - hrChart.gutter; height: 1
+                                    y: hrChart.yOf(parent.modelData)
+                                    color: Kirigami.Theme.disabledTextColor; opacity: 0.2
+                                }
+                                QQC2.Label {
+                                    x: 0; width: hrChart.gutter - Kirigami.Units.smallSpacing
+                                    y: Math.max(0, Math.min(hrChart.height - height, hrChart.yOf(parent.modelData) - height / 2))
+                                    horizontalAlignment: Text.AlignRight
+                                    text: String(Math.round(page.hrStats.min + parent.modelData * (page.hrStats.max - page.hrStats.min)))
+                                    font: Kirigami.Theme.smallFont; opacity: 0.6
+                                }
                             }
-                            ctx.beginPath();
-                            ctx.moveTo(px(data[0].minute), py(data[0].bpm));
-                            for (var i = 1; i < n; ++i) ctx.lineTo(px(data[i].minute), py(data[i].bpm));
-                            ctx.lineTo(px(data[n - 1].minute), h); ctx.lineTo(px(data[0].minute), h); ctx.closePath();
-                            var grad = ctx.createLinearGradient(0, 0, 0, h);
-                            grad.addColorStop(0, Qt.rgba(hr.r, hr.g, hr.b, 0.35));
-                            grad.addColorStop(1, Qt.rgba(hr.r, hr.g, hr.b, 0.0));
-                            ctx.fillStyle = grad; ctx.fill();
-                            ctx.beginPath();
-                            ctx.moveTo(px(data[0].minute), py(data[0].bpm));
-                            for (i = 1; i < n; ++i) ctx.lineTo(px(data[i].minute), py(data[i].bpm));
-                            ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.strokeStyle = hr; ctx.stroke();
                         }
-                        Connections { target: page; function onHeartSamplesChanged() { hrCanvas.requestPaint(); } }
-                        Connections { target: Kirigami.Theme; function onColorsChanged() { hrCanvas.requestPaint(); } }
+
+                        Canvas {
+                            id: hrCanvas
+                            anchors.fill: parent
+                            anchors.leftMargin: hrChart.gutter
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.reset();
+                                var data = page.heartSamples;
+                                if (!data || data.length < 1) return;
+                                var lo = page.hrStats.min, hi = page.hrStats.max;
+                                var span = (hi - lo) || 1;
+                                var w = width, h = height, pad = hrChart.plotPad;
+                                function px(min) { return (min / 1440) * w; }
+                                function py(v) { return h - ((v - lo) / span) * (h - 2 * pad) - pad; }
+                                var hr = Kirigami.Theme.negativeTextColor;
+                                var n = data.length;
+                                if (n === 1) {
+                                    ctx.beginPath(); ctx.arc(px(data[0].minute), py(data[0].bpm), 3, 0, 2 * Math.PI);
+                                    ctx.fillStyle = hr; ctx.fill(); return;
+                                }
+                                ctx.beginPath();
+                                ctx.moveTo(px(data[0].minute), py(data[0].bpm));
+                                for (var i = 1; i < n; ++i) ctx.lineTo(px(data[i].minute), py(data[i].bpm));
+                                ctx.lineTo(px(data[n - 1].minute), h); ctx.lineTo(px(data[0].minute), h); ctx.closePath();
+                                var grad = ctx.createLinearGradient(0, 0, 0, h);
+                                grad.addColorStop(0, Qt.rgba(hr.r, hr.g, hr.b, 0.35));
+                                grad.addColorStop(1, Qt.rgba(hr.r, hr.g, hr.b, 0.0));
+                                ctx.fillStyle = grad; ctx.fill();
+                                ctx.beginPath();
+                                ctx.moveTo(px(data[0].minute), py(data[0].bpm));
+                                for (i = 1; i < n; ++i) ctx.lineTo(px(data[i].minute), py(data[i].bpm));
+                                ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.strokeStyle = hr; ctx.stroke();
+                            }
+                            Connections { target: page; function onHeartSamplesChanged() { hrCanvas.requestPaint(); } }
+                            Connections { target: Kirigami.Theme; function onColorsChanged() { hrCanvas.requestPaint(); } }
+                        }
+
+                        // min · max · avg overlaid at the top-right (saves a row below the chart).
+                        QQC2.Label {
+                            anchors.top: parent.top; anchors.right: parent.right
+                            anchors.topMargin: Kirigami.Units.smallSpacing; anchors.rightMargin: Kirigami.Units.smallSpacing
+                            text: "min " + page.hrStats.min + " · max " + page.hrStats.max + " · avg " + page.hrStats.avg + " bpm"
+                            font: Kirigami.Theme.smallFont; opacity: 0.6
+                        }
                     }
                     Item {
                         id: hrAxis
                         visible: page.isDay && page.hrStats.count > 0
                         Layout.fillWidth: true
+                        Layout.leftMargin: hrChart.gutter   // align the time labels under the plot
                         Layout.preferredHeight: Kirigami.Units.gridUnit
                         Repeater {
                             model: [["12 AM", 0.0], ["6 AM", 0.25], ["12 PM", 0.5], ["6 PM", 0.75], ["12 AM", 1.0]]
@@ -583,13 +628,6 @@ Kirigami.ScrollablePage {
                                 x: Math.max(0, Math.min(hrAxis.width - width, modelData[1] * hrAxis.width - width / 2))
                             }
                         }
-                    }
-                    QQC2.Label {
-                        visible: page.isDay && page.hrStats.count > 0
-                        Layout.fillWidth: true
-                        text: "min " + page.hrStats.min + " · max " + page.hrStats.max + " · avg " + page.hrStats.avg + " bpm"
-                        font: Kirigami.Theme.smallFont
-                        opacity: 0.6
                     }
 
                     // Weekly/Monthly: per-day average-HR bars.
@@ -650,6 +688,9 @@ Kirigami.ScrollablePage {
         property var formatLabel: null        // height-axis value → y-tick string (default: rounded)
         property bool floorAtMin: false       // floor the y-axis at the series min (HR, never starts at 0)
         property bool hourly: false           // 24 bars → a 12a/6a/12p/6p time axis instead of per-bar labels
+        // Bar fill + the stacked `deep` portion's fill (sleep overrides these to match the timeline).
+        property color barColor: Qt.rgba(bars.tint.r, bars.tint.g, bars.tint.b, 0.4)
+        property color deepColor: bars.tint
         spacing: Kirigami.Units.smallSpacing
 
         // Width of the left y-axis gutter (holds the tick labels).
@@ -736,16 +777,16 @@ Kirigami.ScrollablePage {
                                     ? Math.max(2, (bars.h(cell.modelData.value) - bars.floor) / (bars.barTop - bars.floor) * cell.height)
                                     : 0
                             radius: Math.min(width / 3, 3)
-                            color: Qt.rgba(bars.tint.r, bars.tint.g, bars.tint.b, 0.4)
+                            color: bars.barColor
                         }
-                        Rectangle {   // deep portion (solid), stacked at the base
+                        Rectangle {   // stacked sub-portion (sleep "deep"), at the base
                             visible: (cell.modelData.deep || 0) > 0
                             anchors.bottom: parent.bottom
                             anchors.horizontalCenter: parent.horizontalCenter
                             width: Math.max(2, parent.width * 0.7)
                             height: Math.max(1, bars.h(cell.modelData.deep || 0) / (bars.barTop - bars.floor) * cell.height)
                             radius: Math.min(width / 3, 3)
-                            color: bars.tint
+                            color: bars.deepColor
                         }
                     }
                 }
