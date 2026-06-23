@@ -333,12 +333,11 @@ Kirigami.ScrollablePage {
                     readonly property real wakeup: page.hasData ? (page.summary.sleepWakeup || 0) : 0
                     readonly property bool haveSleep: totalMin > 0
 
-                    // Deep = the full accent (darker, solid so its blocks stay visible over the band);
-                    // Light = a translucent paler tint of the same accent.
-                    readonly property color deepTint: Kirigami.Theme.highlightColor
-                    readonly property color lightTint: Qt.rgba(Kirigami.Theme.highlightColor.r,
-                                                               Kirigami.Theme.highlightColor.g,
-                                                               Kirigami.Theme.highlightColor.b, 0.35)
+                    // Light = the accent; Deep = a darker SOLID shade of it. Both solid (not opacity of one
+                    // colour) so "deep darker than light" holds in BOTH light and dark themes — a translucent
+                    // tint composites darker over a dark background, which inverted deep/light there.
+                    readonly property color lightTint: Kirigami.Theme.highlightColor
+                    readonly property color deepTint: Qt.darker(Kirigami.Theme.highlightColor, 1.6)
 
                     // Headline: total (day) / avg per night (period) + bedtime→wakeup (day only).
                     RowLayout {
@@ -405,12 +404,14 @@ Kirigami.ScrollablePage {
                         }
                     }
 
-                    // Weekly/Monthly: per-night stacked bars (faded total = light, solid base = deep), y-axis in hours.
+                    // Weekly/Monthly: per-night stacked bars (light band, darker deep base), y-axis in hours.
                     MetricBars {
                         visible: !page.isDay
                         Layout.fillWidth: true
                         model: page.sleepBarData
                         tint: Kirigami.Theme.highlightColor
+                        barColor: sleepCol.lightTint
+                        deepColor: sleepCol.deepTint
                         valueToHeight: function (v) { return v / 60.0; }   // minutes → hours
                         formatLabel: function (v) { return Math.round(v) + "h"; }
                     }
@@ -473,9 +474,9 @@ Kirigami.ScrollablePage {
                         readonly property int avgVal: page.isDay ? page.hrStats.avg : page.summary.hrAvg
                         HrStat { visible: hrStatsRow.restingPrimary; primary: true; value: String(page.summary.hrResting); label: "Resting" }
                         HrStat { visible: hrStatsRow.avgVal > 0; primary: !hrStatsRow.restingPrimary; value: String(hrStatsRow.avgVal); label: "Average" }
+                        Item { Layout.fillWidth: true }   // Resting/Average left, Min/Max right
                         HrStat { visible: page.isDay && page.hrStats.count > 0; value: String(page.hrStats.min); label: "Min" }
                         HrStat { visible: page.isDay && page.hrStats.count > 0; value: String(page.hrStats.max); label: "Max" }
-                        Item { Layout.fillWidth: true }
                     }
 
                     // Empty state (a day with no samples, or a week/month with no readings at all even
