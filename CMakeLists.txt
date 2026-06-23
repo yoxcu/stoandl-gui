@@ -30,6 +30,10 @@ qt_add_qml_module(stoandl-gui
         qml/AppsPage.qml
         qml/NotificationsPage.qml
         qml/SettingsPage.qml
+        qml/SyncSettingsPage.qml
+        qml/WatchSettingsPage.qml
+        qml/GeneralSettingsPage.qml
+        qml/BackupSettingsPage.qml
     SOURCES
         src/StoandlClient.h
         src/StoandlClient.cpp

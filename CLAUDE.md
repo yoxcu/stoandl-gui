@@ -15,6 +15,30 @@ in the window *footer*, so it sits BELOW content on mobile and relocates ABOVE o
 are the 3rd segment of **Apps** (Faces / Apps / Extensions). Sync services live in **Settings**. The nav
 is hidden when the daemon is down (nothing works without it).
 
+**Settings is a category landing, not one page.** `SettingsPage.qml` is a short list of
+`FormButtonDelegate` rows that `pageStack.push()` focused sub-pages (KDE HIG for a large settings
+surface): **`SyncSettingsPage`** (service toggles + force-sync + nested calendars),
+**`WatchSettingsPage`** (the ~46 WatchPrefs, grouped into FormHeader sections and rendered one delegate
+*per type* — see below), **`GeneralSettingsPage`** (the curated `stoandl.conf` keys), **`BackupSettingsPage`**
+(backup/restore/support CLI). `Main.qml`'s `showTab()` pops pushed sub-pages on tab-switch and on
+re-tapping the active tab.
+
+**WatchPrefs widgets (the gotchas).** `ListWatchPrefs` types are `{bool, number, enum, quicklaunch,
+color}` and the `allowed` field is **pipe-(`|`)-separated** for the option types (NOT comma — the daemon's
+`WatchPrefsControl.allowed()`). `StoandlClient::listWatchPrefs()` splits on `|`, pre-derives number
+`min/max/unit` (a `"3000 ms"` current is not a plain int — use the leading digits), and a `debug` flag.
+Per type: bool→`FormSwitchDelegate`, enum→`FormComboBoxDelegate` (options = `allowed`, **display names**,
+not Kotlin constant names — fixed daemon-side), quicklaunch→`FormComboBoxDelegate` of **app names**
+(from `ListApps`) + "Off" (NEVER a slider/uuid), number→`FormSpinBoxDelegate` (unit via `textFromValue`,
+**debounce the write** — `onValueChanged` fires every step and `applyPref` rebuilds the list), color→a
+swatch + preset combo (the daemon takes a preset *name* back; `FormColorDelegate` is **avoided** — it
+calls `i18ndc()` and we deliberately link no KF6 C++ / `KLocalizedContext`).
+
+**QML scope gotcha:** a property *binding* inside a nested inline `Component` (a Loader delegate) can't
+call a page method (it resolves to a `QQmlComponent`); **handlers can**. So precompute per-row display
+data (quick-launch options, color presets) in a page-scope getter and have the delegates read only
+`modelData.*`.
+
 ## Hard rules
 - **The interface has SIX signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
   `LanguageProgress`/`ExtensionsChanged`/`ExtensionStateChanged`) that augment polling — polling

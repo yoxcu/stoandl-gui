@@ -133,27 +133,94 @@ class MockStoandl(dbus.service.Object):
             {"id": "work@corp",      "name": "Work",     "enabled": True},
             {"id": "holidays@public","name": "Holidays", "enabled": False},
         ]
-        # HOOK: watch advanced settings (ListWatchPrefs / SetWatchPref).
-        # id, type, current, default, allowed, flags, name, description.
+        # Watch advanced settings (ListWatchPrefs / SetWatchPref). This MIRRORS the real daemon's
+        # WatchPrefsControl.list() record EXACTLY so the GUI is exercised against the true contract:
+        #   id \t type \t current \t default \t allowed \t flags \t name \t description
+        # type ∈ {bool, number, enum, quicklaunch, color}; `allowed` is PIPE-separated (the real
+        # daemon joins option/range lists with '|', NOT ','); enum current/allowed use DISPLAY names;
+        # number current/default carry the unit ("3000 ms"); quicklaunch current is an app name / "off"
+        # / a raw uuid; color is "0xRRGGBB"; flags carries "debug" for advanced/debug-only prefs. The
+        # ids match libpebble3's WatchPref ids so the GUI's category grouping (keyed on id) applies.
         self.prefs = [
-            {"id": "quick_launch_up", "type": "enum", "current": "Music", "default": "(none)",
-             "allowed": "(none),Music,Health,Pebblemap,Tezel", "flags": "",
-             "name": "Quick launch · Up", "description": "App launched by a long up-press"},
-            {"id": "quick_launch_down", "type": "enum", "current": "Pebblemap", "default": "(none)",
-             "allowed": "(none),Music,Health,Pebblemap,Tezel", "flags": "",
-             "name": "Quick launch · Down", "description": "App launched by a long down-press"},
-            {"id": "backlight", "type": "bool", "current": "true", "default": "true",
-             "allowed": "", "flags": "", "name": "Backlight",
+            # --- Quick Launch (quicklaunch: app name or "off") ---
+            {"id": "qlUp", "type": "quicklaunch", "current": "Music", "default": "off",
+             "allowed": "off|<app name or uuid>", "flags": "",
+             "name": "Quick Launch: Hold Up", "description": "App launched by a long up-press"},
+            {"id": "qlDown", "type": "quicklaunch", "current": "off", "default": "off",
+             "allowed": "off|<app name or uuid>", "flags": "",
+             "name": "Quick Launch: Hold Down", "description": "App launched by a long down-press"},
+            {"id": "qlSelect", "type": "quicklaunch", "current": "off", "default": "off",
+             "allowed": "off|<app name or uuid>", "flags": "",
+             "name": "Quick Launch: Hold Select", "description": "App launched by a long select-press"},
+            {"id": "qlSingleClickUp", "type": "quicklaunch", "current": "Health", "default": "Health",
+             "allowed": "off|<app name or uuid>", "flags": "",
+             "name": "Quick Launch: Tap Up", "description": "App launched by a tap of the up button"},
+            # --- Display & Backlight ---
+            {"id": "lightEnabled", "type": "bool", "current": "true", "default": "true",
+             "allowed": "true|false", "flags": "", "name": "Backlight",
              "description": "Light the screen on button press"},
-            {"id": "backlight_timeout", "type": "int", "current": "3", "default": "3",
-             "allowed": "1..8", "flags": "", "name": "Backlight timeout",
-             "description": "Seconds the backlight stays on"},
-            {"id": "motion_backlight", "type": "bool", "current": "true", "default": "true",
-             "allowed": "", "flags": "", "name": "Motion backlight",
-             "description": "Wake the screen on a wrist flick"},
-            {"id": "ambient_threshold", "type": "int", "current": "200", "default": "150",
-             "allowed": "0..400", "flags": "", "name": "Ambient light threshold",
-             "description": "Light level below which the backlight engages (lx)"},
+            {"id": "lightMotion", "type": "bool", "current": "true", "default": "true",
+             "allowed": "true|false", "flags": "", "name": "Backlight Motion",
+             "description": "Turn on backlight by flicking wrist"},
+            {"id": "lightIntensity", "type": "enum", "current": "Medium", "default": "Medium",
+             "allowed": "Low|Medium|High|Blinding", "flags": "", "name": "Backlight Intensity",
+             "description": "Maximum backlight brightness when on"},
+            {"id": "lightTimeoutMs", "type": "number", "current": "3000 ms", "default": "3000 ms",
+             "allowed": "1..10000 ms", "flags": "", "name": "Backlight Timeout",
+             "description": "How long the backlight stays on"},
+            {"id": "lightColor", "type": "color", "current": "0xF0D0B0", "default": "0xF0D0B0",
+             "allowed": "RRGGBB|Red|Orange|Yellow|Lime|Green|Cyan|Blue|Purple|Magenta|Pink|Warm White|Cool White",
+             "flags": "", "name": "Backlight Color",
+             "description": "LED color used when the backlight is on (color watches only)"},
+            {"id": "textStyle", "type": "enum", "current": "Default", "default": "Default",
+             "allowed": "Smaller|Default|Larger", "flags": "", "name": "Text Size",
+             "description": ""},
+            {"id": "lightAmbientThreshold", "type": "number", "current": "200", "default": "150",
+             "allowed": "1..4096", "flags": "debug", "name": "Ambient Light Threshold",
+             "description": "How low ambient light must be to enable the backlight"},
+            {"id": "displayOrientationLeftHanded", "type": "bool", "current": "false", "default": "false",
+             "allowed": "true|false", "flags": "", "name": "Left-handed Mode",
+             "description": "Button functions are reversed"},
+            # --- Notifications ---
+            {"id": "mask", "type": "enum", "current": "All On", "default": "All On",
+             "allowed": "All On|Phone Calls|All Off", "flags": "", "name": "Notification Filter",
+             "description": ""},
+            {"id": "notifWindowTimeout", "type": "number", "current": "180000 ms", "default": "180000 ms",
+             "allowed": "0..600000 ms", "flags": "", "name": "Notification Timeout",
+             "description": "Notifications time out after this period (unless in Quiet Time)"},
+            {"id": "timelineQuickViewEnabled", "type": "bool", "current": "true", "default": "true",
+             "allowed": "true|false", "flags": "", "name": "Timeline Quick View",
+             "description": "Show upcoming events below the watchface"},
+            # --- Quiet Time ---
+            {"id": "dndManuallyEnabled", "type": "bool", "current": "false", "default": "false",
+             "allowed": "true|false", "flags": "", "name": "Quiet Time - Manual",
+             "description": "Mute notifications and keep them on-screen without a timeout"},
+            {"id": "dndShowNotifications", "type": "enum", "current": "Show", "default": "Show",
+             "allowed": "Hide|Show", "flags": "", "name": "Quiet Time - Show Notifications",
+             "description": ""},
+            # --- Vibration ---
+            {"id": "vibeIntensity", "type": "enum", "current": "High", "default": "High",
+             "allowed": "Low|Medium|High", "flags": "", "name": "System Vibration Intensity",
+             "description": ""},
+            {"id": "vibeScoreNotifications", "type": "enum", "current": "Nudge Nudge", "default": "Nudge Nudge",
+             "allowed": "Disabled|Standard - Low|Standard - High|Pulse|Nudge Nudge|Jackhammer|Mario",
+             "flags": "", "name": "Vibration - Notifications", "description": ""},
+            # --- Music ---
+            {"id": "musicShowVolumeControls", "type": "bool", "current": "true", "default": "true",
+             "allowed": "true|false", "flags": "", "name": "Show Volume Controls",
+             "description": ""},
+            # --- Motion & Menus ---
+            {"id": "motionSensitivity", "type": "enum", "current": "Medium", "default": "Medium",
+             "allowed": "Very Low|Low|Medium-Low|Medium|Medium-High|High|Very High", "flags": "debug",
+             "name": "Motion Sensitivity", "description": ""},
+            {"id": "menuScrollWrapAround", "type": "bool", "current": "false", "default": "false",
+             "allowed": "true|false", "flags": "", "name": "Menu Scrolling - Wrap Around",
+             "description": "Up button will go to the bottom of menus"},
+            # --- Clock & Language ---
+            {"id": "clock24h", "type": "bool", "current": "false", "default": "false",
+             "allowed": "true|false", "flags": "", "name": "24h clock", "description": ""},
+            {"id": "langEnglish", "type": "bool", "current": "false", "default": "false",
+             "allowed": "true|false", "flags": "", "name": "Language: English", "description": ""},
         ]
         # System screen: firmware + language op state, language catalog.
         self.fw = None    # None when idle, else {"polls": n}
@@ -719,12 +786,36 @@ class MockStoandl(dbus.service.Object):
         return [rec(p["id"], p["type"], p["current"], p["default"], p["allowed"],
                     p["flags"], p["name"], p["description"]) for p in self.prefs]
 
+    # Backlight color presets — name → 0xRRGGBB — matching libpebble3's BACKLIGHT_COLOR_PRESETS
+    # (WatchPrefEntity.kt). The daemon's parseColor() resolves a preset NAME first, then a hex.
+    COLOR_PRESETS = {
+        "red": "0xFF0000", "orange": "0xFF7F00", "yellow": "0xFFFF00", "lime": "0x7FFF00",
+        "green": "0x00FF00", "cyan": "0x00FFFF", "blue": "0x0000FF", "purple": "0x7F00FF",
+        "magenta": "0xFF00FF", "pink": "0xFF66CC", "warm white": "0xF0D0B0", "cool white": "0xFFFFFF",
+    }
+
     @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
     def SetWatchPref(self, pref_id, value):
         for p in self.prefs:
             if p["id"] == pref_id:
-                p["current"] = value
-                return f"ok:{p['name']} set to {value}"
+                # Mirror the daemon's parse* + format() round-trip on read-back: a color resolves a
+                # preset NAME (or a hex) to 0xRRGGBB; a number re-appends its unit; an "off"
+                # quicklaunch collapses to "off". Everything else stores the value verbatim.
+                if p["type"] == "color":
+                    preset = self.COLOR_PRESETS.get(value.strip().lower())
+                    if preset is not None:
+                        p["current"] = preset
+                    else:
+                        hexv = value.lstrip("#").removeprefix("0x").removeprefix("0X")[-6:].upper()
+                        p["current"] = "0x" + hexv.rjust(6, "0")
+                elif p["type"] == "number":
+                    unit = p["allowed"].split(" ", 1)[1] if " " in p["allowed"] else ""
+                    p["current"] = (value.strip() + (" " + unit if unit else "")).strip()
+                elif p["type"] == "quicklaunch" and value.strip().lower() in ("", "off", "none", "disabled"):
+                    p["current"] = "off"
+                else:
+                    p["current"] = value
+                return f"ok:{p['name']} set to {p['current']}"
         return f"notfound:no setting '{pref_id}'"
 
     # --- Notifications -----------------------------------------------------

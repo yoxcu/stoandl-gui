@@ -29,10 +29,16 @@ Kirigami.ApplicationWindow {
     Component { id: settingsComponent;      SettingsPage {} }
 
     function showTab(index) {
-        if (index === currentTab && pageStack.depth > 0)
+        // Re-tapping the active tab returns to its root (pops any pushed sub-page, e.g. a Settings
+        // detail). Switching tabs first pops sub-pages, then swaps the root page in place.
+        if (index === currentTab) {
+            while (pageStack.depth > 1)
+                pageStack.pop();
             return;
+        }
         currentTab = index;
-        // Single-column tab navigation: swap the (only) page in place.
+        while (pageStack.depth > 1)
+            pageStack.pop();
         pageStack.replace(pageComponents[index]);
     }
 

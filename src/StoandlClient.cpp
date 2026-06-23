@@ -923,25 +923,54 @@ QVariantMap StoandlClient::setSyncEnabled(const QString &service, bool enabled)
 QVariantList StoandlClient::listWatchPrefs()
 {
     // Record: id \t type \t current \t default \t allowed \t flags \t name \t description
+    //
+    // type ∈ {bool, number, enum, quicklaunch, color} (the daemon's WatchPrefsControl.typeName()).
+    // `allowed` is built by WatchPrefsControl.allowed() and is **pipe-separated** for the option
+    // types — enum ("Standard - Low|Standard - High|…"), quicklaunch ("off|<app name or uuid>"),
+    // color ("RRGGBB|<preset>|…") — and a "min..max[ unit]" range for number, "true|false" for bool.
+    // The QML renders one delegate per type, so split on '|' (NOT ','), and pre-derive the number
+    // range + unit and the leading-int current value (a "3000 ms" current is not a plain int).
     QVariantList rows;
     const QVariantList records = list(QStringLiteral("ListWatchPrefs"));
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         const QString type = f.value(1);
         const QString cur  = f.value(2);
+        const QString allowedRaw = f.value(4);
+        const QStringList flags = f.value(5).isEmpty() ? QStringList()
+                                                       : f.value(5).split(QLatin1Char(','));
         QVariantMap m;
         m[QStringLiteral("id")]          = f.value(0);
         m[QStringLiteral("type")]        = type;
         m[QStringLiteral("current")]     = cur;
         m[QStringLiteral("currentBool")] = (cur == QStringLiteral("true"));
-        m[QStringLiteral("currentInt")]  = cur.toInt();
+        m[QStringLiteral("currentInt")]  = parsePercent(cur);   // leading digits ("3000 ms" → 3000), -1 if none
         m[QStringLiteral("default")]     = f.value(3);
-        m[QStringLiteral("allowed")]     = f.value(4).isEmpty() ? QStringList()
-                                                                : f.value(4).split(QLatin1Char(','));
-        m[QStringLiteral("flags")]       = f.value(5).isEmpty() ? QStringList()
-                                                                : f.value(5).split(QLatin1Char(','));
+        // Pipe-split (the daemon joins option/range lists with '|'); empty → no options.
+        m[QStringLiteral("allowed")]     = allowedRaw.isEmpty() ? QStringList()
+                                                                : allowedRaw.split(QLatin1Char('|'));
+        m[QStringLiteral("flags")]       = flags;
+        m[QStringLiteral("debug")]       = flags.contains(QStringLiteral("debug"));
         m[QStringLiteral("name")]        = f.value(6);
         m[QStringLiteral("description")] = f.value(7);
+        // Number prefs: pre-derive {min, max, unit} from the "min..max[ unit]" allowed range so the
+        // QML spinbox gets clean ints + a unit suffix (a slider over a raw string can't).
+        if (type == QStringLiteral("number")) {
+            int rangeMin = 0, rangeMax = 100;
+            QString unit;
+            const int dots = allowedRaw.indexOf(QStringLiteral(".."));
+            if (dots >= 0) {
+                rangeMin = parsePercent(allowedRaw.left(dots));
+                const QString hi = allowedRaw.mid(dots + 2).trimmed();   // "10000 ms"
+                rangeMax = parsePercent(hi);
+                const int sp = hi.indexOf(QLatin1Char(' '));
+                if (sp >= 0)
+                    unit = hi.mid(sp + 1).trimmed();
+            }
+            m[QStringLiteral("min")]  = rangeMin < 0 ? 0 : rangeMin;
+            m[QStringLiteral("max")]  = rangeMax < 0 ? 100 : rangeMax;
+            m[QStringLiteral("unit")] = unit;
+        }
         rows.append(m);
     }
     return rows;
