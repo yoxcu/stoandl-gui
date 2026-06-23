@@ -20,6 +20,7 @@ Run inside a session bus, e.g.:  dbus-run-session -- python3 mock_stoandl.py
 
 import base64
 import json
+import math
 import time
 
 import dbus
@@ -269,8 +270,7 @@ class MockStoandl(dbus.service.Object):
                 (0.296, 0.435, 0),
                 (0.35, 0.03, 1), (0.46, 0.035, 1), (0.58, 0.03, 1), (0.66, 0.025, 1),
             ],
-            "heartDay": [60, 58, 57, 59, 61, 64, 70, 88, 95, 79, 72, 68,
-                         66, 64, 70, 82, 90, 78, 71, 66, 61, 58, 57, 60],
+            # Heart rate is now minute-level + multi-day (see _hr_samples); no canned hourly array.
         }
         # Notifications (per-app store + master forwarding via sync["notifications"]).
         self.notif_apps = [
@@ -890,8 +890,32 @@ class MockStoandl(dbus.service.Object):
             h["restingHr"], h["currentHr"], h["hrMin"], h["hrMax"], h["hrAvailable"],
             h["lastSync"])
 
-    @dbus.service.method(IFACE, in_signature="s", out_signature="as")
-    def GetHealthSeries(self, metric):
+    def _hr_samples(self, day_offset):
+        """Deterministic minute-level heart-rate samples for the day `today - day_offset`:
+        a list of (minuteOfDay, bpm) — mirroring the real daemon's per-minute getHealthDataForRange.
+        Day 3 is intentionally EMPTY (exercises the GUI's per-day empty state) and day 4 is SPARSE
+        (every 15 min) so the day-cycling + granularity paths are both visible."""
+        if day_offset == 3:
+            return []
+        base = 56 + (day_offset % 3) * 3            # small day-to-day baseline shift
+        samples = []
+        for minute in range(0, 1440):
+            hour = minute / 60.0
+            awake = 6.5 <= hour <= 23.0
+            take = True if awake else (minute % 12 == 0)   # dense awake, sparse asleep
+            if day_offset == 4 and minute % 15 != 0:
+                take = False                                # a sparse day
+            if not take:
+                continue
+            circadian = base + 20 * max(0.0, math.sin((hour - 6.0) / 18.0 * math.pi))
+            noise = ((minute * 2654435761 + day_offset * 40503) % 13) - 6     # -6..+6, deterministic
+            spike = 35 if (abs(hour - 8.2) < 0.25 or abs(hour - 18.5) < 0.30) else 0   # activity bursts
+            bpm = int(round(circadian + noise + spike))
+            samples.append((minute, max(45, min(165, bpm))))
+        return samples
+
+    @dbus.service.method(IFACE, in_signature="si", out_signature="as")
+    def GetHealthSeries(self, metric, day_offset):
         h = self.health
         if metric == "steps":
             return [rec(d, "" if v is None else v) for d, v in zip(h["days"], h["stepWeek"])]
@@ -901,7 +925,7 @@ class MockStoandl(dbus.service.Object):
         if metric == "heart":
             if h["hrAvailable"] != "yes":
                 return []
-            return [rec(i, v) for i, v in enumerate(h["heartDay"])]
+            return [rec(m, bpm) for (m, bpm) in self._hr_samples(max(0, int(day_offset)))]
         return []
 
     # --- Daemon config (HOOK #10) ------------------------------------------

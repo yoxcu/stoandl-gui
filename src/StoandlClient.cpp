@@ -1124,7 +1124,8 @@ QVariantList StoandlClient::sleepTimeline()
     // Record: startFraction \t widthFraction \t isDeep(0|1) — fractions of an 18 h window
     // (6 PM yesterday → noon today). Light intervals come first, deep last (draw deep on top).
     QVariantList rows;
-    const QVariantList records = list(QStringLiteral("GetHealthSeries"), {QStringLiteral("sleep")});
+    // dayOffset is ignored by the daemon for "sleep" (always the most recent night) — pass 0.
+    const QVariantList records = list(QStringLiteral("GetHealthSeries"), {QStringLiteral("sleep"), 0});
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         QVariantMap m;
@@ -1138,9 +1139,10 @@ QVariantList StoandlClient::sleepTimeline()
 
 QVariantList StoandlClient::healthSeries(const QString &metric)
 {
-    // Record: label \t value (value empty = no data for that point)
+    // Record: label \t value (value empty = no data for that point). Used for "steps" (the daemon
+    // ignores dayOffset for it — pass 0). Heart rate uses heartSeries() (minute-level, day-navigable).
     QVariantList rows;
-    const QVariantList records = list(QStringLiteral("GetHealthSeries"), {metric});
+    const QVariantList records = list(QStringLiteral("GetHealthSeries"), {metric, 0});
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         const QString val = f.value(1);
@@ -1148,6 +1150,24 @@ QVariantList StoandlClient::healthSeries(const QString &metric)
         m[QStringLiteral("label")]    = f.value(0);
         m[QStringLiteral("value")]    = val.isEmpty() ? 0 : val.toInt();
         m[QStringLiteral("hasValue")] = !val.isEmpty();
+        rows.append(m);
+    }
+    return rows;
+}
+
+QVariantList StoandlClient::heartSeries(int dayOffset)
+{
+    // GetHealthSeries("heart", dayOffset) -> minute-level samples for the day `today - dayOffset`:
+    // one record per recorded minute `minuteOfDay\tbpm`. The QML plots each at its true time
+    // (x = minute/1440) and derives min/max/avg. Empty list = that day has no heart-rate data.
+    QVariantList rows;
+    const QVariantList records =
+        list(QStringLiteral("GetHealthSeries"), {QStringLiteral("heart"), dayOffset});
+    for (const QVariant &v : records) {
+        const QStringList f = v.toStringList();
+        QVariantMap m;
+        m[QStringLiteral("minute")] = f.value(0).toInt();
+        m[QStringLiteral("bpm")]    = f.value(1).toInt();
         rows.append(m);
     }
     return rows;

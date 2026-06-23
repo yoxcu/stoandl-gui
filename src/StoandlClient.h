@@ -128,8 +128,10 @@ public:
 
     // --- typed wrappers: Health screen (read-only) — HOOK #8 ---------------
     Q_INVOKABLE QVariantMap  healthSummary();            // GetHealthSummary() -> today totals + trends + sleep + hrAvailable
-    Q_INVOKABLE QVariantList healthSeries(const QString &metric); // GetHealthSeries(steps|heart) -> [{label,value,hasValue}]
+    Q_INVOKABLE QVariantList healthSeries(const QString &metric); // GetHealthSeries(steps) -> [{label,value,hasValue}]
     Q_INVOKABLE QVariantList sleepTimeline();            // GetHealthSeries("sleep") -> [{start,width,deep}] (fractions of last night)
+    // GetHealthSeries("heart", dayOffset) -> minute-level samples for today-dayOffset: [{minute(0-1439),bpm}].
+    Q_INVOKABLE QVariantList heartSeries(int dayOffset);
 
     // --- typed wrappers: System screen (Milestone 5) -----------------------
     // Firmware (flash is async -> firmwareStatus poll, 0.8 s, 600 s ceiling).

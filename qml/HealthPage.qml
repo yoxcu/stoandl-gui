@@ -17,12 +17,49 @@ Kirigami.ScrollablePage {
     property var summary: ({})
     property var stepSeries: []
     property var sleepSegments: []   // last night's light/deep timeline (fractions of a 6 PM→noon window)
-    property var heartSeries: []
+    property var heartSeries: []     // minute-level samples for the shown day: [{minute(0-1439),bpm}]
+
+    // Which day the heart-rate chart shows: 0 = today, 1 = yesterday, … up to hrMaxLookback.
+    property int hrDayOffset: 0
+    readonly property int hrMaxLookback: 6   // browse the last 7 days
 
     readonly property bool hasData: summary && summary.kind === "ok"
     readonly property bool hrAvailable: hasData && summary.hrAvailable === true
 
+    // min / max / avg / count derived from the shown day's samples (so every day — not just today —
+    // gets correct figures; the summary's hr fields are today-only).
+    readonly property var hrStats: {
+        var arr = page.heartSeries;
+        if (!arr || arr.length === 0) return { count: 0, min: 0, max: 0, avg: 0 };
+        var lo = 1e9, hi = -1e9, sum = 0;
+        for (var i = 0; i < arr.length; ++i) {
+            var b = arr[i].bpm;
+            if (b < lo) lo = b;
+            if (b > hi) hi = b;
+            sum += b;
+        }
+        return { count: arr.length, min: lo, max: hi, avg: Math.round(sum / arr.length) };
+    }
+
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
+
+    // 0 → "Today", 1 → "Yesterday", else the date of today − offset.
+    function hrDayLabel(offset) {
+        if (offset === 0) return "Today";
+        if (offset === 1) return "Yesterday";
+        var d = new Date();
+        d.setDate(d.getDate() - offset);
+        return d.toLocaleDateString(Qt.locale(), "ddd d MMM");
+    }
+
+    function reloadHeart() {
+        page.heartSeries = page.hrAvailable ? StoandlClient.heartSeries(page.hrDayOffset) : [];
+    }
+
+    function setHrDay(offset) {
+        page.hrDayOffset = Math.max(0, Math.min(page.hrMaxLookback, offset));
+        page.reloadHeart();
+    }
 
     function reload() {
         if (!StoandlClient.daemonUp) {
@@ -35,7 +72,8 @@ Kirigami.ScrollablePage {
         page.summary = StoandlClient.healthSummary();
         page.stepSeries = StoandlClient.healthSeries("steps");
         page.sleepSegments = StoandlClient.sleepTimeline();
-        page.heartSeries = page.hrAvailable ? StoandlClient.healthSeries("heart") : [];
+        page.hrDayOffset = 0;           // a fresh load / sync returns to today
+        page.reloadHeart();
     }
 
     function syncHealth() {
@@ -548,9 +586,40 @@ Kirigami.ScrollablePage {
                 contentItem: ColumnLayout {
                     spacing: Kirigami.Units.largeSpacing
 
+                    // Day navigation — browse the last week of heart-rate history.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+                        QQC2.ToolButton {
+                            icon.name: "go-previous-symbolic"
+                            enabled: page.hrDayOffset < page.hrMaxLookback
+                            onClicked: page.setHrDay(page.hrDayOffset + 1)   // an earlier day
+                            QQC2.ToolTip.text: "Earlier day"
+                            QQC2.ToolTip.visible: hovered
+                            Accessible.name: "Earlier day"
+                        }
+                        QQC2.Label {
+                            Layout.fillWidth: true
+                            horizontalAlignment: Text.AlignHCenter
+                            text: page.hrDayLabel(page.hrDayOffset)
+                            font.bold: true
+                            elide: Text.ElideRight
+                        }
+                        QQC2.ToolButton {
+                            icon.name: "go-next-symbolic"
+                            enabled: page.hrDayOffset > 0
+                            onClicked: page.setHrDay(page.hrDayOffset - 1)   // a more recent day
+                            QQC2.ToolTip.text: "Later day"
+                            QQC2.ToolTip.visible: hovered
+                            Accessible.name: "Later day"
+                        }
+                    }
+
+                    // Headline — today shows live vitals (Resting + Now); a past day shows that day's average.
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: Kirigami.Units.gridUnit
+                        visible: page.hrDayOffset === 0
 
                         ColumnLayout {
                             spacing: 0
@@ -583,9 +652,34 @@ Kirigami.ScrollablePage {
                         Item { Layout.fillWidth: true }
                     }
 
-                    // 24h area sparkline.
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: page.hrDayOffset > 0 && page.hrStats.count > 0
+                        ColumnLayout {
+                            spacing: 0
+                            RowLayout {
+                                spacing: Kirigami.Units.smallSpacing / 2
+                                Kirigami.Heading { level: 1; text: String(page.hrStats.avg) }
+                                QQC2.Label { text: "bpm"; opacity: 0.7; Layout.alignment: Qt.AlignBaseline }
+                            }
+                            QQC2.Label { text: "Average"; font: Kirigami.Theme.smallFont; opacity: 0.7 }
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    // Empty state for a day with no readings.
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        visible: page.hrStats.count === 0
+                        text: "No heart-rate data for " + page.hrDayLabel(page.hrDayOffset).toLowerCase() + "."
+                        opacity: 0.6
+                        font: Kirigami.Theme.smallFont
+                    }
+
+                    // Minute-level sparkline, each sample at its true time of day (x = minute / 1440).
                     Canvas {
                         id: hrCanvas
+                        visible: page.hrStats.count > 0
                         Layout.fillWidth: true
                         Layout.preferredHeight: Kirigami.Units.gridUnit * 3
 
@@ -593,30 +687,33 @@ Kirigami.ScrollablePage {
                             var ctx = getContext("2d");
                             ctx.reset();
                             var data = page.heartSeries;
-                            if (!data || data.length < 2) return;
+                            if (!data || data.length < 1) return;
 
-                            var lo = Number.POSITIVE_INFINITY, hi = Number.NEGATIVE_INFINITY;
-                            for (var i = 0; i < data.length; ++i) {
-                                var v = data[i].value;
-                                if (v < lo) lo = v;
-                                if (v > hi) hi = v;
-                            }
+                            var lo = page.hrStats.min, hi = page.hrStats.max;
                             var span = (hi - lo) || 1;
-                            var w = width, h = height;
-                            var pad = 3;
-                            var n = data.length;
+                            var w = width, h = height, pad = 3;
 
-                            function px(i) { return (i / (n - 1)) * w; }
+                            function px(min) { return (min / 1440) * w; }
                             function py(v) { return h - ((v - lo) / span) * (h - 2 * pad) - pad; }
 
                             var hr = Kirigami.Theme.negativeTextColor;
+                            var n = data.length;
+
+                            // A single reading can't form a line/area — draw a dot so the chart isn't blank.
+                            if (n === 1) {
+                                ctx.beginPath();
+                                ctx.arc(px(data[0].minute), py(data[0].bpm), 3, 0, 2 * Math.PI);
+                                ctx.fillStyle = hr;
+                                ctx.fill();
+                                return;
+                            }
 
                             // Area fill (gradient -> transparent).
                             ctx.beginPath();
-                            ctx.moveTo(px(0), py(data[0].value));
-                            for (i = 1; i < n; ++i) ctx.lineTo(px(i), py(data[i].value));
-                            ctx.lineTo(px(n - 1), h);
-                            ctx.lineTo(px(0), h);
+                            ctx.moveTo(px(data[0].minute), py(data[0].bpm));
+                            for (var i = 1; i < n; ++i) ctx.lineTo(px(data[i].minute), py(data[i].bpm));
+                            ctx.lineTo(px(data[n - 1].minute), h);
+                            ctx.lineTo(px(data[0].minute), h);
                             ctx.closePath();
                             var grad = ctx.createLinearGradient(0, 0, 0, h);
                             grad.addColorStop(0, Qt.rgba(hr.r, hr.g, hr.b, 0.35));
@@ -626,8 +723,8 @@ Kirigami.ScrollablePage {
 
                             // Line.
                             ctx.beginPath();
-                            ctx.moveTo(px(0), py(data[0].value));
-                            for (i = 1; i < n; ++i) ctx.lineTo(px(i), py(data[i].value));
+                            ctx.moveTo(px(data[0].minute), py(data[0].bpm));
+                            for (i = 1; i < n; ++i) ctx.lineTo(px(data[i].minute), py(data[i].bpm));
                             ctx.lineWidth = 2;
                             ctx.lineJoin = "round";
                             ctx.strokeStyle = hr;
@@ -644,11 +741,29 @@ Kirigami.ScrollablePage {
                         }
                     }
 
+                    // Hour axis (midnight → midnight), matching the granular chart above.
+                    Item {
+                        id: hrAxis
+                        visible: page.hrStats.count > 0
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Kirigami.Units.gridUnit
+                        Repeater {
+                            model: [["12 AM", 0.0], ["6 AM", 0.25], ["12 PM", 0.5], ["6 PM", 0.75], ["12 AM", 1.0]]
+                            delegate: QQC2.Label {
+                                required property var modelData
+                                text: modelData[0]
+                                font: Kirigami.Theme.smallFont
+                                opacity: 0.5
+                                x: Math.max(0, Math.min(hrAxis.width - width, modelData[1] * hrAxis.width - width / 2))
+                            }
+                        }
+                    }
+
+                    // Range summary for the shown day (derived from its samples).
                     QQC2.Label {
                         Layout.fillWidth: true
-                        text: page.hrAvailable
-                              ? ("24h · min " + page.summary.hrMin + "   max " + page.summary.hrMax + " bpm")
-                              : ""
+                        visible: page.hrStats.count > 0
+                        text: "min " + page.hrStats.min + " · max " + page.hrStats.max + " · avg " + page.hrStats.avg + " bpm"
                         font: Kirigami.Theme.smallFont
                         opacity: 0.6
                     }
