@@ -40,7 +40,11 @@ Settings** — and **Watch is tab 0**. The nav hides when the daemon is down.
   is intentionally absent — it is superseded by the daemon's `dnd.sync`, which
   mirrors desktop Do Not Disturb ↔ the watch's native Quiet Time.)
 - **Settings** — Sync services (per-service master toggles via `GetSyncStatus`/
-  `SetSyncEnabled` + force-sync + per-calendar toggles), Watch settings (from
+  `SetSyncEnabled` + force-sync), **Calendars** (add/edit/remove calendar *sources* via
+  `ListCalendarSources`/`AddCalendarSource`/`UpdateCalendarSource`/`RemoveCalendarSource` —
+  a CalDAV account's discovered calendars nest under it with per-calendar enable toggles;
+  the password field is **write-only**, the daemon stores it in the keyring/0600-file and
+  never returns it; updated live via the `CalendarsChanged` signal), Watch settings (from
   `ListWatchPrefs`/`SetWatchPref`), Backup (CLI shell-outs), and a schema-driven
   **Advanced** group that renders `stoandl.conf` generically from `GetConfigSchema`/
   `GetConfig`/`SetConfig`, so new config keys appear automatically.

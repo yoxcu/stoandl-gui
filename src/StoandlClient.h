@@ -99,9 +99,16 @@ public:
     Q_INVOKABLE QVariantMap  syncWeather();              // SyncWeather() ; error: if disabled in config
     Q_INVOKABLE QVariantMap  syncCalendar();             // SyncCalendar()
     Q_INVOKABLE QVariantMap  syncHealth();               // SyncHealth()
-    Q_INVOKABLE QVariantList listCalendars();            // -> [{id,name,enabled}]
+    Q_INVOKABLE QVariantList listCalendars();            // -> [{id,name,enabled,accountId}]
     Q_INVOKABLE QVariantMap  setCalendarEnabled(const QString &id, bool enabled); // SetCalendarEnabled(s,b)
     Q_INVOKABLE void         refreshCalendars();         // re-fetch + calendarsChanged (on show + after toggle)
+    // Calendar *sources* (CalDAV accounts / iCal feeds / .ics paths) — the Calendars settings screen.
+    Q_INVOKABLE QVariantList listCalendarSources();      // -> [{id,type,url,username,label}] (no password)
+    Q_INVOKABLE QVariantMap  addCalendarSource(const QString &type, const QString &url,
+                                               const QString &username, const QString &password);
+    Q_INVOKABLE QVariantMap  updateCalendarSource(const QString &id, const QString &url,
+                                                  const QString &username, const QString &password);
+    Q_INVOKABLE QVariantMap  removeCalendarSource(const QString &id);
     // HOOK #5 — per-service master toggles + status.
     Q_INVOKABLE QVariantList getSyncStatus();            // -> [{service,enabled,available,lastSync}]
     Q_INVOKABLE QVariantMap  setSyncEnabled(const QString &service, bool enabled); // SetSyncEnabled(s,b)
@@ -196,6 +203,7 @@ private Q_SLOTS:
     void onWatchesChanged();                                          // poke → refreshWatches()
     void onFirmwareProgress(const QString &phase, int percent, const QString &detail); // → firmwareStatus()
     void onLockerChanged();                                           // poke → refreshApps()
+    void onCalendarsChanged();                                        // poke → refreshCalendars()
     void onLanguageProgress(const QString &phase, int percent, const QString &detail); // → languageStatus()
     void onExtensionsChanged();                                       // poke → refreshExtensions()
     // Finer companion to ExtensionsChanged: an unsolicited per-extension run-state transition

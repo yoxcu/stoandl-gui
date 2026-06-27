@@ -97,6 +97,8 @@ StoandlClient::StoandlClient(QObject *parent)
                   this, SLOT(onFirmwareProgress(QString, int, QString)));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("LockerChanged"),
                   this, SLOT(onLockerChanged()));
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("CalendarsChanged"),
+                  this, SLOT(onCalendarsChanged()));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("LanguageProgress"),
                   this, SLOT(onLanguageProgress(QString, int, QString)));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("ExtensionsChanged"),
@@ -428,15 +430,16 @@ QVariantMap StoandlClient::syncHealth()   { return statusMap(callStatus(QStringL
 
 QVariantList StoandlClient::listCalendars()
 {
-    // Record: id \t name \t enabled|disabled
+    // Record: id \t name \t enabled|disabled \t accountId  (accountId groups calendars under a source)
     QVariantList rows;
     const QVariantList records = list(QStringLiteral("ListCalendars"));
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         QVariantMap m;
-        m[QStringLiteral("id")]      = f.value(0);
-        m[QStringLiteral("name")]    = f.value(1);
-        m[QStringLiteral("enabled")] = (f.value(2) == QStringLiteral("enabled"));
+        m[QStringLiteral("id")]        = f.value(0);
+        m[QStringLiteral("name")]      = f.value(1);
+        m[QStringLiteral("enabled")]   = (f.value(2) == QStringLiteral("enabled"));
+        m[QStringLiteral("accountId")] = f.value(3);
         rows.append(m);
     }
     return rows;
@@ -451,6 +454,41 @@ void StoandlClient::refreshCalendars()
 {
     recheckDaemon();
     Q_EMIT calendarsChanged(m_daemonUp ? listCalendars() : QVariantList());
+}
+
+QVariantList StoandlClient::listCalendarSources()
+{
+    // Record: id \t type \t url \t username \t label  (password is write-only — never returned)
+    QVariantList rows;
+    const QVariantList records = list(QStringLiteral("ListCalendarSources"));
+    for (const QVariant &v : records) {
+        const QStringList f = v.toStringList();
+        QVariantMap m;
+        m[QStringLiteral("id")]       = f.value(0);
+        m[QStringLiteral("type")]     = f.value(1);
+        m[QStringLiteral("url")]      = f.value(2);
+        m[QStringLiteral("username")] = f.value(3);
+        m[QStringLiteral("label")]    = f.value(4);
+        rows.append(m);
+    }
+    return rows;
+}
+
+QVariantMap StoandlClient::addCalendarSource(const QString &type, const QString &url,
+                                             const QString &username, const QString &password)
+{
+    return statusMap(callStatus(QStringLiteral("AddCalendarSource"), {type, url, username, password}));
+}
+
+QVariantMap StoandlClient::updateCalendarSource(const QString &id, const QString &url,
+                                                const QString &username, const QString &password)
+{
+    return statusMap(callStatus(QStringLiteral("UpdateCalendarSource"), {id, url, username, password}));
+}
+
+QVariantMap StoandlClient::removeCalendarSource(const QString &id)
+{
+    return statusMap(callStatus(QStringLiteral("RemoveCalendarSource"), {id}));
 }
 
 // --- typed wrappers: System / firmware -------------------------------------
@@ -1310,6 +1348,12 @@ void StoandlClient::onLockerChanged()
 {
     qCDebug(lcStoandl) << "signal LockerChanged → refreshApps()";
     refreshApps();      // emits appsChanged (covers on-watch/CLI installs/removes + active-face change)
+}
+
+void StoandlClient::onCalendarsChanged()
+{
+    qCDebug(lcStoandl) << "signal CalendarsChanged → refreshCalendars()";
+    refreshCalendars(); // emits calendarsChanged once the async sync added/dropped calendars
 }
 
 void StoandlClient::onFirmwareProgress(const QString &phase, int percent, const QString &detail)

@@ -133,10 +133,19 @@ class MockStoandl(dbus.service.Object):
             "health": {"enabled": False, "available": True, "lastSync": "never"},
             "dnd": {"enabled": True, "available": True, "lastSync": "synced"},
         }
+        # Editable calendar sources (ListCalendarSources) + the discovered calendars they fan out to
+        # (ListCalendars, each tagged with its owning source's id via accountId).
+        self.calendar_sources = [
+            {"id": "caldav:ab12cd34", "type": "caldav",
+             "url": "https://dav.example.com/alice/", "username": "alice", "label": "dav.example.com"},
+            {"id": "ical:https://cal.example.com/feed.ics", "type": "ical",
+             "url": "https://cal.example.com/feed.ics", "username": "", "label": "cal.example.com"},
+        ]
+        self._caldav_next = 1  # to mint new caldav tokens deterministically
         self.calendars = [
-            {"id": "personal@local", "name": "Personal", "enabled": True},
-            {"id": "work@corp",      "name": "Work",     "enabled": True},
-            {"id": "holidays@public","name": "Holidays", "enabled": False},
+            {"id": "personal@local", "name": "Personal", "enabled": True,  "accountId": "caldav:ab12cd34"},
+            {"id": "work@corp",      "name": "Work",     "enabled": True,  "accountId": "caldav:ab12cd34"},
+            {"id": "holidays@public","name": "Holidays", "enabled": False, "accountId": "ical:https://cal.example.com/feed.ics"},
         ]
         # Watch advanced settings (ListWatchPrefs / SetWatchPref). This MIRRORS the real daemon's
         # WatchPrefsControl.list() record EXACTLY so the GUI is exercised against the true contract:
@@ -248,10 +257,12 @@ class MockStoandl(dbus.service.Object):
              "options": "1 day,3 days,7 days", "desc": ""},
             {"key": "log_level", "type": "combo", "label": "Log level",
              "options": "error,info,debug", "desc": ""},
+            {"key": "calendar.discover", "type": "toggle", "label": "Auto-discover local calendars",
+             "options": "", "desc": "Find the desktop's local .ics calendars"},
         ]
         self.config = {
             "units": "Metric", "weather_provider": "Open-Meteo", "auto_reconnect": "true",
-            "calendar_window": "3 days", "log_level": "info",
+            "calendar_window": "3 days", "log_level": "info", "calendar.discover": "false",
         }
         # HOOK #8: health. Per-day data is GENERATED deterministically from each date's ordinal
         # (see the _*_for/_window helpers) so the period-aware GetHealthSummary/GetHealthSeries
@@ -752,8 +763,62 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def ListCalendars(self):
-        return [rec(c["id"], c["name"], "enabled" if c["enabled"] else "disabled")
+        return [rec(c["id"], c["name"], "enabled" if c["enabled"] else "disabled", c.get("accountId", ""))
                 for c in self.calendars]
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def ListCalendarSources(self):
+        # id \t type \t url \t username \t label  (password is write-only, never returned)
+        return [rec(s["id"], s["type"], s["url"], s.get("username", ""), s.get("label", ""))
+                for s in self.calendar_sources]
+
+    @dbus.service.method(IFACE, in_signature="ssss", out_signature="s")
+    def AddCalendarSource(self, type, url, username, password):
+        url = url.strip()
+        if not url:
+            return "error:a URL or path is required"
+        if type == "caldav":
+            token = "ab12cd%02d" % self._caldav_next
+            self._caldav_next += 1
+            sid = "caldav:" + token
+            label = url.split("//")[-1].split("/")[0]
+            backend = ("keyring" if password else "none")
+        elif type == "ical":
+            sid = "ical:" + url
+            label = url.split("//")[-1].split("/")[0]
+            backend = "none"
+        elif type == "ics":
+            sid = "ics:" + url
+            label = url.rstrip("/").split("/")[-1] or url
+            backend = "none"
+        else:
+            return f"error:unknown source type '{type}'"
+        if any(s["id"] == sid for s in self.calendar_sources):
+            return "error:that source is already configured"
+        self.calendar_sources.append(
+            {"id": sid, "type": type, "url": url, "username": username, "label": label})
+        return f"ok:{sid}\t{backend}"
+
+    @dbus.service.method(IFACE, in_signature="ssss", out_signature="s")
+    def UpdateCalendarSource(self, id, url, username, password):
+        src = next((s for s in self.calendar_sources if s["id"] == id), None)
+        if src is None:
+            return f"notfound:no source '{id}'"
+        if url.strip():
+            src["url"] = url.strip()
+        src["username"] = username
+        backend = ("keyring" if password else "kept") if src["type"] == "caldav" else "none"
+        return f"ok:{id}\t{backend}"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def RemoveCalendarSource(self, id):
+        before = len(self.calendar_sources)
+        self.calendar_sources = [s for s in self.calendar_sources if s["id"] != id]
+        if len(self.calendar_sources) == before:
+            return f"notfound:no source '{id}'"
+        # Drop the calendars that belonged to it (so the GUI's group disappears).
+        self.calendars = [c for c in self.calendars if c.get("accountId") != id]
+        return "ok:removed"
 
     @dbus.service.method(IFACE, in_signature="sb", out_signature="s")
     def SetCalendarEnabled(self, query, enabled):

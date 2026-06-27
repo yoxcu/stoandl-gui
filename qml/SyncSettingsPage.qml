@@ -4,18 +4,19 @@ import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
 
-// Sync services: per-service master on/off (GetSyncStatus / SetSyncEnabled), inline force-sync for the
-// three pull services, and the per-calendar toggles nested underneath. Notifications are deliberately
-// absent — they live on the Notifications tab.
+// Sync services: per-service master on/off (GetSyncStatus / SetSyncEnabled) and inline force-sync for
+// the three pull services. Notifications are deliberately absent (they live on the Notifications tab);
+// individual calendars + CalDAV accounts live on their own Calendars page (Settings → Calendars).
 Kirigami.ScrollablePage {
     id: page
     objectName: "syncSettings"
     title: "Sync"
 
     property var syncStatus: []   // [{service,enabled,available,lastSync}]
-    property var calendars: []    // [{id,name,enabled}]
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
+
+    Component { id: calendarsPageComp; CalendarsSettingsPage {} }
 
     readonly property var syncServices: page.syncStatus.filter(function (s) { return s.service !== "notifications"; })
 
@@ -37,9 +38,8 @@ Kirigami.ScrollablePage {
     }
 
     function reload() {
-        if (!StoandlClient.daemonUp) { page.syncStatus = []; page.calendars = []; return; }
+        if (!StoandlClient.daemonUp) { page.syncStatus = []; return; }
         page.syncStatus = StoandlClient.getSyncStatus();
-        StoandlClient.refreshCalendars();
     }
 
     function toggleSync(service, on) {
@@ -60,15 +60,8 @@ Kirigami.ScrollablePage {
         page.forceSync(StoandlClient.syncHealth, "Health");
     }
 
-    function toggleCalendar(id, on) {
-        var r = StoandlClient.setCalendarEnabled(id, on);
-        if (!r.ok) page.toast("Calendar: " + (r.tail || r.kind));
-        StoandlClient.refreshCalendars();
-    }
-
     Connections {
         target: StoandlClient
-        function onCalendarsChanged(rows) { page.calendars = rows; }
         function onDaemonUpChanged() { if (StoandlClient.daemonUp) page.reload(); }
     }
 
@@ -139,21 +132,14 @@ Kirigami.ScrollablePage {
             }
         }
 
-        // --- Calendars (nested under Sync) --------------------------------
-        FormCard.FormHeader {
-            visible: StoandlClient.daemonUp && page.calendars.length > 0
-            title: "Calendars"
-        }
+        // Individual calendars + CalDAV accounts moved to their own page.
         FormCard.FormCard {
-            visible: StoandlClient.daemonUp && page.calendars.length > 0
-            Repeater {
-                model: page.calendars
-                delegate: FormCard.FormSwitchDelegate {
-                    required property var modelData
-                    text: modelData.name
-                    checked: modelData.enabled === true
-                    onToggled: page.toggleCalendar(modelData.id, checked)
-                }
+            visible: StoandlClient.daemonUp
+            FormCard.FormButtonDelegate {
+                text: "Manage calendars…"
+                description: "CalDAV accounts, iCal feeds and which calendars sync"
+                icon.name: "view-calendar-symbolic"
+                onClicked: applicationWindow().pageStack.push(calendarsPageComp)
             }
         }
     }

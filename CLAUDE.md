@@ -17,11 +17,14 @@ is hidden when the daemon is down (nothing works without it).
 
 **Settings is a category landing, not one page.** `SettingsPage.qml` is a short list of
 `FormButtonDelegate` rows that `pageStack.push()` focused sub-pages (KDE HIG for a large settings
-surface): **`SyncSettingsPage`** (service toggles + force-sync + nested calendars),
-**`WatchSettingsPage`** (the ~46 WatchPrefs, grouped into FormHeader sections and rendered one delegate
-*per type* — see below), **`GeneralSettingsPage`** (the curated `stoandl.conf` keys), **`BackupSettingsPage`**
-(backup/restore/support CLI). `Main.qml`'s `showTab()` pops pushed sub-pages on tab-switch and on
-re-tapping the active tab.
+surface): **`SyncSettingsPage`** (service master toggles + force-sync), **`CalendarsSettingsPage`**
+(calendar *sources* — CalDAV accounts / iCal feeds / .ics — each account's discovered calendars nested
+under it with per-calendar enable toggles, plus an add/edit/delete dialog; the CalDAV **password field
+is write-only**, blank on edit = keep), **`WatchSettingsPage`** (the ~46 WatchPrefs, grouped into
+FormHeader sections and rendered one delegate *per type* — see below), **`GeneralSettingsPage`** (the
+curated `stoandl.conf` keys), **`BackupSettingsPage`** (backup/restore/support CLI). `Main.qml`'s
+`showTab()` pops pushed sub-pages on tab-switch and on re-tapping the active tab. (Calendars used to be
+a flat list nested in SyncSettingsPage; they moved to their own page when account grouping + CRUD landed.)
 
 **Health is period-based** (mirrors the official Pebble app's `HealthTimeRange`). One selector
 (Daily/Weekly/Monthly) + one navigator (`periodType`/`periodOffset`) drive all three sections.
@@ -50,9 +53,11 @@ data (quick-launch options, color presets) in a page-scope getter and have the d
 `modelData.*`.
 
 ## Hard rules
-- **The interface has SIX signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
-  `LanguageProgress`/`ExtensionsChanged`/`ExtensionStateChanged`) that augment polling — polling
-  stays as the fallback.**
+- **The interface has SEVEN signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
+  `LanguageProgress`/`ExtensionsChanged`/`ExtensionStateChanged`/`CalendarsChanged`) that augment
+  polling — polling stays as the fallback.** (`CalendarsChanged` → `refreshCalendars()`: the daemon
+  pokes it when an async sync adds/drops calendars after a source CRUD, so the Calendars page updates
+  when the data's ready; the page also keeps a short post-mutation settle-timer as the fallback.)
   The daemon is NOT D-Bus-activated, so a late or reconnecting client can miss a signal; therefore
   the GUI keeps a slow safety-net poll **and** re-syncs on `daemonUpChanged`. All of this lives in
   `StoandlClient`: the signals re-use the existing `refreshWatches()`/`refreshApps()`/
@@ -89,14 +94,16 @@ done · uptodate · disabled · busy · idle · none · confirm (PairStatus `con
 comparison awaiting ConfirmPairing(bool))
 
 ## Daemon hooks (added this milestone — see the drift report `docs/handoff/drift-report.md`)
-Six reactive **signals** — `WatchesChanged()` (re-call ListWatches), `FirmwareProgress(s phase,
+Seven reactive **signals** — `WatchesChanged()` (re-call ListWatches), `FirmwareProgress(s phase,
 i percent, s detail)` (push flash progress, same phase vocabulary as `FirmwareStatus`),
 `LockerChanged()` (re-call ListApps), `LanguageProgress(s phase, i percent, s detail)` (push
 language-install progress, same phase vocabulary as `LanguageStatus`), `ExtensionsChanged()`
-(re-call ExtList), and `ExtensionStateChanged(s name, s state)` (the finer companion to
+(re-call ExtList), `ExtensionStateChanged(s name, s state)` (the finer companion to
 `ExtensionsChanged`: an unsolicited per-extension run-state transition — `state` ∈
 `ready`/`exited`/`quarantined` — that the list-level poke can't catch, so a crashed/quarantined
-extension shows live instead of a stale "running") — consumed on top of polling (see Hard rules).
+extension shows live instead of a stale "running"), and `CalendarsChanged()` (re-call ListCalendars —
+the daemon pokes it when an async sync adds/drops calendars after a source CRUD) — consumed on top of
+polling (see Hard rules).
 The GUI also consumes daemon-side hooks beyond the original 51 methods: `transport` on ListWatches +
 `synced` on ListApps (#4); `GetSyncStatus`/`SetSyncEnabled` (#5); `ExtList.config` + `ExtOpenConfig` +
 `ExtConfigSchema`/`ExtGetConfig`/`ExtSetConfig` (#7); `GetHealthSummary`/`GetHealthSeries` (#8);

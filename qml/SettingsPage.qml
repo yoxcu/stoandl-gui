@@ -13,10 +13,11 @@ Kirigami.ScrollablePage {
     title: "Settings"
 
     // Sub-pages are pushed onto the window's page stack (a back button / extra column appears).
-    Component { id: syncPage;    SyncSettingsPage {} }
-    Component { id: watchPage;   WatchSettingsPage {} }
-    Component { id: generalPage; GeneralSettingsPage {} }
-    Component { id: backupPage;  BackupSettingsPage {} }
+    Component { id: syncPage;      SyncSettingsPage {} }
+    Component { id: calendarsPage; CalendarsSettingsPage {} }
+    Component { id: watchPage;     WatchSettingsPage {} }
+    Component { id: generalPage;   GeneralSettingsPage {} }
+    Component { id: backupPage;    BackupSettingsPage {} }
 
     function open(component) { applicationWindow().pageStack.push(component); }
 
@@ -38,6 +39,13 @@ Kirigami.ScrollablePage {
                 description: "Weather, calendar, music, health, Do Not Disturb"
                 icon.name: "view-refresh-symbolic"
                 onClicked: page.open(syncPage)
+            }
+            FormCard.FormDelegateSeparator {}
+            FormCard.FormButtonDelegate {
+                text: "Calendars"
+                description: "CalDAV accounts, iCal feeds and local calendars"
+                icon.name: "view-calendar-symbolic"
+                onClicked: page.open(calendarsPage)
             }
             FormCard.FormDelegateSeparator {}
             FormCard.FormButtonDelegate {

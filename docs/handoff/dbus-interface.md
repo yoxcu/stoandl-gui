@@ -19,9 +19,9 @@ document is the contract between the daemon and any out-of-process front-end.
 > gdbus introspect --session --dest de.yoxcu.stoandl --object-path /de/yoxcu/stoandl
 > ```
 >
-> A live introspection should show the 51 methods below, **six signals**
+> A live introspection should show the methods below, **seven signals**
 > (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/`LanguageProgress`/`ExtensionsChanged`/
-> `ExtensionStateChanged`, see below), and **no** properties.
+> `ExtensionStateChanged`/`CalendarsChanged`, see below), and **no** properties.
 
 ## Service summary
 
@@ -32,7 +32,7 @@ document is the contract between the daemon and any out-of-process front-end.
 | **Object path** | `/de/yoxcu/stoandl` |
 | **Interface** | `de.yoxcu.stoandl.Control` |
 | **Methods** | 51 |
-| **Signals** | **6** (`WatchesChanged`, `FirmwareProgress`, `LockerChanged`, `LanguageProgress`, `ExtensionsChanged`, `ExtensionStateChanged` — see below) |
+| **Signals** | **7** (`WatchesChanged`, `FirmwareProgress`, `LockerChanged`, `LanguageProgress`, `ExtensionsChanged`, `ExtensionStateChanged`, `CalendarsChanged` — see below) |
 | **Properties** | **0** |
 | **Activation** | **not** D-Bus-activated — a systemd **user** service ([`packaging/stoandl.service`](../packaging/stoandl.service); also OpenRC via `packaging/stoandl.openrc`). The daemon calls `requestBusName("de.yoxcu.stoandl")` at startup (`Main.kt:69`) and `releaseBusName` on shutdown (`Main.kt:90`). There is no `dbus-1/services/*.service` activation file — a caller that finds the name unowned must start/`enable` the service itself. |
 
@@ -53,6 +53,7 @@ session bus with no graphical login.
 | `LanguageProgress` | `(s phase, i percent, s detail)` | Push language-pack install progress. `phase` uses the same vocabulary as `LanguageStatus` (`downloading`/`installing`/`done`/`idle`/`failed`/`notready`); `percent` is 0–100 while `installing`, else `-1`; `detail` = language name / failure reason. |
 | `ExtensionsChanged` | *(none)* | A poke — re-call `ExtList`. Fires on enable / disable / restart / install / uninstall (incl. CLI / other-client changes). |
 | `ExtensionStateChanged` | `(s name, s state)` | The **finer companion** to `ExtensionsChanged`: an **unsolicited** per-extension run-state transition the list-level poke can't catch. `state` ∈ `ready` (handshake done / running), `exited` (process ended, restarting after backoff), `quarantined` (gave up after rapid failures — won't restart until the user runs `ExtRestart`). A subscribed client overrides the polled `running`/`stopped` with this (a quarantined ext still shows as `running` in `ExtList`, because the daemon keeps it in its `running` map). |
+| `CalendarsChanged` | *(none)* | A poke — re-call `ListCalendars` (+ `ListCalendarSources`). Fires when an async calendar sync **adds/drops calendars** after a source CRUD (the sync runs ~5 s later + CalDAV-discovery network time) or a periodic re-read. Lets the Calendars page update when the new calendars are ready instead of racing the sync; the page also keeps a short post-mutation settle-timer as the fallback. |
 
 The signals **augment** polling, they don't replace it. Because the daemon is **not** D-Bus-activated
 (below), a late or reconnecting client can miss a signal, so a reactive client must still keep a slow
@@ -167,8 +168,12 @@ the KDoc is stale.)*
 | `SyncWeather` | `() → s` | Fetch weather now and push to the watch. `error:` if weather isn't enabled. | `weather` |
 | `SyncCalendar` | `() → s` | Re-read calendar sources → update timeline pins. `error:` if calendar isn't enabled. | `calendar sync` |
 | `SyncHealth` | `() → s` | Request fresh health/activity data from the watch and re-project the export. | `health sync` |
-| `ListCalendars` | `() → as` | Synced calendars: `id \t name \t enabled\|disabled`. | `calendar list` (also bare `calendar`) |
+| `ListCalendars` | `() → as` | Synced calendars: `id \t name \t enabled\|disabled \t accountId` (accountId groups calendars under their source — `discover`/empty for others). | `calendar list` (also bare `calendar`) |
 | `SetCalendarEnabled` | `(s,b) → s` | Enable/disable a single calendar by id or name substring. | `calendar enable\|disable <id\|name>` |
+| `ListCalendarSources` | `() → as` | Editable sources: `id \t type \t url \t username \t label`, `type` ∈ {caldav,ical,ics}, `id` = `caldav:<token>`/`ical:<url>`/`ics:<path>`. **No password** (write-only). | `calendar sources` |
+| `AddCalendarSource` | `(s,s,s,s) → s` | `(type,url,username,password)`; CalDAV password → keyring/0600-file (never config). Live, no restart. `ok:<id>\t<backend>` / `error:`. | `calendar add <type> <url> [user]` |
+| `UpdateCalendarSource` | `(s,s,s,s) → s` | Edit by id `(id,url,username,password)`; **blank password keeps** the stored one. `ok:<id>\t<backend\|kept\|none>` / `notfound:` / `error:`. | `calendar passwd <id>` |
+| `RemoveCalendarSource` | `(s) → s` | Remove by id (+ its stored password). `ok:removed` / `notfound:` / `error:`. | `calendar remove <id>` |
 
 There is **no** force-sync for music or notifications, and **no** master on/off for any sync
 service over D-Bus (services are enabled by config + daemon restart; see gaps).
@@ -249,7 +254,8 @@ ack — `ok:` means "queued", not "done".
 | `ListWatches` | `name` · `state`(connected/connecting/disconnected) · `battery`(0–100 or empty) |
 | `ListApps` | `uuid` · `type` · `order` · `flags`(⊆ active,sideloaded,config,system) · `title` · `developer` · `version` |
 | `ListWatchPrefs` | `id` · `type` · `current` · `default` · `allowed` · `flags` · `name` · `description` |
-| `ListCalendars` | `id` · `name` · `enabled`/`disabled` |
+| `ListCalendars` | `id` · `name` · `enabled`/`disabled` · `accountId` |
+| `ListCalendarSources` | `id` · `type`(caldav/ical/ics) · `url` · `username` · `label` — never the password |
 | `ListLanguages` | `id` · `isoLocal` · `displayName` · `installed`(yes/no) · `source`(rebble/github) |
 | `NotifList` | `name` · `muteLabel` · `color` · `icon` · `vibe` · `lastNotifiedEpochSeconds` |
 | `ExtList` | `name` · `installed`/`missing` · `enabled`/`disabled` · `running`/`stopped` |
