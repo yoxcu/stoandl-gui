@@ -171,7 +171,11 @@ Kirigami.ScrollablePage {
                 }
                 QQC2.Label {
                     Layout.fillWidth: true
-                    text: row.appData.developer !== "" ? row.appData.developer : row.appData.uuid
+                    // Author (or uuid fallback), with the locker version beside it when known.
+                    text: {
+                        const who = row.appData.developer !== "" ? row.appData.developer : row.appData.uuid
+                        return row.appData.version !== "" ? who + " · v" + row.appData.version : who
+                    }
                     elide: Text.ElideRight
                     font: Kirigami.Theme.smallFont
                     opacity: 0.7
@@ -332,7 +336,18 @@ Kirigami.ScrollablePage {
                     required property var modelData
 
                     text: modelData.name
-                    description: modelData.description
+                    // Author · vVersion (like the apps/faces subtitle), then the manifest description.
+                    description: {
+                        const parts = []
+                        if (modelData.author && modelData.author !== "")
+                            parts.push(modelData.author)
+                        if (modelData.version && modelData.version !== "")
+                            parts.push("v" + modelData.version)
+                        const head = parts.join(" · ")
+                        if (modelData.description && modelData.description !== "")
+                            return head !== "" ? head + " — " + modelData.description : modelData.description
+                        return head
+                    }
                     checked: modelData.enabled === true
                     onToggled: page.extToggle(modelData)
 

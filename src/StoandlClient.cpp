@@ -231,7 +231,7 @@ QVariantMap StoandlClient::watchInfoText()
 
 QVariantList StoandlClient::listApps()
 {
-    // Record: uuid \t type \t order \t flags \t title \t developer
+    // Record: uuid \t type \t order \t flags \t title \t developer \t version
     // flags is a comma-joined subset of {active, sideloaded, config, system}.
     QVariantList rows;
     const QVariantList records = list(QStringLiteral("ListApps"));
@@ -247,6 +247,7 @@ QVariantList StoandlClient::listApps()
         m[QStringLiteral("order")]      = f.value(2).toInt();
         m[QStringLiteral("title")]      = f.value(4);
         m[QStringLiteral("developer")]  = f.value(5);
+        m[QStringLiteral("version")]    = f.value(6);
         m[QStringLiteral("flags")]      = flags;
         m[QStringLiteral("active")]     = flags.contains(QStringLiteral("active"));
         m[QStringLiteral("system")]     = flags.contains(QStringLiteral("system"));
@@ -352,7 +353,7 @@ void StoandlClient::refreshApps()
 QVariantList StoandlClient::extList()
 {
     // Record (HOOK #7): name \t installed|missing \t enabled|disabled \t
-    //                   running|stopped \t config(none|url|schema) \t description
+    //                   running|stopped \t config(none|url|schema) \t description \t author \t version
     QVariantList rows;
     QSet<QString> seen;
     const QVariantList records = list(QStringLiteral("ExtList"));
@@ -369,6 +370,8 @@ QVariantList StoandlClient::extList()
         m[QStringLiteral("config")]      = cfg.isEmpty() ? QStringLiteral("none") : cfg;
         m[QStringLiteral("hasConfig")]   = (cfg == QStringLiteral("url") || cfg == QStringLiteral("schema"));
         m[QStringLiteral("description")] = f.value(5);
+        m[QStringLiteral("author")]      = f.value(6);
+        m[QStringLiteral("version")]     = f.value(7);
         // Merge the live ExtensionStateChanged override (ready/exited/quarantined). The polled
         // `running|stopped` can't see a quarantine (the daemon keeps a quarantined ext in its
         // `running` map), so an override wins for the QML's `runtimeState` field. Map a bare

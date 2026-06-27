@@ -130,7 +130,7 @@ tab-separated payloads. "CLI" is the `stoandl` subcommand that calls each method
 | `OpenConfig` | `(s) → s` | Config (Clay/PKJS) URL for a running app; empty string if none. The CLI proxies it over a local HTTP server. | `config [app]` |
 | `WebviewClose` | `(s) → ` *(void)* | Hand the saved settings JSON back to the running PKJS app after the config webview closes. | `config [app]` |
 
-`ListApps` record: `uuid \t type \t order \t flags \t title \t developer`, where `flags` is a
+`ListApps` record: `uuid \t type \t order \t flags \t title \t developer \t version`, where `flags` is a
 comma-joined subset of **`{active, sideloaded, config, system}`** (`active` = current watchface,
 `config` = has a Clay/PKJS config page, `system` = built-in, `sideloaded` = installed from a
 `.pbw`). The per-app `sync` flag (synced-to-watch) exists in the underlying object but is **not**
@@ -228,7 +228,7 @@ ack — `ok:` means "queued", not "done".
 
 | Method | In → Out | Purpose | CLI |
 |---|---|---|---|
-| `ExtList` | `() → as` | Installed/enabled extensions: `name \t installed\|missing \t enabled\|disabled \t running\|stopped`. | `ext list` / `ext status` (also bare `ext`) |
+| `ExtList` | `() → as` | Installed/enabled extensions: `name \t installed\|missing \t enabled\|disabled \t running\|stopped \t config \t description \t author \t version` (config ∈ {none, schema}; author/version from the manifest, empty if absent). | `ext list` / `ext status` (also bare `ext`) |
 | `ExtInstall` | `(s) → s` | Install from an archive (`.tar.gz`/`.tgz`/`.tar`/`.zip`, absolute daemon-side path): extract, sideload bundled `.pbw`, enable, hotplug-start. | `ext install <archive>` |
 | `ExtUninstall` | `(s,b) → s` | Stop, drop from `extensions.enabled`, delete files; `keepConfig` retains the `config` file for a later reinstall. | `ext uninstall <name>` (aliases `remove`; `--keep-config`/`--delete-config`) |
 | `ExtEnable` | `(s) → s` | Add to `extensions.enabled` and hotplug-start. | `ext enable <name>` |
@@ -247,7 +247,7 @@ ack — `ok:` means "queued", not "done".
 | Method | Fields |
 |---|---|
 | `ListWatches` | `name` · `state`(connected/connecting/disconnected) · `battery`(0–100 or empty) |
-| `ListApps` | `uuid` · `type` · `order` · `flags`(⊆ active,sideloaded,config,system) · `title` · `developer` |
+| `ListApps` | `uuid` · `type` · `order` · `flags`(⊆ active,sideloaded,config,system) · `title` · `developer` · `version` |
 | `ListWatchPrefs` | `id` · `type` · `current` · `default` · `allowed` · `flags` · `name` · `description` |
 | `ListCalendars` | `id` · `name` · `enabled`/`disabled` |
 | `ListLanguages` | `id` · `isoLocal` · `displayName` · `installed`(yes/no) · `source`(rebble/github) |

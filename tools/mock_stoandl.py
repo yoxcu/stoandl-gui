@@ -76,7 +76,7 @@ class MockStoandl(dbus.service.Object):
             {"uuid": "d2cd8de2", "type": "watchface", "order": 2,
              "flags": ["synced"], "title": "Beam Up", "developer": "Pebble"},
             {"uuid": "5e5da3f1", "type": "watchface", "order": 3,
-             "flags": ["config"], "title": "Kalk", "developer": "Vinch"},
+             "flags": ["config"], "title": "Kalk", "developer": "Vinch", "version": "2.4"},
             {"uuid": "1f03293d", "type": "watchapp", "order": 4,
              "flags": ["system", "synced"], "title": "Music", "developer": "Pebble"},
             {"uuid": "36d8c6ed", "type": "watchapp", "order": 5,
@@ -84,19 +84,22 @@ class MockStoandl(dbus.service.Object):
             {"uuid": "07e0d9cb", "type": "watchapp", "order": 6,
              "flags": ["system", "synced"], "title": "Settings", "developer": "Pebble"},
             {"uuid": "a4d3f0b9", "type": "watchapp", "order": 7,
-             "flags": ["sideloaded", "config", "synced"], "title": "Pebblemap", "developer": "katharostech"},
+             "flags": ["sideloaded", "config", "synced"], "title": "Pebblemap", "developer": "katharostech", "version": "1.3.0"},
             {"uuid": "c91b77a0", "type": "watchapp", "order": 8,
-             "flags": ["sideloaded"], "title": "Tezel", "developer": "lavers"},
+             "flags": ["sideloaded"], "title": "Tezel", "developer": "lavers", "version": "0.9"},
         ]
         self._sideload_seq = 0
-        # Extensions. HOOK #7: `config` (none|url|schema) + `description` fields added.
+        # Extensions. HOOK #7: `config` (none|url|schema) + `description` + `author` + `version`.
         self.exts = [
             {"name": "Matrix", "installed": True, "enabled": True, "running": True,
-             "config": "url", "description": "Messages on the wrist + canned replies, E2EE"},
+             "config": "url", "description": "Messages on the wrist + canned replies, E2EE",
+             "author": "stoandl", "version": "1.0.0"},
             {"name": "Find My Phone", "installed": True, "enabled": True, "running": True,
-             "config": "none", "description": "Ring this device from the watch"},
+             "config": "none", "description": "Ring this device from the watch",
+             "author": "yoxcu", "version": "1.0.0"},
             {"name": "Signal", "installed": True, "enabled": False, "running": False,
-             "config": "schema", "description": "Signal messages + quick replies"},
+             "config": "schema", "description": "Signal messages + quick replies",
+             "author": "community", "version": "0.3.1"},
             {"name": "SMS Bridge", "installed": False, "enabled": False, "running": False,
              "config": "schema", "description": "Forward & reply to SMS over ModemManager"},
         ]
@@ -451,7 +454,7 @@ class MockStoandl(dbus.service.Object):
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def ListApps(self):
         return [rec(a["uuid"], a["type"], a["order"], ",".join(a["flags"]),
-                    a["title"], a["developer"]) for a in self.apps]
+                    a["title"], a["developer"], a.get("version", "")) for a in self.apps]
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def GetAppIcon(self, uuid):
@@ -577,12 +580,13 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def ExtList(self):
-        # HOOK #7: `config` (none|url|schema) + `description` appended to the record.
+        # HOOK #7: `config` (none|url|schema) + `description` + `author` + `version` in the record.
         return [rec(e["name"],
                     "installed" if e["installed"] else "missing",
                     "enabled" if e["enabled"] else "disabled",
                     "running" if e["running"] else "stopped",
-                    e["config"], e["description"]) for e in self.exts]
+                    e["config"], e["description"],
+                    e.get("author", ""), e.get("version", "")) for e in self.exts]
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def ExtEnable(self, query):
