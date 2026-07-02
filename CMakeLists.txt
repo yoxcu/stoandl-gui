@@ -13,8 +13,27 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Qml Quick QuickControl
 
 qt_standard_project_setup(REQUIRES 6.5)
 
+include(GNUInstallDirs)
+
 qt_add_executable(stoandl-gui
     src/main.cpp
+)
+
+# Embed a subset of the app-icon PNGs so the window icon is present even when the
+# app runs uninstalled from build/. At runtime an installed hicolor theme icon is
+# preferred (via QIcon::fromTheme) and this resource is only the fallback — see
+# src/main.cpp. BASE strips the on-disk prefix so the aliases are :/icons/<size>/apps/…
+qt_add_resources(stoandl-gui "appicon"
+    PREFIX "/icons"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor"
+    FILES
+        data/icons/hicolor/16x16/apps/de.yoxcu.stoandl.gui.png
+        data/icons/hicolor/24x24/apps/de.yoxcu.stoandl.gui.png
+        data/icons/hicolor/32x32/apps/de.yoxcu.stoandl.gui.png
+        data/icons/hicolor/48x48/apps/de.yoxcu.stoandl.gui.png
+        data/icons/hicolor/64x64/apps/de.yoxcu.stoandl.gui.png
+        data/icons/hicolor/128x128/apps/de.yoxcu.stoandl.gui.png
+        data/icons/hicolor/256x256/apps/de.yoxcu.stoandl.gui.png
 )
 
 qt_add_qml_module(stoandl-gui
@@ -57,4 +76,18 @@ target_link_libraries(stoandl-gui PRIVATE
 install(TARGETS stoandl-gui
     BUNDLE  DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+# Desktop integration: launcher entry + AppStream metainfo + hicolor icon theme tree
+# (see data/README.md). On Wayland the window icon comes from the .desktop match, so
+# these MUST be installed for the icon to appear — running from build/ shows none.
+install(FILES data/de.yoxcu.stoandl.gui.desktop
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
+)
+install(FILES data/de.yoxcu.stoandl.gui.metainfo.xml
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo
+)
+install(DIRECTORY data/icons/hicolor
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/icons
+    FILES_MATCHING PATTERN "*.png" PATTERN "*.svg"
 )

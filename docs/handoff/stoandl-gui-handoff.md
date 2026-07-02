@@ -39,8 +39,15 @@ stoandl-gui/
 │   ├── ExtensionsPage.qml     # screen 4
 │   └── SettingsPage.qml       # screen 5 (sync + watch settings + firmware + system + diagnostics + reset)
 ├── packaging/APKBUILD
-└── org.kde.stoandl.gui.desktop / .metainfo.xml
+└── data/                      # desktop integration — installed by CMake (see data/README.md)
+    ├── de.yoxcu.stoandl.gui.desktop
+    ├── de.yoxcu.stoandl.gui.metainfo.xml    # AppStream (project_license GPL-3.0-only)
+    └── icons/hicolor/**/apps/de.yoxcu.stoandl.gui.{png,svg}
 ```
+
+> App ID is **`de.yoxcu.stoandl.gui`** (reverse-DNS of the `yoxcu.de` org domain, sibling of
+> the daemon bus name `de.yoxcu.stoandl`) — not the `org.kde.*` template default. The desktop-file
+> basename, the Wayland `app_id` (`setDesktopFileName`), and the icon name all share it.
 
 ---
 

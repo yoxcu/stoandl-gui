@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: CC0-1.0 -->
+<component type="desktop-application">
+  <id>de.yoxcu.stoandl.gui</id>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+
+  <name>stoandl</name>
+  <summary>Manage your Pebble watch</summary>
+
+  <description>
+    <p>
+      stoandl is a Kirigami front-end for the stoandl Pebble companion daemon on Linux.
+      It manages a Pebble smartwatch over Bluetooth: watch faces and apps, host-side
+      extensions, notification forwarding and styling, calendar and health sync, and
+      firmware and language-pack updates.
+    </p>
+    <p>
+      Convergent by design — the same app runs on the desktop and on Plasma Mobile. It is
+      a thin D-Bus client of the (separately installed) stoandl daemon and does not bundle it.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">de.yoxcu.stoandl.gui.desktop</launchable>
+
+  <provides>
+    <binary>stoandl-gui</binary>
+  </provides>
+
+  <url type="homepage">https://github.com/yoxcu/stoandl-gui</url>
+  <url type="bugtracker">https://github.com/yoxcu/stoandl-gui/issues</url>
+
+  <categories>
+    <category>Utility</category>
+  </categories>
+
+  <keywords>
+    <keyword>pebble</keyword>
+    <keyword>smartwatch</keyword>
+    <keyword>rebble</keyword>
+  </keywords>
+
+  <developer id="de.yoxcu">
+    <name>yoxcu</name>
+  </developer>
+
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="0.1.0" date="2026-07-02">
+      <description>
+        <p>Initial packaged release with a desktop launcher entry and application icon.</p>
+      </description>
+    </release>
+  </releases>
+</component>

@@ -64,6 +64,11 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ```
 
+Desktop integration (a `de.yoxcu.stoandl.gui.desktop` launcher entry + a hicolor icon
+theme) lives in `data/` and installs to `<datadir>` via `cmake --build build --target
+install`; the window icon is also embedded so it shows when run straight from `build/`.
+See `data/README.md`.
+
 ## Run
 
 The daemon is **not** D-Bus-activated; start it (or let the in-app button do it):
