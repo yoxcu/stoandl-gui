@@ -125,6 +125,39 @@ Kirigami.ScrollablePage {
     }
     // "asleep" for daily, "avg / night" for a multi-day period.
     function sleepUnit() { return page.isDay ? "asleep" : "avg / night"; }
+
+    // The daily sleep card falls back to the most recent recorded night when the selected day (Today)
+    // has none yet — stoandl's sleep data is inherently a night-or-more behind (the watch hands each
+    // night's overlay over late; consume-once). Detect the fallback here from the returned wake epoch:
+    // if the shown night's wake date isn't the day the navigator points at, it's a fallback → we
+    // date-label it. Single source of truth = summary.sleepWakeup, so no extra D-Bus field is needed.
+    readonly property bool sleepIsFallback: {
+        if (!page.isDay || !page.hasData) return false;
+        var w = page.summary.sleepWakeup || 0;
+        if (w <= 0) return false;
+        var wake = new Date(w * 1000); wake.setHours(0, 0, 0, 0);
+        var target = new Date(); target.setHours(0, 0, 0, 0);
+        target.setDate(target.getDate() - page.periodOffset);
+        return wake.getTime() !== target.getTime();
+    }
+    // The shown night's date, from its wake epoch, e.g. "Mon 30 Jun".
+    function sleepNightDate() {
+        var w = page.hasData ? (page.summary.sleepWakeup || 0) : 0;
+        var d = w > 0 ? new Date(w * 1000) : new Date();
+        return d.toLocaleDateString(Qt.locale(), "ddd d MMM");
+    }
+    // The night's day-span as short weekday names — bedtime day → wake day, e.g. "Di–Mi" (went to
+    // bed Tuesday, woke Wednesday). Strips the locale's trailing "." on the abbreviation.
+    function sleepNightSpan() {
+        var b = page.hasData ? (page.summary.sleepBedtime || 0) : 0;
+        var w = page.hasData ? (page.summary.sleepWakeup || 0) : 0;
+        if (b > 0 && w > 0) {
+            var bd = new Date(b * 1000).toLocaleDateString(Qt.locale(), "ddd").replace(/\.$/, "");
+            var wd = new Date(w * 1000).toLocaleDateString(Qt.locale(), "ddd").replace(/\.$/, "");
+            return bd === wd ? bd : (bd + "–" + wd);
+        }
+        return page.sleepNightDate();
+    }
     function stepsUnit() { return page.isDay ? "steps" : "avg / day"; }
     // Compact step count for the y-axis (7432 → "7.4k", 12000 → "12k", 800 → "800").
     function fmtK(v) {
@@ -355,11 +388,22 @@ Kirigami.ScrollablePage {
                         }
                     }
 
+                    // "Last recorded night · <date>" when the Today card is showing an earlier night
+                    // because today's sleep hasn't reached stoandl yet (see resolveSleepDay daemon-side).
+                    QQC2.Label {
+                        visible: page.isDay && sleepCol.haveSleep && page.sleepIsFallback
+                        Layout.fillWidth: true
+                        text: "Last recorded night · " + page.sleepNightSpan()
+                        opacity: 0.7
+                        font: Kirigami.Theme.smallFont
+                    }
+
                     QQC2.Label {
                         visible: !sleepCol.haveSleep
                         Layout.fillWidth: true
-                        text: page.isDay ? "No sleep recorded for this day."
-                                         : "No sleep recorded for this period."
+                        text: page.periodOffset === 0 ? "No sleep data yet."
+                             : page.isDay ? "No sleep recorded for this day."
+                                          : "No sleep recorded for this period."
                         opacity: 0.6
                         font: Kirigami.Theme.smallFont
                     }
