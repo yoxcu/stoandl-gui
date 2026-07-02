@@ -569,8 +569,21 @@ void StoandlClient::emitFirmwareStatus(const QString &phase, int percent, const 
     // Track activity so a `notready` (link dropping on reboot) counts as success only *after*
     // we've seen real progress — same rule whether it arrived via the poll or the signal.
     if (phase == QStringLiteral("downloading") || phase == QStringLiteral("waiting")
-        || phase == QStringLiteral("inprogress"))
+        || phase == QStringLiteral("inprogress")) {
         m_fwSeenActivity = true;
+        // Arm the op-poll watchdog even when the flash was kicked off from the *watch's own* update
+        // notification (so the GUI never called startFirmwarePoll()). The poll is the authoritative
+        // reboot/disconnect watchdog: FirmwareStatus returns `notready:` once the watch reboots and the
+        // BLE link drops, which resolves to success below. Without this a watch-triggered flash rides the
+        // FirmwareProgress signal alone, and the terminal `reboot:`/`notready:` frame is racy — libpebble3
+        // itself notes WaitingForReboot "won't be in this state for long … we'll be disconnected very
+        // soon" — so a lost terminal would leave the banner stuck on "Flashing…" forever. (Don't reset
+        // m_fwSeenActivity here the way startFirmwarePoll() does — we've just set it true.)
+        if (!m_fwTimer->isActive()) {
+            m_fwElapsedMs = 0;
+            m_fwTimer->start();
+        }
+    }
 
     // Success = a `reboot` OR a `notready` seen after activity (the watch reboots → link drops).
     if (phase == QStringLiteral("reboot")

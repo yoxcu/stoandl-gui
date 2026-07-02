@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as QQC2
+import QtQuick.Dialogs as Dialogs
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
@@ -260,7 +261,7 @@ Kirigami.Dialog {
             spacing: 0
 
             ActionRow {
-                text: "‹ Back"; iconName: "go-previous-symbolic"
+                text: "Back"; iconName: "go-previous-symbolic"
                 onClicked: dialog.view = "main"
             }
             Kirigami.Separator { Layout.fillWidth: true }
@@ -299,6 +300,10 @@ Kirigami.Dialog {
                 onClicked: recoveryConfirm.open()
             }
             ActionRow {
+                text: "Flash firmware from file…"; iconName: "system-software-update-symbolic"
+                onClicked: fwFileDialog.open()
+            }
+            ActionRow {
                 text: "Write notification"; iconName: "notifications-symbolic"; soon: true
                 enabled: false
             }
@@ -315,7 +320,7 @@ Kirigami.Dialog {
             spacing: 0
 
             ActionRow {
-                text: "‹ Back"; iconName: "go-previous-symbolic"
+                text: "Back"; iconName: "go-previous-symbolic"
                 onClicked: dialog.view = "main"
             }
             Kirigami.Separator { Layout.fillWidth: true }
@@ -447,5 +452,38 @@ Kirigami.Dialog {
             },
             Kirigami.Action { text: "Cancel"; icon.name: "dialog-cancel-symbolic"; onTriggered: factoryConfirm.close() }
         ]
+    }
+
+    // --- flash firmware from a local .pbz ----------------------------------
+    Dialogs.FileDialog {
+        id: fwFileDialog
+        title: "Flash firmware (.pbz)"
+        nameFilters: ["Pebble firmware (*.pbz)", "All files (*)"]
+        onAccepted: {
+            fwFlashConfirm.fileUrl = selectedFile;
+            fwFlashConfirm.fileName = decodeURIComponent(("" + selectedFile).split("/").pop());
+            fwFlashConfirm.open();
+        }
+    }
+
+    // Confirm before flashing — firmware flashing is the single riskiest op. libpebble3 refuses a
+    // bundle that doesn't match the watch's board before sending anything, and the watch keeps a
+    // recovery (PRF) firmware, so a bad flash drops to recovery rather than bricking.
+    Kirigami.PromptDialog {
+        id: fwFlashConfirm
+        property url fileUrl
+        property string fileName
+        title: "Flash firmware"
+        subtitle: "Flash “" + fileName + "” onto the watch? Keep it on charge and in range; don’t power it off during the flash."
+        standardButtons: QQC2.Dialog.Ok | QQC2.Dialog.Cancel
+        onAccepted: {
+            var r = StoandlClient.sideloadFirmware(fwFlashConfirm.fileUrl);
+            if (r.ok) {
+                dialog.toast("Flashing firmware…");
+                dialog.close();   // reveal the Watch page's flash-progress banner
+            } else {
+                dialog.toast("Flash failed: " + (r.tail || r.kind));
+            }
+        }
     }
 }
