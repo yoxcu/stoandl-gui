@@ -1,0 +1,86 @@
+name: CI & Release
+
+# Builds the Flatpak on every push/PR (CI gate), and on a `v*` tag publishes a
+# GitHub Release with the .flatpak bundle, a source tarball (for the pmOS/Alpine
+# APKBUILD — see packaging/APKBUILD), and an auto-generated changelog (cliff.toml).
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flatpak:
+    name: Build Flatpak
+    runs-on: ubuntu-latest
+    container:
+      # KDE flatpak-builder image; the tag's kde-6.xx MUST match the manifest's
+      # runtime-version (org.kde.Platform 6.10). Bump both together. (The old
+      # docker.io/bilelmoussaoui images stop at kde-6.7 — use flathub-infra's.)
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: de.yoxcu.stoandl.gui.flatpak
+          manifest-path: data/de.yoxcu.stoandl.gui.flatpak.yml
+          cache-key: flatpak-builder-${{ hashFiles('data/de.yoxcu.stoandl.gui.flatpak.yml') }}
+          upload-artifact: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: de.yoxcu.stoandl.gui.flatpak
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: flatpak
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # create the release + upload assets
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # source tarball + git-cliff need full history + tags
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-bundle
+
+      - name: Source tarball (for the pmOS/Alpine APKBUILD)
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          git archive --format=tar.gz --prefix="stoandl-gui-$v/" \
+            -o "stoandl-gui-$v.tar.gz" HEAD
+
+      - name: Generate changelog
+        id: cliff
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          # Fall back to a one-line body if a tag has only skipped commits (docs/chore).
+          body: ${{ steps.cliff.outputs.content || format('Release {0}', github.ref_name) }}
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true
+          files: |
+            de.yoxcu.stoandl.gui.flatpak
+            stoandl-gui-*.tar.gz

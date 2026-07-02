@@ -1,0 +1,46 @@
+# Contributor: yoxcu <mick@yoxcu.de>
+# Maintainer: yoxcu <mick@yoxcu.de>
+#
+# TEMPLATE — starting point for a postmarketOS/Alpine package of the stoandl GUI.
+# Before it builds: bump pkgver to a released tag, then run `abuild checksum` to
+# fill sha512sums (it downloads the release source tarball produced by CI). Verify
+# the depends/makedepends names against your Alpine branch (`apk search`) — Qt6 and
+# Kirigami package names drift between releases. The build itself is pure Qt6/CMake,
+# so it is musl-clean.
+pkgname=stoandl-gui
+pkgver=0.1.0
+pkgrel=0
+pkgdesc="Kirigami front-end for the stoandl Pebble companion daemon"
+url="https://github.com/yoxcu/stoandl-gui"
+arch="all"
+license="GPL-3.0-only"
+depends="
+	qt6-qtbase
+	qt6-qtdeclarative
+	kirigami
+	kirigami-addons
+	qqc2-desktop-style
+	"
+makedepends="
+	cmake
+	samurai
+	qt6-qtbase-dev
+	qt6-qtdeclarative-dev
+	kirigami-dev
+	"
+source="$pkgname-$pkgver.tar.gz::https://github.com/yoxcu/stoandl-gui/releases/download/v$pkgver/stoandl-gui-$pkgver.tar.gz"
+builddir="$srcdir/$pkgname-$pkgver"
+
+build() {
+	cmake -B build -G Ninja \
+		-DCMAKE_BUILD_TYPE=MinSizeRel \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBEXECDIR=lib
+	cmake --build build
+}
+
+package() {
+	DESTDIR="$pkgdir" cmake --install build
+}
+
+sha512sums=""  # run `abuild checksum` to populate

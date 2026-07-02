@@ -1,0 +1,37 @@
+# Flatpak manifest for the stoandl GUI. Built in CI (.github/workflows/release.yml)
+# and shipped as a de.yoxcu.stoandl.gui.flatpak bundle on tagged releases.
+#
+# runtime-version tracks the KDE runtime's Qt (org.kde.Platform 6.10 == Qt 6.10);
+# bump it in lockstep with the CI container image tag (kde-6.xx). Kirigami AND
+# KirigamiAddons (org.kde.kirigamiaddons.formcard) both ship in org.kde.Platform
+# >= 6.7, so neither is bundled as a module. If a future runtime drops KirigamiAddons,
+# add a `kirigami-addons` cmake-ninja module (from invent.kde.org/libraries/kirigami-addons)
+# ahead of the stoandl-gui module.
+id: de.yoxcu.stoandl.gui
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
+command: stoandl-gui
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # The GUI is a D-Bus client of the stoandl daemon on the session bus.
+  - --talk-name=de.yoxcu.stoandl
+  # NOTE: backup / restore / support-bundle shell out to the co-located `stoandl` CLI,
+  # and "Start daemon" runs `systemctl --user` — neither works from inside the sandbox.
+  # Those degrade gracefully; wiring them via `flatpak-spawn --host` (needs
+  # --talk-name=org.freedesktop.Flatpak) is a deliberate follow-up, not enabled here.
+
+modules:
+  - name: stoandl-gui
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    sources:
+      # The manifest lives in data/, so the project root is one level up. A fresh CI
+      # checkout has no build/ dir (it is git-ignored), so this copies clean sources.
+      - type: dir
+        path: ..
