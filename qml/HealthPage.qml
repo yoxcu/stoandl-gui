@@ -247,7 +247,7 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp && !page.hasData
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
-            icon.name: "love-symbolic"
+            icon.name: "stoandl-heart-symbolic"   // bundled monochrome heart (Breeze hearts are colored)
             text: "No health data yet"
             explanation: "Sync your watch to pull steps, sleep and heart-rate history. "
                        + "Health tracking must be enabled in Settings."
@@ -491,7 +491,8 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp && page.hrAvailable
             title: "Heart rate"
             trailing: Kirigami.Icon {
-                source: "love-symbolic"
+                source: "stoandl-heart-symbolic"   // bundled monochrome heart (Breeze hearts are colored)
+                isMask: true                        // Kirigami.Icon can force monochrome here (the tab can't)
                 implicitWidth: Kirigami.Units.iconSizes.smallMedium
                 implicitHeight: Kirigami.Units.iconSizes.smallMedium
                 Layout.alignment: Qt.AlignVCenter

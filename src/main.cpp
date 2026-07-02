@@ -25,6 +25,11 @@ int main(int argc, char *argv[])
     if (QIcon::themeName().isEmpty())
         QIcon::setThemeName(QStringLiteral("breeze"));
 
+    // Resolve our own named icons (e.g. "stoandl-heart-symbolic") from the embedded
+    // resource when the app isn't installed. When installed (or in the Flatpak) the same
+    // icon is found in the hicolor theme and recoloured to the palette by KDE.
+    QIcon::setFallbackSearchPaths(QIcon::fallbackSearchPaths() << QStringLiteral(":/fallback-icons"));
+
     // Window icon (X11 WM icon; on Wayland the icon comes from the .desktop match
     // above). Prefer the installed hicolor theme icon; fall back to the PNGs embedded
     // as a Qt resource so a run straight out of build/ still shows the icon.

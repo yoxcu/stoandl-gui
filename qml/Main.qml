@@ -71,7 +71,10 @@ Kirigami.ApplicationWindow {
                 onTriggered: root.showTab(0)
             },
             Kirigami.Action {
-                icon.name: "love-symbolic"
+                // Ship our own monochrome heart: every Breeze heart (love/emblem-favorite)
+                // resolves to the colored Amarok "love" icon, which NavigationTabBar renders
+                // as-is. Ours uses the ColorScheme-Text stylesheet so KDE recolours it.
+                icon.name: "stoandl-heart-symbolic"
                 text: "Health"
                 checkable: true
                 checked: root.currentTab === 1

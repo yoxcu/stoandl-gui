@@ -32,7 +32,7 @@ Kirigami.ScrollablePage {
         if (service === "weather")  return "weather-clear-symbolic";
         if (service === "calendar") return "view-calendar-symbolic";
         if (service === "music")    return "media-playback-start-symbolic";
-        if (service === "health")   return "love-symbolic";
+        if (service === "health")   return "stoandl-heart-symbolic";
         if (service === "dnd")      return "notifications-disabled-symbolic";
         return "emblem-synchronizing-symbolic";
     }
@@ -127,7 +127,7 @@ Kirigami.ScrollablePage {
             FormCard.FormDelegateSeparator {}
             FormCard.FormButtonDelegate {
                 text: "Health"
-                icon.name: "love-symbolic"
+                icon.name: "stoandl-heart-symbolic"   // bundled monochrome heart (Breeze hearts are colored)
                 onClicked: page.forceSync(StoandlClient.syncHealth, "Health")
             }
         }

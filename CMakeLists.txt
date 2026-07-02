@@ -36,6 +36,17 @@ qt_add_resources(stoandl-gui "appicon"
         data/icons/hicolor/256x256/apps/de.yoxcu.stoandl.gui.png
 )
 
+# Our own named theme icons (the monochrome heart). Installed into the hicolor tree
+# below (found via the icon theme + recoloured by KDE when installed / in the Flatpak);
+# also embedded here so `icon.name` resolves when running uninstalled from build/ —
+# main.cpp adds ":/fallback-icons" to QIcon::fallbackSearchPaths.
+qt_add_resources(stoandl-gui "fallback_icons"
+    PREFIX "/fallback-icons"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions"
+    FILES
+        data/icons/hicolor/scalable/actions/stoandl-heart-symbolic.svg
+)
+
 qt_add_qml_module(stoandl-gui
     URI org.stoandl.gui
     VERSION 1.0
