@@ -89,7 +89,7 @@ Kirigami.ApplicationWindow {
             },
             Kirigami.Action {
                 icon.name: "notifications-symbolic"
-                text: "Notifications"
+                text: "Alerts"   // short label so the tab doesn't wrap on narrow widths
                 checkable: true
                 checked: root.currentTab === 3
                 onTriggered: root.showTab(3)

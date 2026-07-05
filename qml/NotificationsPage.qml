@@ -12,7 +12,7 @@ import org.stoandl.gui
 Kirigami.ScrollablePage {
     id: page
     objectName: "notifications"
-    title: "Notifications"
+    title: "Alerts"   // matches the (shortened) nav tab label
 
     // --- live snapshots (all re-fetched in reload()) -----------------------
     property bool forward: false           // master "Forward notifications"
