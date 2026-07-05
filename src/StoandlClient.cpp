@@ -213,6 +213,53 @@ QVariantList StoandlClient::listWatches()
 }
 
 QVariantMap StoandlClient::battery()                       { return statusMap(callStatus(QStringLiteral("Battery"))); }
+
+QVariantMap StoandlClient::batteryInsights(const QString &watch)
+{
+    const Status s = callStatus(QStringLiteral("BatteryInsights"), { watch });
+    QVariantMap m = statusMap(s);
+    if (s.ok()) {
+        // ok:name\tlevel\tcharging\tdischargePerHour\thoursRemaining\tchargeSessions7d\t
+        //    lastChargedEpoch\tmin24h\tmax24h\tsampleCount\tvoltage\tsource
+        const QStringList f = s.fields;
+        m[QStringLiteral("name")]             = f.value(0);
+        m[QStringLiteral("level")]            = f.value(1).toDouble();
+        m[QStringLiteral("charging")]         = (f.value(2) == QStringLiteral("1"));
+        m[QStringLiteral("dischargePerHour")] = f.value(3).toDouble();
+        m[QStringLiteral("hoursRemaining")]   = f.value(4);   // string; empty when unknown/charging
+        m[QStringLiteral("chargeSessions")]   = f.value(5).toInt();
+        m[QStringLiteral("lastChargedEpoch")] = f.value(6).toLongLong();
+        m[QStringLiteral("min24h")]           = f.value(7).toDouble();
+        m[QStringLiteral("max24h")]           = f.value(8).toDouble();
+        m[QStringLiteral("sampleCount")]      = f.value(9).toInt();
+        m[QStringLiteral("voltage")]          = f.value(10);  // string; empty for the gatt source
+        m[QStringLiteral("source")]           = f.value(11);
+    }
+    return m;
+}
+
+QVariantList StoandlClient::batteryHistory(const QString &watch, qlonglong sinceEpoch)
+{
+    QVariantList out;
+    // sinceEpoch must marshal as D-Bus 'x' (int64), so wrap it as qlonglong explicitly.
+    const Status s = callStatus(QStringLiteral("BatteryHistory"),
+                                { watch, QVariant(sinceEpoch) });
+    if (!s.ok())
+        return out;
+    // tail = newline-joined "ts\tlevel\tsource\tvoltage" rows (empty body = no samples yet).
+    const QStringList rows = s.tail.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    out.reserve(rows.size());
+    for (const QString &row : rows) {
+        const QStringList f = row.split(QLatin1Char('\t'));
+        QVariantMap p;
+        p[QStringLiteral("ts")]      = f.value(0).toLongLong();
+        p[QStringLiteral("level")]   = f.value(1).toDouble();
+        p[QStringLiteral("source")]  = f.value(2);
+        p[QStringLiteral("voltage")] = f.value(3);   // string; empty for the gatt source
+        out.append(p);
+    }
+    return out;
+}
 QVariantMap StoandlClient::connectWatch(const QString &n)  { return statusMap(callStatus(QStringLiteral("Connect"), {n})); }
 QVariantMap StoandlClient::pair()                          { return statusMap(callStatus(QStringLiteral("Pair"))); }
 QVariantMap StoandlClient::pairStatusNow()                 { return statusMap(callStatus(QStringLiteral("PairStatus"))); }

@@ -274,6 +274,18 @@ Kirigami.ScrollablePage {
             }
         }
 
+        // --- battery insights (opens the rich chart page) ------------------
+        FormCard.FormCard {
+            visible: StoandlClient.daemonUp && page.connectedWatch !== null
+
+            FormCard.FormButtonDelegate {
+                icon.name: "battery-symbolic"
+                text: "Battery insights"
+                description: "Charge trend, voltage, time remaining"
+                onClicked: applicationWindow().pageStack.push(batteryPageComponent)
+            }
+        }
+
         // --- known watches (inline actions, no kebab) ----------------------
         FormCard.FormHeader {
             visible: StoandlClient.daemonUp && page.watches.length > 0
@@ -357,6 +369,9 @@ Kirigami.ScrollablePage {
         id: detailsDialog
         onForgetRequested: function(name) { forgetDialog.openFor(name); }
     }
+
+    // Battery insights sub-page (pushed from the "Battery insights" row above).
+    Component { id: batteryPageComponent; BatteryPage {} }
 
     // --- pairing dialog (Pair + Repair) ------------------------------------
     Kirigami.PromptDialog {

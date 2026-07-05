@@ -56,6 +56,7 @@ qt_add_qml_module(stoandl-gui
         qml/DaemonPlaceholder.qml
         qml/WatchPage.qml
         qml/WatchDetailsDialog.qml
+        qml/BatteryPage.qml
         qml/HealthPage.qml
         qml/AppsPage.qml
         qml/NotificationsPage.qml

@@ -53,6 +53,11 @@ public:
     // --- typed wrappers: Watch screen --------------------------------------
     Q_INVOKABLE QVariantList listWatches();              // -> [{name,state,battery,transport,connected}]
     Q_INVOKABLE QVariantMap  battery();                  // Battery()  -> status map
+    // Battery insights (rich): BatteryInsights(s) -> {kind,ok,name,level,charging,dischargePerHour,
+    // hoursRemaining,chargeSessions,lastChargedEpoch,min24h,max24h,sampleCount,voltage,source}.
+    Q_INVOKABLE QVariantMap  batteryInsights(const QString &watch = QString());
+    // Battery %-over-time series: BatteryHistory(s,x) -> [{ts,level,source,voltage}] (oldest first).
+    Q_INVOKABLE QVariantList batteryHistory(const QString &watch, qlonglong sinceEpoch);
     Q_INVOKABLE QVariantMap  connectWatch(const QString &name); // Connect(s)
     Q_INVOKABLE QVariantMap  pair();                     // Pair() then start the PairStatus poll
     Q_INVOKABLE QVariantMap  pairStatusNow();            // PairStatus() one-shot (poll uses this)

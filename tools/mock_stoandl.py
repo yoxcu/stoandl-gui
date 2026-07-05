@@ -338,6 +338,74 @@ class MockStoandl(dbus.service.Object):
         return "ok:" + rec(name, w["code"], w["model"], w["platform"], transport,
                            w["firmware"], w["serial"], w["battery"], w["lastSync"])
 
+    # --- Battery insights (BatteryHistory / BatteryInsights) ---------------
+    def _battery_points(self, since, now):
+        """A plausible hourly discharge curve: recharge overnight (00:00–06:00) then discharge
+        through the day. Each point is [ts, level, charging, voltage] — matches the real daemon's
+        heartbeat rows (soc + volts)."""
+        step = 3600
+        pts = []
+        t = int(since) - (int(since) % step)
+        while t <= now:
+            day_pos = (t % 86400) / 86400.0
+            if day_pos < 0.25:
+                level = 60.0 + (day_pos / 0.25) * 40.0            # 60 -> 100 (on charger)
+                charging = True
+            else:
+                level = 100.0 - ((day_pos - 0.25) / 0.75) * 70.0  # 100 -> 30 (discharging)
+                charging = False
+            volt = round(3.55 + (level / 100.0) * 0.65, 3)        # ~3.55 .. 4.20 V
+            pts.append([t, round(level, 2), charging, volt])
+            t += step
+        return pts
+
+    @dbus.service.method(IFACE, in_signature="sx", out_signature="s")
+    def BatteryHistory(self, watch, sinceEpoch):
+        name = self._connected_name()
+        if name is None:
+            return "notready:no watch connected"
+        now = int(time.time())
+        pts = self._battery_points(int(sinceEpoch), now)
+        body = "\n".join(rec(p[0], p[1], "heartbeat", p[3]) for p in pts)
+        return "ok:" + body
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def BatteryInsights(self, watch):
+        name = self._connected_name()
+        if name is None:
+            return "notready:no watch connected"
+        now = int(time.time())
+        pts = self._battery_points(now - 7 * 86400, now)  # 7d window (sessions / last-charged)
+        if len(pts) < 2:
+            return f"unknown:{name}"
+        last = pts[-1]
+        level, charging, volt = last[1], last[2], last[3]
+        day = [p for p in pts if p[0] >= now - 86400]
+        drop = secs = 0.0
+        for i in range(1, len(day)):
+            dl = day[i][1] - day[i - 1][1]
+            dt = day[i][0] - day[i - 1][0]
+            if dl < 0 and dt > 0:
+                drop += -dl
+                secs += dt
+        rate = drop / (secs / 3600.0) if secs > 0 else 0.0
+        hours = "" if (charging or rate <= 0) else f"{level / rate:.1f}"
+        sessions = 0
+        in_charge = False
+        last_charged = -1
+        for p in pts:
+            if p[2]:
+                if not in_charge:
+                    sessions += 1
+                    in_charge = True
+                last_charged = p[0]
+            else:
+                in_charge = False
+        mn = min(p[1] for p in day)
+        mx = max(p[1] for p in day)
+        return "ok:" + rec(name, round(level, 2), 1 if charging else 0, f"{rate:.2f}", hours,
+                           sessions, last_charged, round(mn, 2), round(mx, 2), len(pts), volt, "heartbeat")
+
     # --- Connect -----------------------------------------------------------
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def Connect(self, name):

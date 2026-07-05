@@ -109,6 +109,8 @@ tab-separated payloads. "CLI" is the `stoandl` subcommand that calls each method
 |---|---|---|---|
 | `ListWatches` | `() → as` | Known watches, one record each: `name\tstate\tbattery`. | `watch list` (also bare `watch`) |
 | `Battery` | `() → s` | Active watch's battery: `ok:<name>\t<level>` (0–100), `unknown:<name>`, or `notready:`. | `watch battery` |
+| `BatteryInsights` | `(s) → s` | Rich insights for the Battery sub-page. `ok:` + 12 tab fields: `name, level, charging(0\|1), dischargePerHour, hoursRemaining, chargeSessions7d, lastChargedEpoch, min24h, max24h, sampleCount, voltage, source`. `hoursRemaining`/`voltage` empty when unknown/GATT-source. `unknown:<name>` / `notready:`. Parsed by `batteryInsights(watch)`. | `watch battery insights` |
+| `BatteryHistory` | `(s,x) → s` | Battery %-over-time series for `(watch, sinceEpoch)` — the chart feed. `ok:` + newline-joined `ts\tlevel\tsource\tvoltage` rows (`source` = `heartbeat`\|`gatt`). Parsed by `batteryHistory(watch, since)`. | `watch battery history` |
 | `Connect` | `(s) → s` | Connect/switch to a known watch by name (exact-then-unique-substring); hands it the single connection slot. | `watch connect <name>` |
 | `Pair` | `() → s` | Open a ~2-min pairing window; returns `ok:` immediately, poll `PairStatus`. | `watch pair` |
 | `PairStatus` | `() → s` | Pairing outcome: `pending:<msg>` / `ok:` / `error:` / `timeout:`. | (polled by `watch pair` and `watch repair`) |
