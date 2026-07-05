@@ -24,10 +24,13 @@ Settings** — and **Watch is tab 0**. The nav hides when the daemon is down.
   and Forget watch), and a known-watches list with inline Connect/active + forget
   (no kebab). Pair / Ring / Sync-now as page actions. A **Battery insights** row
   opens a sub-page: current % with a charging/voltage/time-left hero + gauge, a
-  battery-%-over-time Canvas chart with a 24 h / 7 days / 30 days switcher, and
-  trend tiles (discharge rate, charges·7d, last charged, 24 h range) — the local
-  equivalent of the official app's Battery screen, from `BatteryInsights`/
-  `BatteryHistory`. 4 s `ListWatches` focus poll; 1.5 s / 145 s `PairStatus` poll.
+  battery-%-over-time Canvas chart with a 24 h / 7 days / 30 days switcher (with a
+  faint **notification-density** overlay marking busy hours), a per-hour **drain**
+  bar chart, a **What drew power** donut + legend (an *estimated* usage share —
+  display / vibration / speaker / heart-rate / Bluetooth / CPU), and trend tiles
+  (discharge rate, charges·7d, last charged, 24 h range) — the local equivalent of
+  the official app's Battery screen, from `BatteryInsights`/`BatteryHistory`/
+  `BatteryActivity`/`BatteryPower`. 4 s `ListWatches` focus poll; 1.5 s / 145 s `PairStatus` poll.
 - **Health** — read-only steps / sleep / heart-rate cards (step-goal ring, weekly
   bars, stacked sleep bar, 24 h heart sparkline — Canvas-drawn, theme-colored) from
   `GetHealthSummary`/`GetHealthSeries`. The heart card hides when HR isn't available;

@@ -17,6 +17,9 @@ Kirigami.ScrollablePage {
     property int rangeSeconds: 24 * 3600
     property var insights: null       // batteryInsights() map, or null
     property var history: []          // [{ts, level, source, voltage}] oldest first
+    property var activity: []         // [{ts, drop, notif, notifDnd}] oldest first (drop-per-interval)
+    property double maxDrop: 0        // largest interval drop in the window (bar-chart y-scale)
+    property var power: []            // [{category, activityMs, share}] largest share first (pie)
     property double nowSec: 0
     property double rangeStart: 0
     // Precomputed x-axis ticks [{frac, text}] — computed in reload() so the Repeater delegate reads
@@ -26,6 +29,11 @@ Kirigami.ScrollablePage {
     readonly property bool hasInsights: insights && insights.ok === true
     readonly property bool charging: hasInsights && insights.charging === true
     readonly property int level: hasInsights ? Math.round(insights.level) : 0
+    // True when any interval in the window received notifications (drives the overlay caption).
+    readonly property bool hasNotifs: {
+        for (var i = 0; i < page.activity.length; ++i) if (page.activity[i].notif > 0) return true;
+        return false;
+    }
 
     function reload() {
         if (!StoandlClient.daemonUp) { page.insights = null; page.history = []; return; }
@@ -39,6 +47,15 @@ Kirigami.ScrollablePage {
         ];
         page.insights = StoandlClient.batteryInsights("");
         page.history = StoandlClient.batteryHistory("", Math.floor(page.rangeStart));
+        // Set maxDrop before activity so the bar Canvas (repaints on activityChanged) has a current scale.
+        var acts = StoandlClient.batteryActivity("", Math.floor(page.rangeStart));
+        var md = 0;
+        for (var i = 0; i < acts.length; ++i) md = Math.max(md, acts[i].drop);
+        page.maxDrop = md;
+        page.activity = acts;
+        var pw = StoandlClient.batteryPower("", Math.floor(page.rangeStart));
+        for (var j = 0; j < pw.length; ++j) pw[j].color = page.sliceColor(pw[j].category, j);
+        page.power = pw;
     }
 
     function setRange(secs) {
@@ -73,6 +90,17 @@ Kirigami.ScrollablePage {
         if (src === "heartbeat") return "from the watch's hourly analytics heartbeat";
         if (src === "gatt") return "from the BLE battery level";
         return "";
+    }
+
+    // Stable, theme-aware colour per power-attribution category (fixed hue per subsystem so a slice keeps
+    // its colour even when others drop out; hue-rotation fallback for anything unexpected). Lightened on
+    // dark backgrounds. Called from reload() (a handler), not from a delegate binding — see the scope
+    // gotcha in gui/CLAUDE.md; the swatch/Canvas read the precomputed modelData.color.
+    function sliceColor(cat, i) {
+        var hues = { "Display": 0.12, "Vibration": 0.95, "Speaker": 0.78, "Heart rate": 0.02, "Bluetooth": 0.58, "CPU": 0.40 };
+        var hue = (cat in hues) ? hues[cat] : ((i * 0.16) % 1.0);
+        var dark = Kirigami.Theme.backgroundColor.hslLightness < 0.5;
+        return Qt.hsla(hue, 0.55, dark ? 0.62 : 0.46, 1.0);
     }
 
     Connections {
@@ -245,6 +273,25 @@ Kirigami.ScrollablePage {
                                     var gy = py(g);
                                     ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
                                 }
+                                // notification-density hint: faint full-height bands where notifications
+                                // arrived, denser hours more visible — drawn behind the line/area.
+                                var acts = page.activity;
+                                if (acts && acts.length) {
+                                    var t0n = page.rangeStart, spann = (page.nowSec - t0n) || 1;
+                                    var maxN = 0;
+                                    for (var j = 0; j < acts.length; ++j) maxN = Math.max(maxN, acts[j].notif);
+                                    if (maxN > 0) {
+                                        var nc = Kirigami.Theme.highlightColor;
+                                        var bw = Math.max(2, Math.min(24, (w / (spann / 3600)) * 0.7));
+                                        for (j = 0; j < acts.length; ++j) {
+                                            if (acts[j].notif <= 0) continue;
+                                            var alpha = 0.06 + 0.20 * (acts[j].notif / maxN);
+                                            var bx = Math.max(0, Math.min(w, ((acts[j].ts - t0n) / spann) * w)) - bw / 2;
+                                            ctx.fillStyle = Qt.rgba(nc.r, nc.g, nc.b, alpha);
+                                            ctx.fillRect(bx, 0, bw, h);
+                                        }
+                                    }
+                                }
                                 var data = page.history;
                                 if (!data || data.length < 1) return;
                                 var t0 = page.rangeStart, span = (page.nowSec - t0) || 1;
@@ -272,7 +319,7 @@ Kirigami.ScrollablePage {
                                 for (i = 1; i < n; ++i) ctx.lineTo(px(data[i].ts), py(data[i].level));
                                 ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.strokeStyle = accent; ctx.stroke();
                             }
-                            Connections { target: page; function onHistoryChanged() { chart.requestPaint(); } }
+                            Connections { target: page; function onHistoryChanged() { chart.requestPaint(); } function onActivityChanged() { chart.requestPaint(); } }
                             Connections { target: Kirigami.Theme; function onColorsChanged() { chart.requestPaint(); } }
                         }
                     }
@@ -293,6 +340,208 @@ Kirigami.ScrollablePage {
                                 x: Math.max(0, Math.min(parent.width - width, modelData.frac * parent.width - width / 2))
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // caption for the notification-density overlay on the % chart above
+        QQC2.Label {
+            visible: page.hasNotifs
+            Layout.fillWidth: true
+            Layout.leftMargin: Kirigami.Units.gridUnit
+            text: "Shaded bands mark hours with notifications — denser bands, more notifications."
+            font: Kirigami.Theme.smallFont
+            opacity: 0.6
+            wrapMode: Text.WordWrap
+        }
+
+        // ── Chart: battery drain per interval (bars, aligned to the line chart above) ──────
+        FormCard.FormHeader { title: "Battery drain" }
+        FormCard.FormCard {
+            Layout.fillWidth: true
+            FormCard.AbstractFormDelegate {
+                background: null
+                contentItem: ColumnLayout {
+                    spacing: Kirigami.Units.smallSpacing
+
+                    Kirigami.PlaceholderMessage {
+                        Layout.fillWidth: true
+                        visible: page.activity.length < 1
+                        icon.name: "office-chart-bar"
+                        text: "No drain data yet"
+                        explanation: "Each bar is the battery used in one hourly analytics heartbeat."
+                    }
+
+                    RowLayout {
+                        visible: page.activity.length >= 1
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: Kirigami.Units.gridUnit * 7
+                        spacing: Kirigami.Units.smallSpacing
+
+                        // y-axis gutter: peak drain / 0
+                        ColumnLayout {
+                            Layout.fillHeight: true
+                            spacing: 0
+                            QQC2.Label { text: (page.maxDrop > 0 ? page.maxDrop.toFixed(1) : "0") + "%"; font: Kirigami.Theme.smallFont; opacity: 0.5 }
+                            Item { Layout.fillHeight: true }
+                            QQC2.Label { text: "0%"; font: Kirigami.Theme.smallFont; opacity: 0.5 }
+                        }
+
+                        Canvas {
+                            id: dropChart
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            onWidthChanged: requestPaint()
+                            onHeightChanged: requestPaint()
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.reset();
+                                var w = width, h = height, pad = 4;
+                                var tc = Kirigami.Theme.textColor;
+                                // baseline
+                                ctx.strokeStyle = Qt.rgba(tc.r, tc.g, tc.b, 0.12); ctx.lineWidth = 1;
+                                ctx.beginPath(); ctx.moveTo(0, h - pad); ctx.lineTo(w, h - pad); ctx.stroke();
+                                var data = page.activity;
+                                if (!data || data.length < 1) return;
+                                var t0 = page.rangeStart, span = (page.nowSec - t0) || 1;
+                                var maxD = page.maxDrop > 0 ? page.maxDrop : 1;
+                                function px(ts) { return ((ts - t0) / span) * w; }
+                                // one heartbeat ≈ 1 h wide; clamp so bars stay visible on long ranges
+                                var barW = Math.max(2, Math.min(28, (w / (span / 3600)) * 0.7));
+                                var col = Kirigami.Theme.neutralTextColor;
+                                ctx.fillStyle = Qt.rgba(col.r, col.g, col.b, 0.75);
+                                for (var i = 0; i < data.length; ++i) {
+                                    var d = data[i];
+                                    if (d.drop <= 0) continue;
+                                    var bh = (d.drop / maxD) * (h - 2 * pad);
+                                    ctx.fillRect(px(d.ts) - barW / 2, h - pad - bh, barW, bh);
+                                }
+                            }
+                            Connections { target: page; function onActivityChanged() { dropChart.requestPaint(); } }
+                            Connections { target: Kirigami.Theme; function onColorsChanged() { dropChart.requestPaint(); } }
+                        }
+                    }
+
+                    // x-axis time labels (same window as the % chart)
+                    Item {
+                        visible: page.activity.length >= 1
+                        Layout.fillWidth: true
+                        Layout.leftMargin: Kirigami.Units.gridUnit * 2
+                        Layout.preferredHeight: Kirigami.Units.gridUnit
+                        Repeater {
+                            model: page.axisTicks
+                            delegate: QQC2.Label {
+                                required property var modelData
+                                text: modelData.text
+                                font: Kirigami.Theme.smallFont
+                                opacity: 0.5
+                                x: Math.max(0, Math.min(parent.width - width, modelData.frac * parent.width - width / 2))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Pie: what drew power (estimated usage share) ───────────────────
+        FormCard.FormHeader { title: "What drew power" }
+        FormCard.FormCard {
+            Layout.fillWidth: true
+            FormCard.AbstractFormDelegate {
+                background: null
+                contentItem: ColumnLayout {
+                    spacing: Kirigami.Units.largeSpacing
+
+                    Kirigami.PlaceholderMessage {
+                        Layout.fillWidth: true
+                        visible: page.power.length < 1
+                        icon.name: "office-chart-pie"
+                        text: "No usage breakdown yet"
+                        explanation: "Built from the hourly analytics heartbeat (Bluetooth LE watches)."
+                    }
+
+                    RowLayout {
+                        visible: page.power.length >= 1
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.largeSpacing
+
+                        // donut
+                        Canvas {
+                            id: powerPie
+                            Layout.preferredWidth: Kirigami.Units.gridUnit * 8
+                            Layout.preferredHeight: Kirigami.Units.gridUnit * 8
+                            Layout.alignment: Qt.AlignTop
+                            onWidthChanged: requestPaint()
+                            onHeightChanged: requestPaint()
+                            onPaint: {
+                                var ctx = getContext("2d");
+                                ctx.reset();
+                                var data = page.power;
+                                if (!data || data.length < 1) return;
+                                var total = 0;
+                                for (var k = 0; k < data.length; ++k) total += data[k].share;
+                                if (total <= 0) return;
+                                var w = width, h = height;
+                                var cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 2, rin = r * 0.58;
+                                var a0 = -Math.PI / 2;
+                                for (var i = 0; i < data.length; ++i) {
+                                    var a1 = a0 + (data[i].share / total) * 2 * Math.PI;
+                                    ctx.beginPath();
+                                    ctx.moveTo(cx, cy);
+                                    ctx.arc(cx, cy, r, a0, a1);
+                                    ctx.closePath();
+                                    ctx.fillStyle = data[i].color;
+                                    ctx.fill();
+                                    a0 = a1;
+                                }
+                                // punch a transparent hole → donut (no dependence on the card bg colour)
+                                ctx.globalCompositeOperation = "destination-out";
+                                ctx.beginPath(); ctx.arc(cx, cy, rin, 0, 2 * Math.PI); ctx.fill();
+                                ctx.globalCompositeOperation = "source-over";
+                            }
+                            Connections { target: page; function onPowerChanged() { powerPie.requestPaint(); } }
+                        }
+
+                        // legend: swatch · category · share%
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignVCenter
+                            spacing: Kirigami.Units.smallSpacing
+                            Repeater {
+                                model: page.power
+                                delegate: RowLayout {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    spacing: Kirigami.Units.smallSpacing
+                                    Rectangle {
+                                        implicitWidth: Kirigami.Units.gridUnit * 0.8
+                                        implicitHeight: Kirigami.Units.gridUnit * 0.8
+                                        radius: 2
+                                        color: parent.modelData.color
+                                    }
+                                    QQC2.Label {
+                                        Layout.fillWidth: true
+                                        text: parent.modelData.category
+                                        elide: Text.ElideRight
+                                    }
+                                    QQC2.Label {
+                                        text: parent.modelData.share.toFixed(0) + "%"
+                                        font.bold: true
+                                        opacity: 0.9
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    QQC2.Label {
+                        visible: page.power.length >= 1
+                        Layout.fillWidth: true
+                        text: "Estimated share of on-time × intensity, not measured energy. “Display” is the backlight."
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.6
+                        wrapMode: Text.WordWrap
                     }
                 }
             }

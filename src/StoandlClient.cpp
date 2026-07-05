@@ -260,6 +260,50 @@ QVariantList StoandlClient::batteryHistory(const QString &watch, qlonglong since
     }
     return out;
 }
+
+QVariantList StoandlClient::batteryActivity(const QString &watch, qlonglong sinceEpoch)
+{
+    QVariantList out;
+    const Status s = callStatus(QStringLiteral("BatteryActivity"),
+                                { watch, QVariant(sinceEpoch) });
+    if (!s.ok())
+        return out;
+    // tail = newline-joined "ts\tdrop\tnotif\tnotifDnd" rows (empty body = no records yet).
+    const QStringList rows = s.tail.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    out.reserve(rows.size());
+    for (const QString &row : rows) {
+        const QStringList f = row.split(QLatin1Char('\t'));
+        QVariantMap p;
+        p[QStringLiteral("ts")]       = f.value(0).toLongLong();
+        p[QStringLiteral("drop")]     = f.value(1).toDouble();      // SoC % consumed this interval
+        p[QStringLiteral("notif")]    = f.value(2).toInt();
+        p[QStringLiteral("notifDnd")] = f.value(3).toInt();
+        out.append(p);
+    }
+    return out;
+}
+
+QVariantList StoandlClient::batteryPower(const QString &watch, qlonglong sinceEpoch)
+{
+    QVariantList out;
+    const Status s = callStatus(QStringLiteral("BatteryPower"),
+                                { watch, QVariant(sinceEpoch) });
+    if (!s.ok())
+        return out;
+    // tail = newline-joined "category\tactivityMs\tsharePct" slices (largest share first).
+    const QStringList rows = s.tail.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    out.reserve(rows.size());
+    for (const QString &row : rows) {
+        const QStringList f = row.split(QLatin1Char('\t'));
+        QVariantMap p;
+        p[QStringLiteral("category")]   = f.value(0);
+        p[QStringLiteral("activityMs")] = f.value(1).toLongLong();
+        p[QStringLiteral("share")]      = f.value(2).toDouble();    // percent share of the window
+        out.append(p);
+    }
+    return out;
+}
+
 QVariantMap StoandlClient::connectWatch(const QString &n)  { return statusMap(callStatus(QStringLiteral("Connect"), {n})); }
 QVariantMap StoandlClient::pair()                          { return statusMap(callStatus(QStringLiteral("Pair"))); }
 QVariantMap StoandlClient::pairStatusNow()                 { return statusMap(callStatus(QStringLiteral("PairStatus"))); }

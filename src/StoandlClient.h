@@ -58,6 +58,10 @@ public:
     Q_INVOKABLE QVariantMap  batteryInsights(const QString &watch = QString());
     // Battery %-over-time series: BatteryHistory(s,x) -> [{ts,level,source,voltage}] (oldest first).
     Q_INVOKABLE QVariantList batteryHistory(const QString &watch, qlonglong sinceEpoch);
+    // Per-interval drop + notifications: BatteryActivity(s,x) -> [{ts,drop,notif,notifDnd}] (oldest first).
+    Q_INVOKABLE QVariantList batteryActivity(const QString &watch, qlonglong sinceEpoch);
+    // Power/usage attribution (estimate): BatteryPower(s,x) -> [{category,activityMs,share}] (largest first).
+    Q_INVOKABLE QVariantList batteryPower(const QString &watch, qlonglong sinceEpoch);
     Q_INVOKABLE QVariantMap  connectWatch(const QString &name); // Connect(s)
     Q_INVOKABLE QVariantMap  pair();                     // Pair() then start the PairStatus poll
     Q_INVOKABLE QVariantMap  pairStatusNow();            // PairStatus() one-shot (poll uses this)
