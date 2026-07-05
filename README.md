@@ -11,8 +11,9 @@ full spec, the D-Bus contract, and the visual prototype.
 string), `daemonUp` via `NameHasOwner` (+ reactive `NameOwnerChanged`), and all
 polling. Shared QML: `StatusChip`, `DaemonPlaceholder`. `Kirigami.ApplicationWindow`
 + a `Kirigami.NavigationTabBar` footer (responsive: bottom on mobile, top on
-desktop) with five destinations — **Watch · Health · Apps · Notifications ·
+desktop) with five destinations — **Watch · Health · Apps · Alerts ·
 Settings** — and **Watch is tab 0**. The nav hides when the daemon is down.
+(The notifications tab is labelled **Alerts** — short enough not to wrap on narrow widths.)
 
 - **Watch** — firmware-update `InlineMessage` banner (Update now flashes inline via
   the `FirmwareStatus` poll; What's new opens the PebbleOS changelog), a tappable
@@ -33,7 +34,7 @@ Settings** — and **Watch is tab 0**. The nav hides when the daemon is down.
   inline gear (web config via `xdg-open`, or a native form rendered from
   `ExtConfigSchema`/`ExtGetConfig`/`ExtSetConfig`) + bin (uninstall, keep-config
   option). Install action is segment-aware (`.pbw` vs extension archive).
-- **Notifications** — Forward-notifications master toggle + Mute-temporarily;
+- **Alerts** (notifications) — Forward-notifications master toggle + Mute-temporarily;
   per-app list → a deeper per-app dialog (mute, vibration pattern, custom icon);
   regex Filters (allow/block, Add-filter page action). Maps to `NotifList`/
   `NotifSetMute`/`NotifSetMuteAll`/`NotifSetStyle` + the filter hooks. (Quiet hours
@@ -100,3 +101,36 @@ tools/run-with-mock.sh --mock-only                # just the mock (Ctrl-C to sto
 Requires `dbus`, `python3-dbus`, `python3-gi` (installed via `.container/Dockerfile`).
 For a Breeze-Dark look on a non-Plasma desktop, merge the `[Colors:*]` groups from
 `docs/handoff/BreezeDark-dev-preview.kdeglobals` into `~/.config/kdeglobals`.
+
+## Releases
+
+CI is `.github/workflows/release.yml`: the Flatpak builds on every push/PR (the CI
+gate — stock Ubuntu's Qt is too old to build natively), and pushing a `v*` tag
+publishes a GitHub Release with a **`.flatpak` bundle**, a **source tarball**
+(`stoandl-gui-<ver>.tar.gz`, for the postmarketOS/Alpine `packaging/APKBUILD`), and an
+auto-generated changelog (`cliff.toml` — features / bug fixes, from Conventional
+Commit messages). Built on the KDE runtime (`org.kde.Platform` — see
+`data/de.yoxcu.stoandl.gui.flatpak.yml`); KirigamiAddons ships in that runtime, so it
+isn't bundled.
+
+### Installing / testing a Flatpak build
+
+A `.flatpak` bundle isn't runnable directly — you `flatpak install` it first (a fast
+import, not a rebuild):
+
+```sh
+# grab the bundle: a CI build artifact (any push) …
+gh run download -R yoxcu/stoandl-gui -n flatpak-bundle
+# … or a tagged release asset
+gh release download -R yoxcu/stoandl-gui -p '*.flatpak'
+
+flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user de.yoxcu.stoandl.gui.flatpak     # pulls the org.kde.Platform runtime
+flatpak run de.yoxcu.stoandl.gui
+```
+
+Start the daemon on the host first (`systemctl --user start stoandl`) — the sandboxed
+GUI reaches it over the session bus. Sandbox limits: backup/restore/support (which
+shell out to the `stoandl` CLI) and the in-app "start daemon" button don't work inside
+the Flatpak; the D-Bus features do. **For day-to-day development, skip the Flatpak** and
+just build + run natively (`cmake --build build && ./build/stoandl-gui`).
