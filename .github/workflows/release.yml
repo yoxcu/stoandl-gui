@@ -2,7 +2,8 @@ name: CI & Release
 
 # Builds the Flatpak on every push/PR (CI gate), and on a `v*` tag publishes a
 # GitHub Release with the .flatpak bundle, a source tarball (for the pmOS/Alpine
-# APKBUILD — see packaging/APKBUILD), and an auto-generated changelog (cliff.toml).
+# APKBUILD — see packaging/APKBUILD), an aarch64 postmarketOS .apk built from that
+# same APKBUILD, and an auto-generated changelog (cliff.toml).
 on:
   push:
     branches: [main]
@@ -84,3 +85,68 @@ jobs:
           files: |
             de.yoxcu.stoandl.gui.flatpak
             stoandl-gui-*.tar.gz
+
+  apk-aarch64:
+    name: Build aarch64 pmOS package
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # attach the .apk to the release just created above
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Point APKBUILD at this tag
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          sed -i "s/^pkgver=.*/pkgver=$v/" packaging/APKBUILD
+
+      # Chroots into an aarch64 Alpine root under QEMU user-mode emulation and
+      # pre-installs the makedepends from packaging/APKBUILD. kirigami/kirigami-addons/
+      # qqc2-desktop-style only exist in edge/community (KDE Frameworks 6), so this
+      # can't use a stable Alpine branch.
+      - uses: jirutka/setup-alpine@v1
+        with:
+          arch: aarch64
+          branch: edge
+          extra-repositories: |
+            https://dl-cdn.alpinelinux.org/alpine/edge/community
+          packages: >
+            alpine-sdk
+            cmake
+            samurai
+            qt6-qtbase-dev
+            qt6-qtdeclarative-dev
+            kirigami-dev
+
+      - name: Generate a throwaway abuild signing key
+        run: abuild-keygen -a -i -n
+        shell: alpine.sh {0}
+
+      - name: Build the .apk
+        # source= in packaging/APKBUILD points at the release tarball published by
+        # the `release` job above, so this fetches over the network rather than
+        # packaging the checkout directly — that's what makes this a real test of
+        # what a pmOS packager building from the tagged release would get.
+        run: |
+          cd packaging
+          abuild checksum
+          abuild -r
+        shell: alpine.sh {0}
+
+      - name: Stage the .apk
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          find "$HOME/packages" -name '*.apk' -exec cp {} "$GITHUB_WORKSPACE/dist/" \;
+        shell: alpine.sh {0}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stoandl-gui-aarch64-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: Attach .apk to the release
+        run: gh release upload "$GITHUB_REF_NAME" dist/*.apk --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

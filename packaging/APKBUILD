@@ -20,6 +20,7 @@ depends="
 	kirigami
 	kirigami-addons
 	qqc2-desktop-style
+	hicolor-icon-theme
 	"
 makedepends="
 	cmake
