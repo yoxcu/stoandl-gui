@@ -4,3 +4,9 @@
 *.jsc
 __pycache__/
 *.pyc
+
+# Rust / GTK rewrite build artifacts (normally redirected to the persistent
+# cache via CARGO_TARGET_DIR, but ignore a local ./target defensively)
+/target/
+/gtk/target/
+Cargo.lock.bak

@@ -1,0 +1,157 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The Health tab. A single period control (Daily/Weekly/Monthly + a prev/next
+// navigator) pinned as a second top bar drives all three sections (steps / sleep
+// / heart rate). Daily shows rich per-day charts; Weekly/Monthly show per-day
+// bars. The section cards are built in Rust (health.rs) into `content_box`.
+template $StoandlHealthPage: Adw.BreakpointBin {
+  width-request: 360;
+  height-request: 294;
+
+  Adw.Breakpoint {
+    condition ("max-width: 550sp")
+
+    setters {
+      title_stack.visible-child-name: "title";
+      view_switcher.visible: false;
+      switcher_bar.reveal: true;
+    }
+  }
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Gtk.Stack title_stack {
+        Gtk.StackPage {
+          name: "switcher";
+
+          child: Adw.ViewSwitcher view_switcher {
+            policy: wide;
+          };
+        }
+
+        Gtk.StackPage {
+          name: "title";
+
+          child: Adw.WindowTitle {
+            title: _("Health");
+          };
+        }
+      };
+
+      [end]
+      Gtk.Button sync_button {
+        icon-name: "view-refresh-symbolic";
+        tooltip-text: _("Sync health");
+      }
+    }
+
+    // Pinned period control (does not scroll).
+    [top]
+    Gtk.Box {
+      orientation: vertical;
+      spacing: 6;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 6;
+      margin-bottom: 6;
+
+      Gtk.Box {
+        homogeneous: true;
+
+        styles [
+          "linked",
+        ]
+
+        Gtk.ToggleButton day_btn {
+          label: _("Daily");
+          active: true;
+        }
+
+        Gtk.ToggleButton week_btn {
+          label: _("Weekly");
+          group: day_btn;
+        }
+
+        Gtk.ToggleButton month_btn {
+          label: _("Monthly");
+          group: day_btn;
+        }
+      }
+
+      Gtk.Box {
+        spacing: 6;
+
+        Gtk.Button prev_btn {
+          icon-name: "go-previous-symbolic";
+          tooltip-text: _("Earlier");
+        }
+
+        Gtk.Label period_label {
+          hexpand: true;
+          halign: center;
+          ellipsize: end;
+
+          styles [
+            "heading",
+          ]
+        }
+
+        Gtk.Button next_btn {
+          icon-name: "go-next-symbolic";
+          tooltip-text: _("Later");
+          sensitive: false;
+        }
+      }
+    }
+
+    content: Gtk.Stack health_stack {
+      transition-type: crossfade;
+
+      Gtk.StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage empty_status {
+          icon-name: "emblem-favorite-symbolic";
+          title: _("No health data yet");
+          description: _("Sync your watch to pull steps, sleep and heart-rate history. Health tracking must be enabled in Settings.");
+
+          child: Gtk.Button empty_sync_button {
+            label: _("Sync health");
+            halign: center;
+
+            styles [
+              "pill",
+              "suggested-action",
+            ]
+          };
+        };
+      }
+
+      Gtk.StackPage {
+        name: "content";
+
+        child: Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 700;
+
+            child: Gtk.Box content_box {
+              orientation: vertical;
+              spacing: 18;
+              margin-top: 12;
+              margin-bottom: 12;
+              margin-start: 12;
+              margin-end: 12;
+            };
+          };
+        };
+      }
+    };
+
+    [bottom]
+    Adw.ViewSwitcherBar switcher_bar {}
+  };
+}

@@ -1,0 +1,30 @@
+/* App-specific styling only. Everything else inherits the system libadwaita
+   theme (light/dark/accent via AdwStyleManager). Never hardcode colours here. */
+
+/* StatusChip — a small tinted pill. Colour comes from a companion style class
+   (.success / .warning / .error / .accent / .dim-label), not from here. */
+.status-chip {
+  border-radius: 9999px;
+  padding: 1px 8px;
+  font-size: 0.82em;
+  font-weight: bold;
+}
+
+/* Monospaced value labels (serial numbers, regex patterns, pairing code). */
+.mono {
+  font-family: monospace;
+}
+
+/* The large pairing-code compare label. */
+.pairing-code {
+  font-family: monospace;
+  font-size: 2.4em;
+  font-weight: bold;
+  letter-spacing: 0.08em;
+}
+
+/* Health section cards: the libadwaita `.card` class styles background/border
+   but adds no padding — give the boxed content breathing room. */
+.section-card {
+  padding: 12px;
+}

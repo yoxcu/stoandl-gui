@@ -1318,6 +1318,14 @@ class MockStoandl(dbus.service.Object):
         # running map). We fire it after enable/restart and on the mock-only crash trigger.
         pass
 
+    @dbus.service.signal(IFACE, signature="")
+    def CalendarsChanged(self):
+        # The seventh Control signal (per CLAUDE.md/drift-report). Poke: re-call
+        # ListCalendars (+ListCalendarSources). The real daemon fires it when an async
+        # sync adds/drops calendars AFTER a source CRUD; the Calendars page also keeps a
+        # short settle-timer as the fallback. Emitted from the calendar-source mutators.
+        pass
+
     # --- firmware progress walker (pushes FirmwareProgress on a GLib tick) --
     def _fw_tick(self):
         """Drive a firmware op forward one step and PUSH the phase via FirmwareProgress.

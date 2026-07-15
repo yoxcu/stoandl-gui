@@ -1,0 +1,80 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The Notifications tab: master forward toggle + temporary mute, a per-app list
+// (each row opens a deeper dialog), and regex filters. Everything is re-fetched
+// in reload() (the interface has no change events). Rows are built in Rust.
+//
+// The page owns the single header bar for its surface: window controls + the view
+// switcher (a bottom ViewSwitcherBar on narrow) + its own actions.
+template $StoandlNotificationsPage: Adw.BreakpointBin {
+  width-request: 360;
+  height-request: 294;
+
+  Adw.Breakpoint {
+    condition ("max-width: 550sp")
+
+    setters {
+      title_stack.visible-child-name: "title";
+      view_switcher.visible: false;
+      switcher_bar.reveal: true;
+    }
+  }
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Gtk.Stack title_stack {
+        Gtk.StackPage {
+          name: "switcher";
+
+          child: Adw.ViewSwitcher view_switcher {
+            policy: wide;
+          };
+        }
+
+        Gtk.StackPage {
+          name: "title";
+
+          child: Adw.WindowTitle {
+            title: _("Notifications");
+          };
+        }
+      };
+
+      [start]
+      Gtk.Button add_filter_button {
+        icon-name: "list-add-symbolic";
+        tooltip-text: _("Add filter");
+      }
+    }
+
+    content: Gtk.ScrolledWindow {
+      hscrollbar-policy: never;
+
+      child: Adw.PreferencesPage {
+        Adw.PreferencesGroup forwarding_group {
+          title: _("Forwarding");
+
+          Adw.SwitchRow forward_switch {
+            title: _("Forward notifications");
+            subtitle: _("Send phone notifications to the watch");
+          }
+        }
+
+        Adw.PreferencesGroup perapp_group {
+          title: _("Per-app");
+          visible: false;
+        }
+
+        Adw.PreferencesGroup filters_group {
+          title: _("Filters");
+          description: _("Filters use regex on the notification title and body. Block hides matching notifications; allow always forwards them.");
+        }
+      };
+    };
+
+    [bottom]
+    Adw.ViewSwitcherBar switcher_bar {}
+  };
+}
