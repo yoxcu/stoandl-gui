@@ -19,7 +19,7 @@ Kirigami.ScrollablePage {
     property var history: []          // [{ts, level, source, voltage}] oldest first
     property var activity: []         // [{ts, drop, notif, notifDnd}] oldest first (drop-per-interval)
     property double maxDrop: 0        // largest interval drop in the window (bar-chart y-scale)
-    property var power: []            // [{category, activityMs, share}] largest share first (pie)
+    property var power: []            // [{category, estDrainPct, share}] largest share first (pie)
     property double nowSec: 0
     property double rangeStart: 0
     // Precomputed x-axis ticks [{frac, text}] — computed in reload() so the Repeater delegate reads
@@ -33,6 +33,13 @@ Kirigami.ScrollablePage {
     readonly property bool hasNotifs: {
         for (var i = 0; i < page.activity.length; ++i) if (page.activity[i].notif > 0) return true;
         return false;
+    }
+    // Total measured drain over the window (sum of the anchored per-subsystem estimates); 0 when the
+    // window has no measured discharge to anchor to (then only the pie shares are meaningful).
+    readonly property real powerDrainTotal: {
+        var t = 0;
+        for (var i = 0; i < page.power.length; ++i) t += (page.power[i].estDrainPct || 0);
+        return t;
     }
 
     function reload() {
@@ -97,7 +104,7 @@ Kirigami.ScrollablePage {
     // dark backgrounds. Called from reload() (a handler), not from a delegate binding — see the scope
     // gotcha in gui/CLAUDE.md; the swatch/Canvas read the precomputed modelData.color.
     function sliceColor(cat, i) {
-        var hues = { "Display": 0.12, "Vibration": 0.95, "Speaker": 0.78, "Heart rate": 0.02, "Bluetooth": 0.58, "CPU": 0.40 };
+        var hues = { "System": 0.68, "Display": 0.12, "Vibration": 0.95, "Speaker": 0.78, "Heart rate": 0.02, "Bluetooth": 0.58, "CPU": 0.40 };
         var hue = (cat in hues) ? hues[cat] : ((i * 0.16) % 1.0);
         var dark = Kirigami.Theme.backgroundColor.hslLightness < 0.5;
         return Qt.hsla(hue, 0.55, dark ? 0.62 : 0.46, 1.0);
@@ -536,9 +543,16 @@ Kirigami.ScrollablePage {
                     }
 
                     QQC2.Label {
+                        visible: page.power.length >= 1 && page.powerDrainTotal > 0
+                        Layout.fillWidth: true
+                        text: "≈ " + page.powerDrainTotal.toFixed(1) + "% battery over this window"
+                        opacity: 0.9
+                    }
+
+                    QQC2.Label {
                         visible: page.power.length >= 1
                         Layout.fillWidth: true
-                        text: "Estimated share of on-time × intensity, not measured energy. “Display” is the backlight."
+                        text: "Estimated share of battery drain (modeled current × on-time), anchored to the watch’s measured SoC drop — not metered energy. “Display” is the backlight; “System” is the always-on floor."
                         font: Kirigami.Theme.smallFont
                         opacity: 0.6
                         wrapMode: Text.WordWrap

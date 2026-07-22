@@ -406,6 +406,37 @@ class MockStoandl(dbus.service.Object):
         return "ok:" + rec(name, round(level, 2), 1 if charging else 0, f"{rate:.2f}", hours,
                            sessions, last_charged, round(mn, 2), round(mx, 2), len(pts), volt, "heartbeat")
 
+    @dbus.service.method(IFACE, in_signature="sx", out_signature="s")
+    def BatteryActivity(self, watch, sinceEpoch):
+        name = self._connected_name()
+        if name is None:
+            return "notready:no watch connected"
+        now = int(time.time())
+        pts = self._battery_points(int(sinceEpoch), now)
+        rows = []
+        for i in range(1, len(pts)):
+            drop = max(0.0, pts[i - 1][1] - pts[i][1])   # SoC % consumed that interval
+            notif = (pts[i][0] // 3600) % 5              # deterministic (no randomness → stable UI)
+            notif_dnd = notif // 3
+            rows.append(rec(pts[i][0], round(drop, 2), notif, notif_dnd))
+        return "ok:" + "\n".join(rows)
+
+    @dbus.service.method(IFACE, in_signature="sx", out_signature="s")
+    def BatteryPower(self, watch, sinceEpoch):
+        name = self._connected_name()
+        if name is None:
+            return "notready:no watch connected"
+        now = int(time.time())
+        pts = self._battery_points(int(sinceEpoch), now)
+        total_drop = sum(max(0.0, pts[i - 1][1] - pts[i][1]) for i in range(1, len(pts)))
+        # Fixed illustrative split (weights sum to 1.0), largest share first — mirrors the daemon's
+        # categories. estDrainPct = total_drop × weight (slices sum to the measured drop → anchored),
+        # sharePct = weight × 100 (the pie slice); estDrainPct is 0 when the window never discharged.
+        weights = [("System", 0.34), ("Display", 0.18), ("Bluetooth", 0.14), ("CPU", 0.13),
+                   ("Heart rate", 0.11), ("Vibration", 0.06), ("Speaker", 0.04)]
+        body = "\n".join(rec(cat, round(total_drop * w, 2), round(w * 100.0, 1)) for cat, w in weights)
+        return "ok:" + body
+
     # --- Connect -----------------------------------------------------------
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def Connect(self, name):

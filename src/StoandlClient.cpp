@@ -290,15 +290,15 @@ QVariantList StoandlClient::batteryPower(const QString &watch, qlonglong sinceEp
                                 { watch, QVariant(sinceEpoch) });
     if (!s.ok())
         return out;
-    // tail = newline-joined "category\tactivityMs\tsharePct" slices (largest share first).
+    // tail = newline-joined "category\testDrainPct\tsharePct" slices (largest share first).
     const QStringList rows = s.tail.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     out.reserve(rows.size());
     for (const QString &row : rows) {
         const QStringList f = row.split(QLatin1Char('\t'));
         QVariantMap p;
-        p[QStringLiteral("category")]   = f.value(0);
-        p[QStringLiteral("activityMs")] = f.value(1).toLongLong();
-        p[QStringLiteral("share")]      = f.value(2).toDouble();    // percent share of the window
+        p[QStringLiteral("category")]    = f.value(0);
+        p[QStringLiteral("estDrainPct")] = f.value(1).toDouble();   // % battery drained (0 = unanchored)
+        p[QStringLiteral("share")]       = f.value(2).toDouble();   // percent share of the modeled drain
         out.append(p);
     }
     return out;
