@@ -77,6 +77,7 @@ Kirigami.ScrollablePage {
             if (kind === "success") { page.toast("Firmware flashed — watch is rebooting"); page.fwPhase = ""; page.fwPercent = -1; page.fwInfo = null; }
             else if (kind === "failed") { page.toast("Flash failed: " + detail); page.fwPhase = ""; page.fwPercent = -1; }
             else if (kind === "timeout") { page.toast("Flash timed out"); page.fwPhase = ""; page.fwPercent = -1; }
+            else if (kind === "idle") { page.fwPhase = ""; page.fwPercent = -1; } // terminal: no flash in flight → hide the banner
             else { page.fwPhase = kind; page.fwPercent = percent; }
         }
         function onDaemonUpChanged() {
@@ -161,13 +162,31 @@ Kirigami.ScrollablePage {
         FormCard.FormCard {
             visible: StoandlClient.daemonUp && page.fwBusy
 
-            FormCard.FormTextDelegate { text: page.fwPhaseLabel() }
-            QQC2.ProgressBar {
+            // A bare QQC2.ProgressBar as a direct FormCard child lays out with no usable height (you'd
+            // only see the phase text). Wrap the label + bar in an AbstractFormDelegate's ColumnLayout —
+            // the same pattern the notifications dialog uses for custom FormCard content — and give the
+            // bar an explicit height so it's clearly visible.
+            FormCard.AbstractFormDelegate {
                 Layout.fillWidth: true
-                Layout.margins: Kirigami.Units.largeSpacing
-                from: 0; to: 100
-                value: page.fwPercent
-                indeterminate: page.fwPercent < 0
+                background: null
+                hoverEnabled: false
+                contentItem: ColumnLayout {
+                    spacing: Kirigami.Units.smallSpacing
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: page.fwPhaseLabel()
+                        elide: Text.ElideRight
+                    }
+                    QQC2.ProgressBar {
+                        Layout.fillWidth: true
+                        Layout.topMargin: Kirigami.Units.smallSpacing
+                        Layout.preferredHeight: Kirigami.Units.gridUnit * 0.75
+                        from: 0
+                        to: 100
+                        value: page.fwPercent < 0 ? 0 : page.fwPercent
+                        indeterminate: page.fwPercent < 0
+                    }
+                }
             }
         }
 
@@ -329,10 +348,10 @@ Kirigami.ScrollablePage {
                             }
                             QQC2.Label {
                                 Layout.fillWidth: true
-                                text: watchRow.modelData.connected
+                                text: watchRow.modelData.state === "connected"
                                       ? (page.transportLabel(watchRow.modelData.transport)
                                          + (watchRow.modelData.battery !== "" ? " · " + watchRow.modelData.battery + "%" : ""))
-                                      : "disconnected"
+                                      : (watchRow.modelData.state === "connecting" ? "Connecting…" : "disconnected")
                                 elide: Text.ElideRight
                                 font: Kirigami.Theme.smallFont
                                 opacity: 0.7
@@ -340,13 +359,13 @@ Kirigami.ScrollablePage {
                         }
 
                         StatusChip {
-                            visible: watchRow.modelData.connected
-                            label: "active"
-                            tint: Kirigami.Theme.positiveTextColor
+                            visible: watchRow.modelData.state === "connected" || watchRow.modelData.state === "connecting"
+                            label: watchRow.modelData.state === "connecting" ? "connecting" : "active"
+                            tint: page.stateColor(watchRow.modelData.state)
                         }
 
                         QQC2.Button {
-                            visible: !watchRow.modelData.connected
+                            visible: watchRow.modelData.state === "disconnected"
                             text: "Connect"
                             onClicked: page.connectTo(watchRow.modelData.name)
                         }

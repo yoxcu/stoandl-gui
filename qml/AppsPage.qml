@@ -58,6 +58,31 @@ Kirigami.ScrollablePage {
             page.toast("Config unavailable: " + (r.msg || r.kind));
     }
 
+    // --- Reordering (faces/apps) ------------------------------------------
+    // Order is per-type (faces and apps are ranked separately), and the daemon repacks the neighbours,
+    // so a move is just "take this item to the neighbour's slot". The moved order syncs to the watch menu.
+    function siblingsOf(app) { return app.isFace ? page.faces : page.others; }
+    function indexOfUuid(list, uuid) {
+        for (var k = 0; k < list.length; ++k)
+            if (list[k].uuid === uuid) return k;
+        return -1;
+    }
+    function applyOrder(uuid, order) {
+        var r = StoandlClient.setAppOrder(uuid, order);
+        if (!r.ok) page.toast("Reorder failed: " + (r.tail || r.kind));
+        StoandlClient.refreshApps(); // re-fetch after mutation (no LockerChanged for reorder yet)
+    }
+    function moveUp(app) {
+        var list = page.siblingsOf(app);
+        var i = page.indexOfUuid(list, app.uuid);
+        if (i > 0) page.applyOrder(app.uuid, list[i - 1].order);
+    }
+    function moveDown(app) {
+        var list = page.siblingsOf(app);
+        var i = page.indexOfUuid(list, app.uuid);
+        if (i >= 0 && i < list.length - 1) page.applyOrder(app.uuid, list[i + 1].order);
+    }
+
     // --- Extension actions -------------------------------------------------
     function extToggle(extData) {
         var r = extData.enabled ? StoandlClient.extDisable(extData.name)
@@ -110,6 +135,19 @@ Kirigami.ScrollablePage {
             text: "Refresh"
             enabled: StoandlClient.daemonUp
             onTriggered: { page.reload(); page.toast("Refreshed"); }
+        },
+        Kirigami.Action {
+            icon.name: "edit-reset-symbolic"
+            // Resets the built-in system apps/faces to their default order (RestoreSystemAppOrder only
+            // touches system entries; sideloaded ones keep their positions).
+            text: "Restore default order"
+            visible: !page.extSegment
+            enabled: StoandlClient.daemonUp
+            onTriggered: {
+                var r = StoandlClient.restoreSystemAppOrder();
+                page.toast(r.ok ? "System apps restored to default order" : ("Reset failed: " + (r.tail || r.kind)));
+                StoandlClient.refreshApps();
+            }
         }
     ]
 
@@ -117,6 +155,9 @@ Kirigami.ScrollablePage {
     component AppRow: FormCard.AbstractFormDelegate {
         id: row
         required property var appData
+        // Position within its (faces|apps) list, for the up/down move buttons.
+        property int rowIndex: 0
+        property int rowCount: 0
 
         // The app's extracted menu-icon PNG (file:// URL), fetched lazily from the daemon's local
         // cache. Empty until resolved or when the daemon has no icon — then we show a generic glyph.
@@ -207,6 +248,28 @@ Kirigami.ScrollablePage {
                 QQC2.ToolTip.text: "Delete from locker"
                 QQC2.ToolTip.visible: hovered
                 onClicked: removeConfirm.openFor(row.appData)
+            }
+
+            // Reorder within the faces/apps list. Kept RIGHTMOST (after the optional settings/delete
+            // buttons) so the up/down column lines up on every row regardless of which of those a given
+            // app has. The move persists to the watch menu (locker BlobDB).
+            QQC2.ToolButton {
+                visible: row.rowCount > 1
+                enabled: row.rowIndex > 0
+                icon.name: "go-up-symbolic"
+                display: QQC2.AbstractButton.IconOnly
+                QQC2.ToolTip.text: "Move up"
+                QQC2.ToolTip.visible: hovered
+                onClicked: page.moveUp(row.appData) // consumes click -> no row launch
+            }
+            QQC2.ToolButton {
+                visible: row.rowCount > 1
+                enabled: row.rowIndex < row.rowCount - 1
+                icon.name: "go-down-symbolic"
+                display: QQC2.AbstractButton.IconOnly
+                QQC2.ToolTip.text: "Move down"
+                QQC2.ToolTip.visible: hovered
+                onClicked: page.moveDown(row.appData)
             }
         }
     }
@@ -304,7 +367,10 @@ Kirigami.ScrollablePage {
                 model: page.faces
                 delegate: AppRow {
                     required property var modelData
+                    required property int index
                     appData: modelData
+                    rowIndex: index
+                    rowCount: page.faces.length
                 }
             }
         }
@@ -318,7 +384,10 @@ Kirigami.ScrollablePage {
                 model: page.others
                 delegate: AppRow {
                     required property var modelData
+                    required property int index
                     appData: modelData
+                    rowIndex: index
+                    rowCount: page.others.length
                 }
             }
         }

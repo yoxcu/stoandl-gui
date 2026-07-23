@@ -86,6 +86,8 @@ public:
     Q_INVOKABLE QString      appIcon(const QString &uuid);
     Q_INVOKABLE QVariantMap  launchApp(const QString &id);   // LaunchApp(s)
     Q_INVOKABLE QVariantMap  removeApp(const QString &id);   // RemoveApp(s) (system refused daemon-side)
+    Q_INVOKABLE QVariantMap  setAppOrder(const QString &id, int order);  // SetAppOrder(s,i)
+    Q_INVOKABLE QVariantMap  restoreSystemAppOrder();                    // RestoreSystemAppOrder()
     Q_INVOKABLE QVariantMap  sideloadApp(const QUrl &fileUrl); // SideloadApp(absolute daemon-side path)
     Q_INVOKABLE QVariantMap  openConfig(const QString &id);  // OpenConfig(s) -> open the URL via xdg-open (v1: skip WebviewClose)
     Q_INVOKABLE void         refreshApps();              // re-fetch + appsChanged (on show + after any mutation)
@@ -108,6 +110,8 @@ public:
     Q_INVOKABLE QVariantMap  syncWeather();              // SyncWeather() ; error: if disabled in config
     Q_INVOKABLE QVariantMap  syncCalendar();             // SyncCalendar()
     Q_INVOKABLE QVariantMap  syncHealth();               // SyncHealth()
+    Q_INVOKABLE QVariantMap  healthProfile();            // GetHealthProfile() -> {key: value, ...}
+    Q_INVOKABLE QVariantMap  setHealthProfile(const QString &key, const QString &value); // SetHealthProfile(s,s)
     Q_INVOKABLE QVariantList listCalendars();            // -> [{id,name,enabled,accountId}]
     Q_INVOKABLE QVariantMap  setCalendarEnabled(const QString &id, bool enabled); // SetCalendarEnabled(s,b)
     Q_INVOKABLE void         refreshCalendars();         // re-fetch + calendarsChanged (on show + after toggle)
@@ -121,6 +125,7 @@ public:
     // HOOK #5 — per-service master toggles + status.
     Q_INVOKABLE QVariantList getSyncStatus();            // -> [{service,enabled,available,lastSync}]
     Q_INVOKABLE QVariantMap  setSyncEnabled(const QString &service, bool enabled); // SetSyncEnabled(s,b)
+    Q_INVOKABLE QVariantMap  musicStatus();              // MusicStatus() -> {kind,ok,playing,player,track}
 
     // --- typed wrappers: Watch settings (Settings screen) ------------------
     Q_INVOKABLE QVariantList listWatchPrefs();           // -> [{id,type,current,default,allowed[],flags[],name,description}]

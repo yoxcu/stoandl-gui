@@ -16,6 +16,7 @@ Kirigami.ScrollablePage {
     Component { id: syncPage;      SyncSettingsPage {} }
     Component { id: calendarsPage; CalendarsSettingsPage {} }
     Component { id: watchPage;     WatchSettingsPage {} }
+    Component { id: healthProfilePage; HealthProfileSettingsPage {} }
     Component { id: generalPage;   GeneralSettingsPage {} }
     Component { id: backupPage;    BackupSettingsPage {} }
 
@@ -53,6 +54,13 @@ Kirigami.ScrollablePage {
                 description: "Quick launch, backlight, notifications, vibration…"
                 icon.name: "chronometer-symbolic"
                 onClicked: page.open(watchPage)
+            }
+            FormCard.FormDelegateSeparator {}
+            FormCard.FormButtonDelegate {
+                text: "Health profile"
+                description: "Height, weight, age, units and heart-rate tracking"
+                icon.name: "stoandl-heart-symbolic"
+                onClicked: page.open(healthProfilePage)
             }
             FormCard.FormDelegateSeparator {}
             FormCard.FormButtonDelegate {

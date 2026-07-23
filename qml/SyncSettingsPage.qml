@@ -13,6 +13,7 @@ Kirigami.ScrollablePage {
     title: "Sync"
 
     property var syncStatus: []   // [{service,enabled,available,lastSync}]
+    property var music: ({})      // MusicStatus() -> {kind,ok,playing,player,track}
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
@@ -38,8 +39,23 @@ Kirigami.ScrollablePage {
     }
 
     function reload() {
-        if (!StoandlClient.daemonUp) { page.syncStatus = []; return; }
+        if (!StoandlClient.daemonUp) { page.syncStatus = []; page.music = ({}); return; }
         page.syncStatus = StoandlClient.getSyncStatus();
+        page.music = StoandlClient.musicStatus();
+    }
+
+    // The Music row shows the now-playing track when a player is active; every other service (and an
+    // idle Music service) falls back to its last-sync label.
+    function serviceDescription(m) {
+        if (m.service === "music" && page.music && page.music.ok) {
+            var track = page.music.track || "";
+            var player = page.music.player || "";
+            if (page.music.playing)
+                return track !== "" ? ("Now playing · " + track) : ("Playing · " + player);
+            if (track !== "")
+                return "Paused · " + track;
+        }
+        return "Last sync · " + (m.lastSync || "never");
     }
 
     function toggleSync(service, on) {
@@ -98,7 +114,7 @@ Kirigami.ScrollablePage {
                     required property var modelData
                     icon.name: page.serviceIcon(modelData.service)
                     text: page.serviceLabel(modelData.service)
-                    description: "Last sync · " + (modelData.lastSync || "never")
+                    description: page.serviceDescription(modelData)
                     enabled: modelData.available !== false
                     checked: modelData.enabled === true
                     onToggled: page.toggleSync(modelData.service, checked)

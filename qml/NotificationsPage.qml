@@ -315,6 +315,18 @@ Kirigami.ScrollablePage {
         // Fixed sets (handoff spec).
         readonly property var vibes: ["Standard", "Double", "Long", "Subtle", "Heartbeat"]
         readonly property var iconOptions: ["Default", "Bell", "Calendar", "Chat"]
+        // A curated subset of the watch's TimelineColor palette; `value` is the enum name the daemon
+        // stores (NotifSetStyle takes a name, not a hex — NotifList ships no allowed set, so hardcode).
+        readonly property var colorOptions: [
+            { text: "Default", value: "default", swatch: "transparent" },
+            { text: "Red",     value: "Red",          swatch: "#FF0000" },
+            { text: "Orange",  value: "Orange",       swatch: "#FF5500" },
+            { text: "Yellow",  value: "ChromeYellow", swatch: "#FFAA00" },
+            { text: "Green",   value: "Green",        swatch: "#00FF00" },
+            { text: "Cyan",    value: "Cyan",         swatch: "#00FFFF" },
+            { text: "Blue",    value: "BlueMoon",     swatch: "#0055FF" },
+            { text: "Violet",  value: "VividViolet",  swatch: "#AA00FF" }
+        ]
 
         title: appName
         preferredWidth: Kirigami.Units.gridUnit * 24
@@ -485,6 +497,27 @@ Kirigami.ScrollablePage {
                         page.toast("Icon · " + currentValue);
                     else
                         page.toast("Icon: " + (r.tail || r.kind));
+                    appDialog.refreshApp();
+                }
+            }
+
+            // --- options: accent color ---
+            FormCard.FormComboBoxDelegate {
+                Layout.fillWidth: true
+                text: "Notification color"
+                description: "Accent colour on the watch"
+                textRole: "text"
+                valueRole: "value"
+                model: appDialog.colorOptions
+                currentIndex: 0
+                onCurrentValueChanged: {
+                    if (!appDialog.visible)
+                        return;
+                    var r = StoandlClient.notifSetStyle(appDialog.appName, currentValue, "", "");
+                    if (r.kind === "ok" || r.ok)
+                        page.toast("Color · " + currentText);
+                    else
+                        page.toast("Color: " + (r.tail || r.kind));
                     appDialog.refreshApp();
                 }
             }

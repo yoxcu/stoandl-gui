@@ -373,6 +373,8 @@ QString StoandlClient::appIcon(const QString &uuid)
 
 QVariantMap StoandlClient::launchApp(const QString &id) { return statusMap(callStatus(QStringLiteral("LaunchApp"), {id})); }
 QVariantMap StoandlClient::removeApp(const QString &id) { return statusMap(callStatus(QStringLiteral("RemoveApp"), {id})); }
+QVariantMap StoandlClient::setAppOrder(const QString &id, int order) { return statusMap(callStatus(QStringLiteral("SetAppOrder"), {id, order})); }
+QVariantMap StoandlClient::restoreSystemAppOrder() { return statusMap(callStatus(QStringLiteral("RestoreSystemAppOrder"))); }
 
 QVariantMap StoandlClient::sideloadApp(const QUrl &fileUrl)
 {
@@ -518,6 +520,24 @@ void StoandlClient::refreshExtensions()
 QVariantMap StoandlClient::syncWeather()  { return statusMap(callStatus(QStringLiteral("SyncWeather"))); }
 QVariantMap StoandlClient::syncCalendar() { return statusMap(callStatus(QStringLiteral("SyncCalendar"))); }
 QVariantMap StoandlClient::syncHealth()   { return statusMap(callStatus(QStringLiteral("SyncHealth"))); }
+
+QVariantMap StoandlClient::healthProfile()
+{
+    // GetHealthProfile() -> [ [key, value], ... ]  →  { key: value, ... }
+    const QVariantList rows = list(QStringLiteral("GetHealthProfile"));
+    QVariantMap m;
+    for (const QVariant &r : rows) {
+        const QStringList f = r.toStringList();
+        if (f.size() >= 2)
+            m[f.value(0)] = f.value(1);
+    }
+    return m;
+}
+
+QVariantMap StoandlClient::setHealthProfile(const QString &key, const QString &value)
+{
+    return statusMap(callStatus(QStringLiteral("SetHealthProfile"), {key, value}));
+}
 
 QVariantList StoandlClient::listCalendars()
 {
@@ -680,6 +700,10 @@ void StoandlClient::emitFirmwareStatus(const QString &phase, int percent, const 
     if (phase == QStringLiteral("reboot")
         || (phase == QStringLiteral("notready") && m_fwSeenActivity)) {
         stopFirmwarePoll();
+        // Clear the activity flag so a trailing idle/notready frame (the daemon resetting its firmware
+        // state once the watch reconnects) hits the no-flicker guard below instead of re-opening the
+        // "Updating firmware" banner.
+        m_fwSeenActivity = false;
         Q_EMIT firmwareStatus(QStringLiteral("success"), 100, QStringLiteral("Watch is rebooting"));
         return;
     }
@@ -933,6 +957,21 @@ QVariantMap StoandlClient::watchDetails()
 QVariantMap StoandlClient::setWatchNickname(const QString &name, const QString &nickname)
 {
     return statusMap(callStatus(QStringLiteral("SetWatchNickname"), {name, nickname}));
+}
+
+QVariantMap StoandlClient::musicStatus()
+{
+    // MusicStatus() -> ok:<playing|paused>\t<player>\t<track>
+    const Status s = callStatus(QStringLiteral("MusicStatus"));
+    QVariantMap m;
+    m[QStringLiteral("kind")] = s.kind;
+    m[QStringLiteral("ok")]   = s.ok();
+    if (s.kind == QStringLiteral("ok")) {
+        m[QStringLiteral("playing")] = (s.fields.value(0) == QStringLiteral("playing"));
+        m[QStringLiteral("player")]  = s.fields.value(1);
+        m[QStringLiteral("track")]   = s.fields.value(2);
+    }
+    return m;
 }
 
 QVariantMap StoandlClient::startDevConnection()

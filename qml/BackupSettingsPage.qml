@@ -43,10 +43,10 @@ Kirigami.ScrollablePage {
         FormCard.FormCard {
             visible: StoandlClient.daemonUp
             FormCard.FormButtonDelegate {
-                text: "Back up now"
+                text: "Back up now…"
                 description: "Save a full backup of the watch and daemon state"
                 icon.name: "document-save-symbolic"
-                onClicked: { StoandlClient.backup(""); page.toast("Backing up…"); }
+                onClicked: backupDialog.open()
             }
             FormCard.FormDelegateSeparator {}
             FormCard.FormButtonDelegate {
@@ -64,10 +64,10 @@ Kirigami.ScrollablePage {
         FormCard.FormCard {
             visible: StoandlClient.daemonUp
             FormCard.FormButtonDelegate {
-                text: "Create support bundle"
+                text: "Create support bundle…"
                 description: "Collect logs and diagnostics for a bug report"
                 icon.name: "help-feedback-symbolic"
-                onClicked: { StoandlClient.supportBundle(""); page.toast("Building support bundle…"); }
+                onClicked: supportDialog.open()
             }
         }
     }
@@ -80,6 +80,31 @@ Kirigami.ScrollablePage {
         onAccepted: {
             StoandlClient.restore(selectedFile);
             page.toast("Restoring…");
+        }
+    }
+
+    // Save pickers: the user chooses where the archive lands (so they know where it is), and the chosen
+    // absolute path is passed to the daemon-side CLI. Blank path (dialog cancelled) is never sent.
+    Dialogs.FileDialog {
+        id: backupDialog
+        title: "Save backup as"
+        fileMode: Dialogs.FileDialog.SaveFile
+        selectedFile: "stoandl-backup.tar.gz"
+        nameFilters: ["Backup archives (*.tar.gz *.tgz)", "All files (*)"]
+        onAccepted: {
+            StoandlClient.backup(selectedFile);
+            page.toast("Backing up…");
+        }
+    }
+    Dialogs.FileDialog {
+        id: supportDialog
+        title: "Save support bundle as"
+        fileMode: Dialogs.FileDialog.SaveFile
+        selectedFile: "stoandl-support.tar.gz"
+        nameFilters: ["Support bundles (*.tar.gz *.tgz)", "All files (*)"]
+        onAccepted: {
+            StoandlClient.supportBundle(selectedFile);
+            page.toast("Building support bundle…");
         }
     }
 }

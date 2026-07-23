@@ -22,6 +22,9 @@ Kirigami.Dialog {
     property bool devOn: false
     property var languages: []
     property string currentLang: "English (US)"
+    // Language-install progress: langBusy shows the bar; langPercent < 0 = indeterminate (no % yet).
+    property bool langBusy: false
+    property int langPercent: -1
 
     title: view === "debug" ? "Debug"
          : view === "language" ? "Watch language"
@@ -55,9 +58,10 @@ Kirigami.Dialog {
     Connections {
         target: StoandlClient
         function onLanguageStatus(kind, percent, detail) {
-            if (kind === "success") { dialog.toast("Language pack installed"); dialog.loadLanguages(); }
-            else if (kind === "failed") dialog.toast("Language install failed: " + detail);
-            else if (kind === "disconnected") dialog.toast("Watch disconnected during install");
+            if (kind === "success") { dialog.langBusy = false; dialog.langPercent = -1; dialog.toast("Language pack installed"); dialog.loadLanguages(); }
+            else if (kind === "failed") { dialog.langBusy = false; dialog.langPercent = -1; dialog.toast("Language install failed: " + detail); }
+            else if (kind === "disconnected") { dialog.langBusy = false; dialog.langPercent = -1; dialog.toast("Watch disconnected during install"); }
+            else if (kind !== "idle" && kind !== "notready") { dialog.langBusy = true; dialog.langPercent = percent; }
         }
         function onCliResult(op, ok, message) {
             if (op === "support")
@@ -304,8 +308,8 @@ Kirigami.Dialog {
                 onClicked: fwFileDialog.open()
             }
             ActionRow {
-                text: "Write notification"; iconName: "notifications-symbolic"; soon: true
-                enabled: false
+                text: "Write notification…"; iconName: "notifications-symbolic"
+                onClicked: testNotifDialog.openFor()
             }
             ActionRow {
                 text: "Factory reset"; iconName: "dialog-warning-symbolic"; danger: true
@@ -334,6 +338,19 @@ Kirigami.Dialog {
                 wrapMode: Text.WordWrap
             }
 
+            // Live install progress (the daemon can take up to ~3 min); mirrors the firmware banner.
+            QQC2.ProgressBar {
+                visible: dialog.langBusy
+                Layout.fillWidth: true
+                Layout.leftMargin: Kirigami.Units.largeSpacing
+                Layout.rightMargin: Kirigami.Units.largeSpacing
+                Layout.bottomMargin: Kirigami.Units.largeSpacing
+                from: 0
+                to: 100
+                value: dialog.langPercent < 0 ? 0 : dialog.langPercent
+                indeterminate: dialog.langPercent < 0
+            }
+
             Repeater {
                 model: dialog.languages
                 delegate: QQC2.ItemDelegate {
@@ -346,6 +363,7 @@ Kirigami.Dialog {
                             return;
                         }
                         var r = StoandlClient.installLanguage(modelData.id);
+                        if (r.ok) { dialog.langBusy = true; dialog.langPercent = -1; }
                         dialog.toast(r.ok ? ("Loading " + modelData.displayName + " onto watch…")
                                           : ("Language: " + (r.tail || r.kind)));
                     }
@@ -407,6 +425,39 @@ Kirigami.Dialog {
                 }
             },
             Kirigami.Action { text: "Cancel"; icon.name: "dialog-cancel-symbolic"; onTriggered: renameDialog.close() }
+        ]
+    }
+
+    // --- write a test notification -----------------------------------------
+    Kirigami.PromptDialog {
+        id: testNotifDialog
+        title: "Write notification"
+        standardButtons: QQC2.Dialog.NoButton
+
+        function openFor() { testNotifTitle.text = ""; testNotifBody.text = ""; open(); }
+
+        ColumnLayout {
+            spacing: Kirigami.Units.largeSpacing
+            QQC2.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: "Send a test notification to the watch (through the normal mute / style / filter path)."
+            }
+            QQC2.TextField { id: testNotifTitle; Layout.fillWidth: true; placeholderText: "Title" }
+            QQC2.TextField { id: testNotifBody; Layout.fillWidth: true; placeholderText: "Body (optional)" }
+        }
+        customFooterActions: [
+            Kirigami.Action {
+                text: "Send"
+                icon.name: "document-send-symbolic"
+                enabled: testNotifTitle.text.trim() !== ""
+                onTriggered: {
+                    var r = StoandlClient.call("SendTestNotification", [testNotifTitle.text.trim(), testNotifBody.text]);
+                    dialog.toast(r.ok ? "Test notification sent" : ("Failed: " + (r.tail || r.kind)));
+                    testNotifDialog.close();
+                }
+            },
+            Kirigami.Action { text: "Cancel"; icon.name: "dialog-cancel-symbolic"; onTriggered: testNotifDialog.close() }
         ]
     }
 
