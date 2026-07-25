@@ -10,6 +10,13 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      apk_version:
+        description: >-
+          Build the aarch64 pmOS apk from this ALREADY-PUBLISHED release version
+          (no leading v) to iterate the Alpine build without cutting a tag, e.g. 0.2.0
+        required: true
+        default: "0.2.0"
 
 permissions:
   contents: read
@@ -21,6 +28,8 @@ concurrency:
 jobs:
   flatpak:
     name: Build Flatpak
+    # Skip on manual dispatch — dispatch is for iterating the aarch64 apk job only.
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     container:
       # KDE flatpak-builder image; the tag's kde-6.xx MUST match the manifest's
@@ -89,16 +98,25 @@ jobs:
   apk-aarch64:
     name: Build aarch64 pmOS package
     needs: release
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A tag runs this after the release job; a manual dispatch runs it against an
+    # already-published tarball (inputs.apk_version) to iterate without a new tag.
+    # !cancelled() lets it run even though `release` is skipped on dispatch.
+    if: >-
+      !cancelled() &&
+      (needs.release.result == 'success' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
-      contents: write        # attach the .apk to the release just created above
+      contents: write        # attach the .apk to the release (tag runs only)
     steps:
       - uses: actions/checkout@v4
 
-      - name: Point APKBUILD at this tag
+      - name: Point APKBUILD at the version
         run: |
-          v="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            v="${{ inputs.apk_version }}"
+          else
+            v="${GITHUB_REF_NAME#v}"
+          fi
           sed -i "s/^pkgver=.*/pkgver=$v/" packaging/APKBUILD
 
       # Chroots into an aarch64 Alpine root under QEMU user-mode emulation and
@@ -129,10 +147,15 @@ jobs:
         # the `release` job above, so this fetches over the network rather than
         # packaging the checkout directly — that's what makes this a real test of
         # what a pmOS packager building from the tagged release would get.
+        #
+        # abuild installs the makedepends via abuild-apk, which only lets members of
+        # the `abuild` group escalate (setup-alpine's user isn't one). Add it, then
+        # re-login with `doas su` so the fresh session actually picks up the new
+        # group membership before running abuild.
         run: |
-          cd packaging
-          abuild checksum
-          abuild -r
+          doas adduser "$(id -un)" abuild
+          pkgdir="$(pwd)/packaging"
+          doas su "$(id -un)" -c "cd '$pkgdir' && abuild checksum && abuild -r"
         shell: alpine.sh {0}
 
       - name: Stage the .apk
@@ -148,6 +171,7 @@ jobs:
           if-no-files-found: error
 
       - name: Attach .apk to the release
+        if: startsWith(github.ref, 'refs/tags/v')
         run: gh release upload "$GITHUB_REF_NAME" dist/*.apk --clobber
         env:
           GH_TOKEN: ${{ github.token }}
