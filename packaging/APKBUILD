@@ -2,7 +2,9 @@
 # Maintainer: yoxcu <mick@yoxcu.de>
 #
 # TEMPLATE — starting point for a postmarketOS/Alpine package of the stoandl GUI.
-# Before it builds: bump pkgver to a released tag, then run `abuild checksum` to
+# The release CI rewrites pkgver automatically, so `pkgver=0.1.0` below is just a
+# placeholder — a release build is always the tag's version, not this.
+# Building by hand: bump pkgver to a released tag, then run `abuild checksum` to
 # fill sha512sums (it downloads the release source tarball produced by CI). Verify
 # the depends/makedepends names against your Alpine branch (`apk search`) — Qt6 and
 # Kirigami package names drift between releases. The build itself is pure Qt6/CMake,
