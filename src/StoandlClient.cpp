@@ -21,7 +21,7 @@
 #include <algorithm>
 
 namespace {
-// Service contract — docs/handoff/dbus-interface.md §"Service summary".
+// Service contract — docs/dbus-interface.md §"Service summary".
 constexpr auto SERVICE = "de.yoxcu.stoandl";
 constexpr auto PATH    = "/de/yoxcu/stoandl";
 constexpr auto IFACE   = "de.yoxcu.stoandl.Control";

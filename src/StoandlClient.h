@@ -18,7 +18,7 @@ class QTimer;
 // The interface exposes three reactive signals (WatchesChanged/FirmwareProgress/
 // LockerChanged) that augment polling; polling stays as the fallback (the daemon is not
 // D-Bus-activated, so a late/reconnecting client can miss a signal). The QML never polls
-// and never parses — all of that lives here. See docs/handoff/dbus-interface.md.
+// and never parses — all of that lives here. See docs/dbus-interface.md.
 class StoandlClient : public QObject
 {
     Q_OBJECT

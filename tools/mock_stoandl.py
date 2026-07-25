@@ -11,7 +11,7 @@ Covers the full surface the GUI uses: the 51 documented control methods that the
 new screens touch (Watch, Apps/Faces, Extensions, Notifications, Settings) PLUS
 the daemon-side hooks added in this milestone (handoff §5). The hooks are flagged
 "HOOK #n" inline; they are the new D-Bus contract the real Kotlin daemon must grow
-to match (see the drift report). Returns follow docs/handoff/dbus-interface.md:
+to match. Returns follow docs/dbus-interface.md:
 status strings are "kind:tail" with tab-separated fields; list methods return one
 tab-joined record per element.
 

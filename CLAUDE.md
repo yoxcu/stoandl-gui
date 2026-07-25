@@ -5,7 +5,7 @@ Kirigami (Qt6/QML) front-end for the stoandl Pebble daemon. Convergent: Plasma M
 ## Architecture
 - QML UI (Kirigami + KirigamiAddons FormCard) + one C++ shim `StoandlClient` (raw `QDBusConnection`).
 - Talks to `de.yoxcu.stoandl.Control`, session bus, path `/de/yoxcu/stoandl`. Full contract:
-  `docs/handoff/dbus-interface.md`. No code shared with the daemon — we are just another client.
+  `docs/dbus-interface.md`. No code shared with the daemon — we are just another client.
 - Builds musl-native (Alpine/postmarketOS) and glibc (desktop). No JVM.
 
 ## Navigation — 5 tabs (current)
@@ -93,7 +93,7 @@ ok · error · notready · notfound · ambiguous · pending · timeout · inprog
 done · uptodate · disabled · busy · idle · none · confirm (PairStatus `confirm:<code>` — numeric
 comparison awaiting ConfirmPairing(bool))
 
-## Daemon hooks (added this milestone — see the drift report `docs/handoff/drift-report.md`)
+## Daemon hooks (added this milestone)
 Seven reactive **signals** — `WatchesChanged()` (re-call ListWatches), `FirmwareProgress(s phase,
 i percent, s detail)` (push flash progress, same phase vocabulary as `FirmwareStatus`),
 `LockerChanged()` (re-call ListApps), `LanguageProgress(s phase, i percent, s detail)` (push

@@ -1,8 +1,9 @@
-# <img src="data/icons/hicolor/256x256/apps/de.yoxcu.stoandl.gui.png" alt="" height="30"> stoandl-gui
+<p align="center"><img src="data/icons/hicolor/256x256/apps/de.yoxcu.stoandl.gui.png" alt="stoandl-gui" width="120"></p>
+
+# stoandl-gui
 
 Kirigami (Qt6 / QML) front-end for the **stoandl** Pebble companion daemon.
-Convergent: Plasma Mobile + desktop. See `CLAUDE.md` and `docs/handoff/` for the
-full spec, the D-Bus contract, and the visual prototype.
+Convergent: Plasma Mobile + desktop.
 
 ## Screenshots
 
@@ -18,62 +19,6 @@ full spec, the D-Bus contract, and the visual prototype.
     <td align="center" width="33%"><img src="docs/screenshots/battery.png" width="230" alt="Battery insights"><br><sub><b>Battery insights</b> — charge, drain, power</sub></td>
   </tr>
 </table>
-
-## Status
-
-`StoandlClient` (C++ QML singleton) is the only thing that touches D-Bus: generic
-`call`/`list`, typed wrappers (one per method, parsing every tab-record and status
-string), `daemonUp` via `NameHasOwner` (+ reactive `NameOwnerChanged`), and all
-polling. Shared QML: `StatusChip`, `DaemonPlaceholder`. `Kirigami.ApplicationWindow`
-+ a `Kirigami.NavigationTabBar` footer (responsive: bottom on mobile, top on
-desktop) with five destinations — **Watch · Health · Apps · Alerts ·
-Settings** — and **Watch is tab 0**. The nav hides when the daemon is down.
-(The notifications tab is labelled **Alerts** — short enough not to wrap on narrow widths.)
-
-- **Watch** — firmware-update `InlineMessage` banner (Update now flashes inline via
-  the `FirmwareStatus` poll; What's new opens the PebbleOS changelog), a tappable
-  active-watch hero card → **Watch details dialog** (Model/Platform/Transport/
-  Firmware+What's-new/Serial/Battery/Last-sync, a Developer-connection toggle, a
-  Language picker, a Rename pencil, a **Debug** submenu — core dump · pull logs ·
-  support bundle · reboot-to-recovery · write-notification [SOON] · factory reset —
-  and Forget watch), and a known-watches list with inline Connect/active + forget
-  (no kebab). Pair / Ring / Sync-now as page actions. A **Battery insights** row
-  opens a sub-page: current % with a charging/voltage/time-left hero + gauge, a
-  battery-%-over-time Canvas chart with a 24 h / 7 days / 30 days switcher (with a
-  faint **notification-density** overlay marking busy hours), a per-hour **drain**
-  bar chart, a **What drew power** donut + legend (an *estimated* usage share —
-  display / vibration / speaker / heart-rate / Bluetooth / CPU), and trend tiles
-  (discharge rate, charges·7d, last charged, 24 h range) — the local equivalent of
-  the official app's Battery screen, from `BatteryInsights`/`BatteryHistory`/
-  `BatteryActivity`/`BatteryPower`. 4 s `ListWatches` focus poll; 1.5 s / 145 s `PairStatus` poll.
-- **Health** — read-only steps / sleep / heart-rate cards (step-goal ring, weekly
-  bars, stacked sleep bar, 24 h heart sparkline — Canvas-drawn, theme-colored) from
-  `GetHealthSummary`/`GetHealthSeries`. The heart card hides when HR isn't available;
-  a "Sync health" action forces a sync.
-- **Apps & Faces** — a 3-segment switch (Faces / Apps / Extensions). Faces/Apps:
-  tap = launch (= set-active for a face), inline gear (if `config`) + bin (if not
-  `system`); the sideloaded chip is dropped. Extensions: enable/disable switch +
-  inline gear (web config via `xdg-open`, or a native form rendered from
-  `ExtConfigSchema`/`ExtGetConfig`/`ExtSetConfig`) + bin (uninstall, keep-config
-  option). Install action is segment-aware (`.pbw` vs extension archive).
-- **Alerts** (notifications) — Forward-notifications master toggle + Mute-temporarily;
-  per-app list → a deeper per-app dialog (mute, vibration pattern, custom icon);
-  regex Filters (allow/block, Add-filter page action). Maps to `NotifList`/
-  `NotifSetMute`/`NotifSetMuteAll`/`NotifSetStyle` + the filter hooks. (Quiet hours
-  is intentionally absent — it is superseded by the daemon's `dnd.sync`, which
-  mirrors desktop Do Not Disturb ↔ the watch's native Quiet Time.)
-- **Settings** — Sync services (per-service master toggles via `GetSyncStatus`/
-  `SetSyncEnabled` + force-sync), **Calendars** (add/edit/remove calendar *sources* via
-  `ListCalendarSources`/`AddCalendarSource`/`UpdateCalendarSource`/`RemoveCalendarSource` —
-  a CalDAV account's discovered calendars nest under it with per-calendar enable toggles;
-  the password field is **write-only**, the daemon stores it in the keyring/0600-file and
-  never returns it; updated live via the `CalendarsChanged` signal), Watch settings (from
-  `ListWatchPrefs`/`SetWatchPref`), Backup (CLI shell-outs), and a schema-driven
-  **Advanced** group that renders `stoandl.conf` generically from `GetConfigSchema`/
-  `GetConfig`/`SetConfig`, so new config keys appear automatically.
-
-The daemon-side additions these screens rely on are catalogued in
-`docs/handoff/drift-report.md` and implemented in the mock (`tools/mock_stoandl.py`).
 
 ## Build
 
@@ -111,7 +56,7 @@ QT_QPA_PLATFORM=offscreen ./build/stoandl-gui
 
 `tools/mock_stoandl.py` is a stateful stand-in for `de.yoxcu.stoandl.Control` that
 implements the **full surface the GUI uses** — every screen's reads/mutations plus
-the daemon-side hooks listed in the drift report. `tools/run-with-mock.sh` spins up
+the extra daemon-side hooks the GUI relies on. `tools/run-with-mock.sh` spins up
 an ephemeral session bus, starts the mock on it, then launches the GUI:
 
 ```sh
@@ -121,8 +66,6 @@ tools/run-with-mock.sh --mock-only                # just the mock (Ctrl-C to sto
 ```
 
 Requires `dbus`, `python3-dbus`, `python3-gi` (installed via `.container/Dockerfile`).
-For a Breeze-Dark look on a non-Plasma desktop, merge the `[Colors:*]` groups from
-`docs/handoff/BreezeDark-dev-preview.kdeglobals` into `~/.config/kdeglobals`.
 
 ## Releases
 
