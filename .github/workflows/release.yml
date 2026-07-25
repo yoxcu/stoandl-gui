@@ -152,16 +152,21 @@ jobs:
         # the `abuild` group escalate (setup-alpine's user isn't one). Add it, then
         # re-login with `doas su` so the fresh session actually picks up the new
         # group membership before running abuild.
+        #
+        # The doas-su re-login changes $HOME, so pin REPODEST to a known workspace
+        # path — otherwise abuild drops the .apk under a home the Stage step (a
+        # separate session) doesn't look in.
         run: |
           doas adduser "$(id -un)" abuild
+          mkdir -p "$GITHUB_WORKSPACE/packages"
           pkgdir="$(pwd)/packaging"
-          doas su "$(id -un)" -c "cd '$pkgdir' && abuild checksum && abuild -r"
+          doas su "$(id -un)" -c "cd '$pkgdir' && export REPODEST='$GITHUB_WORKSPACE/packages' && abuild checksum && abuild -r"
         shell: alpine.sh {0}
 
       - name: Stage the .apk
         run: |
           mkdir -p "$GITHUB_WORKSPACE/dist"
-          find "$HOME/packages" -name '*.apk' -exec cp {} "$GITHUB_WORKSPACE/dist/" \;
+          find "$GITHUB_WORKSPACE/packages" -name '*.apk' -exec cp {} "$GITHUB_WORKSPACE/dist/" \;
         shell: alpine.sh {0}
 
       - uses: actions/upload-artifact@v4
