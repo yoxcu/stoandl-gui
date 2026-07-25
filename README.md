@@ -1,8 +1,23 @@
+<p align="center"><img src="data/icons/hicolor/256x256/apps/de.yoxcu.stoandl.gui.png" alt="stoandl-gui" width="120"></p>
+
 # stoandl-gui
 
 Kirigami (Qt6 / QML) front-end for the **stoandl** Pebble companion daemon.
 Convergent: Plasma Mobile + desktop. See `CLAUDE.md` and `docs/handoff/` for the
 full spec, the D-Bus contract, and the visual prototype.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%"><img src="docs/screenshots/watch.png" width="260" alt="Watch tab"><br><sub><b>Watch</b> — pairing, firmware, battery</sub></td>
+    <td align="center" width="50%"><img src="docs/screenshots/battery.png" width="260" alt="Battery insights"><br><sub><b>Battery insights</b> — charge, drain, power</sub></td>
+  </tr>
+  <tr>
+    <td align="center" width="50%"><img src="docs/screenshots/health.png" width="260" alt="Health tab"><br><sub><b>Health</b> — steps, sleep, heart rate</sub></td>
+    <td align="center" width="50%"><img src="docs/screenshots/apps.png" width="260" alt="Apps tab"><br><sub><b>Apps</b> — faces, apps, extensions</sub></td>
+  </tr>
+</table>
 
 ## Status
 
