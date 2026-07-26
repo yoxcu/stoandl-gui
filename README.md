@@ -78,6 +78,18 @@ Commit messages). Built on the KDE runtime (`org.kde.Platform` — see
 `data/de.yoxcu.stoandl.gui.flatpak.yml`); KirigamiAddons ships in that runtime, so it
 isn't bundled.
 
+**Installing the postmarketOS `.apk`.** A tagged release also ships an aarch64 pmOS `.apk`
+and the public signing key (`mick@yoxcu.de-*.rsa.pub`). Trust the key once and `apk add`
+installs it — and every future release — without `--allow-untrusted`:
+
+```sh
+# from the release page, download the .apk and the matching .rsa.pub, then:
+doas cp mick@yoxcu.de-*.rsa.pub /etc/apk/keys/   # trust the signing key (once)
+doas apk add ./stoandl-gui-*.apk
+```
+
+(Or skip the key with `doas apk add --allow-untrusted ./stoandl-gui-*.apk`.)
+
 ### Installing / testing a Flatpak build
 
 A `.flatpak` bundle isn't runnable directly — you `flatpak install` it first (a fast
