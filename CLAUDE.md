@@ -1,5 +1,16 @@
 # stoandl-gui
 
+> **This branch (`gtk-rewrite`) is the GTK4 / libadwaita app** — a Rust crate in
+> `gtk/` (gtk4-rs + libadwaita + Blueprint, D-Bus via GLib GDBus). The Kirigami
+> (Qt6/QML) app lives on `main`; the two front-ends coexist on separate branches.
+> For GTK specifics (page/dbus/mock patterns, build & headless smoke test) read
+> `gtk/README.md`. The **Hard rules, Status kinds and Daemon hooks** below are the
+> toolkit-agnostic D-Bus/behaviour contract and remain authoritative for GTK; the
+> Kirigami/QML UI notes below describe the reference app on `main` and map onto the
+> libadwaita equivalents (`Kirigami.NavigationTabBar`→`Adw.ViewStack`+switcher,
+> `FormCard`→`Adw.PreferencesGroup`, page `actions`→`Adw.HeaderBar`, passive
+> notification→`Adw.Toast`, `Notifications` tab→**Alerts**).
+
 Kirigami (Qt6/QML) front-end for the stoandl Pebble daemon. Convergent: Plasma Mobile + desktop.
 
 ## Architecture

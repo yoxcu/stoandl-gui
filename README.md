@@ -1,102 +1,64 @@
 # stoandl-gui
 
-Kirigami (Qt6 / QML) front-end for the **stoandl** Pebble companion daemon.
-Convergent: Plasma Mobile + desktop. See `CLAUDE.md` and `docs/handoff/` for the
-full spec, the D-Bus contract, and the visual prototype.
+**GTK4 / libadwaita** front-end for the **stoandl** Pebble companion daemon.
+Convergent: GNOME desktop + Linux phones (phosh / postmarketOS).
 
-## Status
+> This is the **`gtk-rewrite`** branch — the native GTK4 app (Rust, in [`gtk/`](gtk/)).
+> The original **Kirigami (Qt6/QML)** app lives on **`main`**. The two front-ends
+> coexist on separate branches; both are independent clients of the same
+> `de.yoxcu.stoandl.Control` D-Bus interface.
 
-`StoandlClient` (C++ QML singleton) is the only thing that touches D-Bus: generic
-`call`/`list`, typed wrappers (one per method, parsing every tab-record and status
-string), `daemonUp` via `NameHasOwner` (+ reactive `NameOwnerChanged`), and all
-polling. Shared QML: `StatusChip`, `DaemonPlaceholder`. `Kirigami.ApplicationWindow`
-+ a `Kirigami.NavigationTabBar` footer (responsive: bottom on mobile, top on
-desktop) with five destinations — **Watch · Health · Apps · Notifications ·
-Settings** — and **Watch is tab 0**. The nav hides when the daemon is down.
+The app is a single Rust crate under [`gtk/`](gtk/) — gtk4-rs + libadwaita +
+Blueprint UI, D-Bus via GLib GDBus (no second runtime). See
+[`gtk/README.md`](gtk/README.md) for the crate layout and
+[`docs/handoff/dbus-interface.md`](docs/handoff/dbus-interface.md) for the D-Bus
+contract.
 
-- **Watch** — firmware-update `InlineMessage` banner (Update now flashes inline via
-  the `FirmwareStatus` poll; What's new opens the PebbleOS changelog), a tappable
-  active-watch hero card → **Watch details dialog** (Model/Platform/Transport/
-  Firmware+What's-new/Serial/Battery/Last-sync, a Developer-connection toggle, a
-  Language picker, a Rename pencil, a **Debug** submenu — core dump · pull logs ·
-  support bundle · reboot-to-recovery · write-notification [SOON] · factory reset —
-  and Forget watch), and a known-watches list with inline Connect/active + forget
-  (no kebab). Pair / Ring / Sync-now as page actions. 4 s `ListWatches` focus poll;
-  1.5 s / 145 s `PairStatus` poll.
-- **Health** — read-only steps / sleep / heart-rate cards (step-goal ring, weekly
-  bars, stacked sleep bar, 24 h heart sparkline — Canvas-drawn, theme-colored) from
-  `GetHealthSummary`/`GetHealthSeries`. The heart card hides when HR isn't available;
-  a "Sync health" action forces a sync.
-- **Apps & Faces** — a 3-segment switch (Faces / Apps / Extensions). Faces/Apps:
-  tap = launch (= set-active for a face), inline gear (if `config`) + bin (if not
-  `system`); the sideloaded chip is dropped. Extensions: enable/disable switch +
-  inline gear (web config via `xdg-open`, or a native form rendered from
-  `ExtConfigSchema`/`ExtGetConfig`/`ExtSetConfig`) + bin (uninstall, keep-config
-  option). Install action is segment-aware (`.pbw` vs extension archive).
-- **Notifications** — Forward-notifications master toggle + Mute-temporarily;
-  per-app list → a deeper per-app dialog (mute, vibration pattern, custom icon);
-  regex Filters (allow/block, Add-filter page action). Maps to `NotifList`/
-  `NotifSetMute`/`NotifSetMuteAll`/`NotifSetStyle` + the filter hooks. (Quiet hours
-  is intentionally absent — it is superseded by the daemon's `dnd.sync`, which
-  mirrors desktop Do Not Disturb ↔ the watch's native Quiet Time.)
-- **Settings** — Sync services (per-service master toggles via `GetSyncStatus`/
-  `SetSyncEnabled` + force-sync), **Calendars** (add/edit/remove calendar *sources* via
-  `ListCalendarSources`/`AddCalendarSource`/`UpdateCalendarSource`/`RemoveCalendarSource` —
-  a CalDAV account's discovered calendars nest under it with per-calendar enable toggles;
-  the password field is **write-only**, the daemon stores it in the keyring/0600-file and
-  never returns it; updated live via the `CalendarsChanged` signal), Watch settings (from
-  `ListWatchPrefs`/`SetWatchPref`), Backup (CLI shell-outs), and a schema-driven
-  **Advanced** group that renders `stoandl.conf` generically from `GetConfigSchema`/
-  `GetConfig`/`SetConfig`, so new config keys appear automatically.
+## Screens
 
-The daemon-side additions these screens rely on are catalogued in
-`docs/handoff/drift-report.md` and implemented in the mock (`tools/mock_stoandl.py`).
+Five tabs in an `Adw.ViewStack` (responsive: header switcher on desktop, bottom
+switcher bar on narrow) — **Watch · Health · Apps · Alerts · Settings**; Watch is
+tab 0. The whole nav hides when the daemon is down.
+
+- **Watch** — firmware update/flash banner, active-watch hero → details / debug /
+  language / **battery-insights** sub-pages, and a known-watches list with inline
+  connect / forget (surfaces the `connecting` state).
+- **Health** — period-based (Daily / Weekly / Monthly) steps / sleep / heart-rate
+  cards + per-day bar charts, Cairo-drawn and theme-coloured.
+- **Apps & Faces** — Faces / Apps / Extensions segments; launch, reorder
+  (+ restore default order), config, install / uninstall.
+- **Alerts** — forward-notifications master + per-app mute / vibration / icon /
+  colour + regex filters.
+- **Settings** — Sync (with live now-playing on the Music row), Calendars, Watch
+  prefs, **Health profile**, Daemon config, Backup.
 
 ## Build
 
-Requires Qt6 (Core/Gui/Widgets/Qml/Quick/DBus) plus the Kirigami and
-KirigamiAddons **runtime QML modules** and a QtQuick Controls style
-(`qqc2-desktop-style`). In this dev container these are installed via
-`.container/Dockerfile` — rebuild/restart the container first.
+Rust + gtk4-rs; needs `libgtk-4-dev`, `libadwaita-1-dev`, `blueprint-compiler`,
+and `glib-compile-resources` at build time.
 
 ```sh
-cmake -S . -B build -G Ninja
-cmake --build build
-```
-
-Desktop integration (a `de.yoxcu.stoandl.gui.desktop` launcher entry + a hicolor icon
-theme) lives in `data/` and installs to `<datadir>` via `cmake --build build --target
-install`; the window icon is also embedded so it shows when run straight from `build/`.
-See `data/README.md`.
-
-## Run
-
-The daemon is **not** D-Bus-activated; start it (or let the in-app button do it):
-
-```sh
-systemctl --user start stoandl     # optional — the GUI offers this too
-./build/stoandl-gui
-```
-
-On a headless box, force the offscreen platform for a smoke test (no live UI):
-
-```sh
-QT_QPA_PLATFORM=offscreen ./build/stoandl-gui
+cd gtk
+cargo build --release
+cargo run            # against the real daemon on a GNOME session
 ```
 
 ## Testing without the real daemon (mock)
 
-`tools/mock_stoandl.py` is a stateful stand-in for `de.yoxcu.stoandl.Control` that
-implements the **full surface the GUI uses** — every screen's reads/mutations plus
-the daemon-side hooks listed in the drift report. `tools/run-with-mock.sh` spins up
-an ephemeral session bus, starts the mock on it, then launches the GUI:
+`tools/mock_stoandl.py` is a stateful stand-in for `de.yoxcu.stoandl.Control`
+implementing the full surface the GUI uses. `tools/run-with-mock-gtk.sh` spins an
+ephemeral session bus, starts the mock, and runs the app:
 
 ```sh
-tools/run-with-mock.sh                            # on a desktop
-QT_QPA_PLATFORM=offscreen tools/run-with-mock.sh  # headless smoke test
-tools/run-with-mock.sh --mock-only                # just the mock (Ctrl-C to stop)
+tools/run-with-mock-gtk.sh              # on a Wayland session
+tools/run-with-mock-gtk.sh --headless   # offscreen smoke test (headless weston)
+tools/run-with-mock-gtk.sh --mock-only  # just the mock (Ctrl-C to stop)
 ```
 
-Requires `dbus`, `python3-dbus`, `python3-gi` (installed via `.container/Dockerfile`).
-For a Breeze-Dark look on a non-Plasma desktop, merge the `[Colors:*]` groups from
-`docs/handoff/BreezeDark-dev-preview.kdeglobals` into `~/.config/kdeglobals`.
+## Packaging
+
+A Flatpak manifest (`data/de.yoxcu.stoandl.gui.flatpak.yml`) and an Alpine /
+postmarketOS `APKBUILD` (`packaging/`) build the Rust app. A GitHub Actions
+pipeline (`.github/workflows/release.yml`) publishes a Flatpak bundle, a source
+tarball + git-cliff changelog, and a signed aarch64 pmOS `.apk` on tagged
+releases.
