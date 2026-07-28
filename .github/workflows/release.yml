@@ -6,7 +6,7 @@ name: CI & Release
 # same APKBUILD, and an auto-generated changelog (cliff.toml).
 on:
   push:
-    branches: [main]
+    branches: [main, gtk-rewrite]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -64,7 +64,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0     # source tarball + git-cliff need full history + tags
+          fetch-depth: 0     # full history for: source tarball, git-cliff, and the
+                             # origin/main fork-point lookup in "Changelog range" below
+                             # (fetch-depth 0 also brings every branch + tag)
 
       - uses: actions/download-artifact@v4
         with:
@@ -76,12 +78,29 @@ jobs:
           git archive --format=tar.gz --prefix="stoandl-gui-$v/" \
             -o "stoandl-gui-$v.tar.gz" HEAD
 
+      - name: Changelog range
+        id: range
+        # `git-cliff --latest` diffs this tag against the previous *reachable* release
+        # tag. On gtk-rewrite no v* tag is reachable — the branch forked from main at
+        # the merge-base, before any release was tagged — so --latest would span the
+        # whole history back to the first commit. Fall back to that fork point as the
+        # base so the first GTK tag's notes cover only this branch's delta. Once a tag
+        # exists on the branch, later tags find it via git-describe and diff normally.
+        run: |
+          set -eu
+          prev="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -z "$prev" ]; then
+            prev="$(git merge-base origin/main HEAD)"
+            echo "No prior release tag reachable from ${GITHUB_REF_NAME} — basing notes on fork point $prev."
+          fi
+          echo "range=$prev..${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
       - name: Generate changelog
         id: cliff
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
-          args: --latest
+          args: ${{ steps.range.outputs.range }}
 
       - name: Create release
         uses: softprops/action-gh-release@v2
