@@ -1,5 +1,8 @@
-# Flatpak manifest for the stoandl GUI. Built in CI (.github/workflows/release.yml)
-# and shipped as a de.yoxcu.stoandl.gui.flatpak bundle on tagged releases.
+# Flatpak manifest for the Kirigami build of the stoandl GUI. Built in CI
+# (.github/workflows/release.yml) and shipped as a de.yoxcu.stoandl.gui.flatpak
+# bundle on tagged releases. The GTK build has its own manifest
+# (de.yoxcu.stoandl.gui.gtk.flatpak.yml, GNOME runtime) and a distinct app id, so the
+# two install side by side.
 #
 # runtime-version tracks the KDE runtime's Qt (org.kde.Platform 6.10 == Qt 6.10);
 # bump it in lockstep with the CI container image tag (kde-6.xx). Kirigami AND
@@ -28,10 +31,18 @@ finish-args:
 modules:
   - name: stoandl-gui
     buildsystem: cmake-ninja
+    # The CMake project lives in kirigami/ (its CMakeLists installs the desktop file,
+    # metainfo and this variant's icons via ../data). Build there.
+    subdir: kirigami
     config-opts:
       - -DCMAKE_BUILD_TYPE=RelWithDebInfo
     sources:
       # The manifest lives in data/, so the project root is one level up. A fresh CI
       # checkout has no build/ dir (it is git-ignored), so this copies clean sources.
+      # The whole tree is copied (kirigami/ needs ../data at build time); the GTK
+      # source tree is dead weight here but harmless.
       - type: dir
         path: ..
+        skip:
+          - gtk
+          - build

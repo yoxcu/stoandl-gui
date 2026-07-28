@@ -1,0 +1,61 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The window is deliberately chrome-free: it hosts a root stack that swaps the
+// daemon-down placeholder for the main content. There is NO window-level header
+// bar — each destination (and the daemon page) owns the single Adw.HeaderBar for
+// its surface, carrying the window controls + the view switcher + its own page
+// actions, which is the strict libadwaita convergent idiom (one header bar, with
+// the close button, per surface).
+template $StoandlWindow: Adw.ApplicationWindow {
+  // "(GTK)" so this window is distinguishable from the Kirigami variant's when both
+  // run side by side (matches the .desktop Name= and the app id's .gtk suffix).
+  title: _("stoandl (GTK)");
+  default-width: 420;
+  default-height: 720;
+  width-request: 360;
+  height-request: 294;
+
+  content: Adw.ToastOverlay toast_overlay {
+    Gtk.Stack root_stack {
+      transition-type: crossfade;
+
+      // --- daemon not running (its own header carries the window controls) ---
+      Gtk.StackPage {
+        name: "daemon";
+
+        child: Adw.ToolbarView {
+          [top]
+          Adw.HeaderBar {
+            title-widget: Adw.WindowTitle {
+              title: _("stoandl (GTK)");
+            };
+          }
+
+          content: Adw.StatusPage daemon_status {
+            icon-name: "computer-fail-symbolic";
+            title: _("stoandl daemon not running");
+            description: _("Nothing works without the background service. Start it, then this screen will fill in.");
+
+            child: Gtk.Button start_daemon_button {
+              label: _("Start daemon");
+              halign: center;
+
+              styles [
+                "pill",
+                "suggested-action",
+              ]
+            };
+          };
+        };
+      }
+
+      // --- main app: the destinations are added in Rust; each is a BreakpointBin
+      //     whose own header hosts the view switcher + window controls + actions.
+      Gtk.StackPage {
+        name: "main";
+        child: Adw.ViewStack view_stack {};
+      }
+    }
+  };
+}

@@ -1,7 +1,18 @@
+# Kirigami (Qt/CMake) build tree — the convention is `cmake -S kirigami -B build`.
 /build/
+kirigami/build/
 *.user
 *.qmlc
 *.jsc
 __pycache__/
 *.pyc
+
+# GTK (Rust/Cargo) build artifacts (normally redirected to the persistent cache via
+# CARGO_TARGET_DIR, but ignore a local ./target defensively).
+/target/
+/gtk/target/
+Cargo.lock.bak
+
+# Never commit a private abuild signing key dropped in the working tree; only the
+# .rsa.pub half under packaging/keys/ is tracked.
 *.rsa

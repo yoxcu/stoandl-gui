@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=stoandl (GTK)
+GenericName=Pebble Manager
+Comment=Manage your Pebble watch — faces, apps, extensions, notifications & health
+Exec=stoandl-gui-gtk
+Icon=de.yoxcu.stoandl.gui.gtk
+Terminal=false
+Categories=Utility;
+Keywords=pebble;smartwatch;watch;rebble;
+StartupNotify=true
+X-Purism-FormFactor=Workstation;Mobile;
+X-KDE-FormFactors=desktop,tablet,handset

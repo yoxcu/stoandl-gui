@@ -19,7 +19,7 @@ if [[ "${1:-}" == "--mock-only" ]]; then
 fi
 
 if [[ ! -x "$GUI" ]]; then
-  echo "error: $GUI not built — run: cmake --build build" >&2
+  echo "error: $GUI not built — run: cmake -S kirigami -B build -G Ninja && cmake --build build" >&2
   exit 1
 fi
 

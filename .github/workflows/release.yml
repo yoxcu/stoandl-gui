@@ -1,9 +1,11 @@
 name: CI & Release
 
-# Builds the Flatpak on every push/PR (CI gate), and on a `v*` tag publishes a
-# GitHub Release with the .flatpak bundle, a source tarball (for the pmOS/Alpine
-# APKBUILD — see packaging/APKBUILD), an aarch64 postmarketOS .apk built from that
-# same APKBUILD, and an auto-generated changelog (cliff.toml).
+# Builds BOTH GUI variants — the Kirigami (Qt/KDE) build and the GTK (libadwaita)
+# build — as separate Flatpaks and separate aarch64 postmarketOS .apks, each with a
+# distinct app id / package name so they install side by side. On a `v*` tag it
+# publishes a GitHub Release with both .flatpak bundles, both .apks, a source tarball
+# (one whole-repo tarball feeds both APKBUILDs — see packaging/), and an
+# auto-generated changelog (cliff.toml).
 on:
   push:
     branches: [main]
@@ -13,7 +15,7 @@ on:
     inputs:
       apk_version:
         description: >-
-          Build the aarch64 pmOS apk from this ALREADY-PUBLISHED release version
+          Build the aarch64 pmOS apks from this ALREADY-PUBLISHED release version
           (no leading v) to iterate the Alpine build without cutting a tag, e.g. 0.2.0
         required: true
         default: "0.2.0"
@@ -27,15 +29,27 @@ concurrency:
 
 jobs:
   flatpak:
-    name: Build Flatpak
+    name: Build Flatpak (${{ matrix.variant }})
     # Skip on manual dispatch — dispatch is for iterating the aarch64 apk job only.
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The container image's kde-6.xx / gnome-4x MUST match each manifest's
+          # runtime-version. Bump image + manifest together. (The old
+          # docker.io/bilelmoussaoui images are unmaintained — use flathub-infra's.)
+          - variant: kirigami
+            image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
+            manifest: data/de.yoxcu.stoandl.gui.flatpak.yml
+            bundle: de.yoxcu.stoandl.gui.flatpak
+          - variant: gtk
+            image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-47
+            manifest: data/de.yoxcu.stoandl.gui.gtk.flatpak.yml
+            bundle: de.yoxcu.stoandl.gui.gtk.flatpak
     container:
-      # KDE flatpak-builder image; the tag's kde-6.xx MUST match the manifest's
-      # runtime-version (org.kde.Platform 6.10). Bump both together. (The old
-      # docker.io/bilelmoussaoui images stop at kde-6.7 — use flathub-infra's.)
-      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
+      image: ${{ matrix.image }}
       options: --privileged
     steps:
       - uses: actions/checkout@v4
@@ -43,15 +57,15 @@ jobs:
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: de.yoxcu.stoandl.gui.flatpak
-          manifest-path: data/de.yoxcu.stoandl.gui.flatpak.yml
-          cache-key: flatpak-builder-${{ hashFiles('data/de.yoxcu.stoandl.gui.flatpak.yml') }}
+          bundle: ${{ matrix.bundle }}
+          manifest-path: ${{ matrix.manifest }}
+          cache-key: flatpak-builder-${{ matrix.variant }}-${{ hashFiles(matrix.manifest) }}
           upload-artifact: false
 
       - uses: actions/upload-artifact@v4
         with:
-          name: flatpak-bundle
-          path: de.yoxcu.stoandl.gui.flatpak
+          name: flatpak-bundle-${{ matrix.variant }}
+          path: ${{ matrix.bundle }}
           if-no-files-found: error
 
   release:
@@ -66,11 +80,13 @@ jobs:
         with:
           fetch-depth: 0     # source tarball + git-cliff need full history + tags
 
-      - uses: actions/download-artifact@v4
+      - name: Download both Flatpak bundles
+        uses: actions/download-artifact@v4
         with:
-          name: flatpak-bundle
+          pattern: flatpak-bundle-*
+          merge-multiple: true
 
-      - name: Source tarball (for the pmOS/Alpine APKBUILD)
+      - name: Source tarball (for the pmOS/Alpine APKBUILDs)
         run: |
           v="${GITHUB_REF_NAME#v}"
           git archive --format=tar.gz --prefix="stoandl-gui-$v/" \
@@ -93,10 +109,11 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             de.yoxcu.stoandl.gui.flatpak
+            de.yoxcu.stoandl.gui.gtk.flatpak
             stoandl-gui-*.tar.gz
 
   apk-aarch64:
-    name: Build aarch64 pmOS package
+    name: Build aarch64 pmOS package (${{ matrix.variant }})
     needs: release
     # A tag runs this after the release job; a manual dispatch runs it against an
     # already-published tarball (inputs.apk_version) to iterate without a new tag.
@@ -107,6 +124,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write        # attach the .apk to the release (tag runs only)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # kirigami/kirigami-addons/qqc2-desktop-style (Kirigami) and
+          # gtk4.0-dev/libadwaita-dev/blueprint-compiler (GTK) only exist in
+          # edge/community, so this can't use a stable Alpine branch.
+          - variant: kirigami
+            apkbuild: packaging/kirigami
+            packages: alpine-sdk doas cmake samurai qt6-qtbase-dev qt6-qtdeclarative-dev kirigami-dev
+          - variant: gtk
+            apkbuild: packaging/gtk
+            packages: alpine-sdk doas cargo gtk4.0-dev libadwaita-dev blueprint-compiler glib-dev
     steps:
       - uses: actions/checkout@v4
 
@@ -117,26 +147,18 @@ jobs:
           else
             v="${GITHUB_REF_NAME#v}"
           fi
-          sed -i "s/^pkgver=.*/pkgver=$v/" packaging/APKBUILD
+          sed -i "s/^pkgver=.*/pkgver=$v/" "${{ matrix.apkbuild }}/APKBUILD"
 
       # Chroots into an aarch64 Alpine root under QEMU user-mode emulation and
-      # pre-installs the makedepends from packaging/APKBUILD. kirigami/kirigami-addons/
-      # qqc2-desktop-style only exist in edge/community (KDE Frameworks 6), so this
-      # can't use a stable Alpine branch.
+      # pre-installs this variant's makedepends. branch: edge is kept for the freshest
+      # KDE Frameworks 6 / GTK4 toolchain.
       - uses: jirutka/setup-alpine@v1
         with:
           arch: aarch64
           branch: edge
           extra-repositories: |
             https://dl-cdn.alpinelinux.org/alpine/edge/community
-          packages: >
-            alpine-sdk
-            doas
-            cmake
-            samurai
-            qt6-qtbase-dev
-            qt6-qtdeclarative-dev
-            kirigami-dev
+          packages: ${{ matrix.packages }}
 
       - name: Set up the package signing key
         # With a persistent key configured (ABUILD_PRIVKEY secret + a committed public
@@ -195,10 +217,10 @@ jobs:
         shell: alpine.sh {0}
 
       - name: Build the .apk
-        # source= in packaging/APKBUILD points at the release tarball published by
-        # the `release` job above, so this fetches over the network rather than
-        # packaging the checkout directly — that's what makes this a real test of
-        # what a pmOS packager building from the tagged release would get.
+        # source= in the APKBUILD points at the release tarball published by the
+        # `release` job above, so this fetches over the network rather than packaging
+        # the checkout directly — that's what makes this a real test of what a pmOS
+        # packager building from the tagged release would get.
         #
         # abuild installs the makedepends via abuild-apk, which only lets members of
         # the `abuild` group escalate (setup-alpine's user isn't one). Add it, then
@@ -211,7 +233,7 @@ jobs:
         run: |
           doas adduser "$(id -un)" abuild
           mkdir -p "$GITHUB_WORKSPACE/packages"
-          pkgdir="$(pwd)/packaging"
+          pkgdir="$(pwd)/${{ matrix.apkbuild }}"
           doas su "$(id -un)" -c "cd '$pkgdir' && export REPODEST='$GITHUB_WORKSPACE/packages' && abuild checksum && abuild -r"
         shell: alpine.sh {0}
 
@@ -223,7 +245,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: stoandl-gui-aarch64-apk
+          name: stoandl-gui-${{ matrix.variant }}-aarch64-apk
           path: dist/*.apk
           if-no-files-found: error
 
@@ -232,9 +254,14 @@ jobs:
         run: |
           gh release upload "$GITHUB_REF_NAME" dist/*.apk --clobber
           # Publish the public signing key so users can trust it once, then apk add
-          # without --allow-untrusted.
-          for pub in packaging/keys/*.rsa.pub; do
-            [ -f "$pub" ] && gh release upload "$GITHUB_REF_NAME" "$pub" --clobber
-          done
+          # without --allow-untrusted. The .rsa.pub is identical for both variants, so
+          # upload it from ONE leg only — the two matrix legs run concurrently and
+          # `gh release upload --clobber` is TOCTOU (fetch→delete→POST with no upsert),
+          # so both racing the same asset would 422 the loser and redden its job.
+          if [ "${{ matrix.variant }}" = kirigami ]; then
+            for pub in packaging/keys/*.rsa.pub; do
+              [ -f "$pub" ] && gh release upload "$GITHUB_REF_NAME" "$pub" --clobber
+            done
+          fi
         env:
           GH_TOKEN: ${{ github.token }}

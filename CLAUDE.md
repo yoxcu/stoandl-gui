@@ -1,5 +1,22 @@
 # stoandl-gui
 
+This repo ships **two front-ends** of the same app, built + packaged independently so
+they install side by side (see `README.md` for the layout table):
+
+- **Kirigami** (Qt6/QML) — in `kirigami/`; app id `de.yoxcu.stoandl.gui`, binary
+  `stoandl-gui`. **This file documents the Kirigami front-end** (paths below are under
+  `kirigami/`).
+- **GTK** (GTK4/libadwaita, Rust) — in `gtk/`; app id `de.yoxcu.stoandl.gui.gtk`, binary
+  `stoandl-gui-gtk`. Its own guidance is `gtk/README.md` +
+  `docs/handoff/gtk-rewrite/ARCHITECTURE.md`.
+
+Shared across both: `data/` (per-variant `.desktop`/metainfo/flatpak manifest + the
+hicolor icon tree), `packaging/{kirigami,gtk}/APKBUILD`, `tools/mock_stoandl.py`, and
+the `.github/` matrix CI. Both speak the identical `de.yoxcu.stoandl.Control` contract,
+so one mock serves both. When you touch the app **identity** (app id, binary name,
+desktop/metainfo/icon file names, flatpak/apk package names) keep the Kirigami set and
+the `.gtk` set disjoint — that disjointness is what lets both install at once.
+
 Kirigami (Qt6/QML) front-end for the stoandl Pebble daemon. Convergent: Plasma Mobile + desktop.
 
 ## Architecture

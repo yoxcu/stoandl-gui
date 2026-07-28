@@ -23,17 +23,18 @@ qt_add_executable(stoandl-gui
 # app runs uninstalled from build/. At runtime an installed hicolor theme icon is
 # preferred (via QIcon::fromTheme) and this resource is only the fallback — see
 # src/main.cpp. BASE strips the on-disk prefix so the aliases are :/icons/<size>/apps/…
+# data/ is a SHARED tree at the repo root (one level up from this kirigami/ subdir).
 qt_add_resources(stoandl-gui "appicon"
     PREFIX "/icons"
-    BASE "${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/../data/icons/hicolor"
     FILES
-        data/icons/hicolor/16x16/apps/de.yoxcu.stoandl.gui.png
-        data/icons/hicolor/24x24/apps/de.yoxcu.stoandl.gui.png
-        data/icons/hicolor/32x32/apps/de.yoxcu.stoandl.gui.png
-        data/icons/hicolor/48x48/apps/de.yoxcu.stoandl.gui.png
-        data/icons/hicolor/64x64/apps/de.yoxcu.stoandl.gui.png
-        data/icons/hicolor/128x128/apps/de.yoxcu.stoandl.gui.png
-        data/icons/hicolor/256x256/apps/de.yoxcu.stoandl.gui.png
+        ../data/icons/hicolor/16x16/apps/de.yoxcu.stoandl.gui.png
+        ../data/icons/hicolor/24x24/apps/de.yoxcu.stoandl.gui.png
+        ../data/icons/hicolor/32x32/apps/de.yoxcu.stoandl.gui.png
+        ../data/icons/hicolor/48x48/apps/de.yoxcu.stoandl.gui.png
+        ../data/icons/hicolor/64x64/apps/de.yoxcu.stoandl.gui.png
+        ../data/icons/hicolor/128x128/apps/de.yoxcu.stoandl.gui.png
+        ../data/icons/hicolor/256x256/apps/de.yoxcu.stoandl.gui.png
 )
 
 # Our own named theme icons (the monochrome heart). Installed into the hicolor tree
@@ -42,9 +43,9 @@ qt_add_resources(stoandl-gui "appicon"
 # main.cpp adds ":/fallback-icons" to QIcon::fallbackSearchPaths.
 qt_add_resources(stoandl-gui "fallback_icons"
     PREFIX "/fallback-icons"
-    BASE "${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/scalable/actions"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/../data/icons/hicolor/scalable/actions"
     FILES
-        data/icons/hicolor/scalable/actions/stoandl-heart-symbolic.svg
+        ../data/icons/hicolor/scalable/actions/stoandl-heart-symbolic.svg
 )
 
 qt_add_qml_module(stoandl-gui
@@ -94,13 +95,20 @@ install(TARGETS stoandl-gui
 # Desktop integration: launcher entry + AppStream metainfo + hicolor icon theme tree
 # (see data/README.md). On Wayland the window icon comes from the .desktop match, so
 # these MUST be installed for the icon to appear — running from build/ shows none.
-install(FILES data/de.yoxcu.stoandl.gui.desktop
+install(FILES ../data/de.yoxcu.stoandl.gui.desktop
     DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
 )
-install(FILES data/de.yoxcu.stoandl.gui.metainfo.xml
+install(FILES ../data/de.yoxcu.stoandl.gui.metainfo.xml
     DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo
 )
-install(DIRECTORY data/icons/hicolor
+# Ship only THIS variant's icons. The GTK variant's app-icon files
+# (de.yoxcu.stoandl.gui.gtk.*) live in the same shared hicolor tree, and since our
+# app-id is a string-prefix of the GTK one, flatpak-builder's `${app-id}*` icon
+# export would otherwise pull them into the Kirigami bundle — exclude them here.
+install(DIRECTORY ../data/icons/hicolor
     DESTINATION ${CMAKE_INSTALL_DATADIR}/icons
-    FILES_MATCHING PATTERN "*.png" PATTERN "*.svg"
+    FILES_MATCHING
+        PATTERN "*.png"
+        PATTERN "*.svg"
+        REGEX "\\.gtk[.-]" EXCLUDE
 )

@@ -1,27 +1,33 @@
-# Desktop integration assets
+# Desktop integration assets (shared by both front-ends)
 
-Launcher entry and application icons for the stoandl GUI. These are installed by
-CMake (`cmake --build build --target install`) — no manual copying needed:
+Launcher entries, AppStream metainfo and application icons. This tree is **shared**:
+each of the two front-ends has its own `.desktop` / metainfo and its own app-icon
+files, distinguished by app id, all living here:
 
-| File                                         | Installed to                                          |
-| -------------------------------------------- | ----------------------------------------------------- |
-| `de.yoxcu.stoandl.gui.desktop`               | `<datadir>/applications/`                             |
-| `de.yoxcu.stoandl.gui.metainfo.xml`          | `<datadir>/metainfo/`                                 |
-| `icons/hicolor/**`                           | `<datadir>/icons/hicolor/**`                          |
+| Variant  | Desktop / metainfo                          | App-icon files                     | Installed by |
+| -------- | ------------------------------------------- | ---------------------------------- | ------------ |
+| Kirigami | `de.yoxcu.stoandl.gui.{desktop,metainfo.xml}`     | `icons/hicolor/**/de.yoxcu.stoandl.gui.*`     | CMake (`kirigami/CMakeLists.txt`) |
+| GTK      | `de.yoxcu.stoandl.gui.gtk.{desktop,metainfo.xml}` | `icons/hicolor/**/de.yoxcu.stoandl.gui.gtk.*` | cargo/flatpak/apk (`packaging/gtk/`, GTK flatpak manifest) |
+
+They install to `<datadir>/applications`, `<datadir>/metainfo` and
+`<datadir>/icons/hicolor/**`. Each variant ships **only its own** app-icon set — the
+two are kept disjoint so both packages can be installed at once (native apk forbids two
+packages owning the same path; and it stops flatpak's `${app-id}*` icon export from
+cross-picking, since `de.yoxcu.stoandl.gui` is a prefix of `de.yoxcu.stoandl.gui.gtk`).
+The heart action icon (`icons/hicolor/scalable/actions/stoandl-heart-symbolic.svg`) is
+shipped by Kirigami only; the GTK build carries it inside its GResource bundle.
 
 > **Wayland note:** the window icon comes from the compositor matching the window's
-> `app_id` (`de.yoxcu.stoandl.gui`) to the **installed** `.desktop` file and reading its
-> `Icon=`. Running the binary straight from `build/` shows no icon on Wayland — you must
-> install (`cmake --install build --prefix ~/.local`). The embedded Qt-resource icon only
-> covers X11 / the uninstalled case.
+> `app_id` to the **installed** `.desktop` file and reading its `Icon=`. Running a
+> binary straight from `build/` (Kirigami) / `target/` (GTK) shows no icon on Wayland —
+> you must install it. Kirigami additionally embeds the icon as a Qt resource and GTK
+> bundles it in its GResource, covering X11 / the uninstalled case.
 
-The application ID is **`de.yoxcu.stoandl.gui`** — the reverse-DNS of the app's
-`setOrganizationDomain` (`yoxcu.de`) and a sibling of the daemon's bus name
-`de.yoxcu.stoandl`. The desktop-file basename, the Wayland `app_id`
-(`setDesktopFileName` in `src/main.cpp`), and the `Icon=` key all share this name so
-the launcher/taskbar resolves the icon on both Wayland (via the `.desktop` match) and
-X11 (via `QApplication::setWindowIcon`). A subset of the PNG sizes is also embedded as
-a Qt resource so the window icon shows even when running uninstalled from `build/`.
+Each application ID is the reverse-DNS of the app's domain (`yoxcu.de`) and a sibling
+of the daemon's bus name `de.yoxcu.stoandl`: **`de.yoxcu.stoandl.gui`** (Kirigami,
+`setDesktopFileName` in `kirigami/src/main.cpp`) and **`de.yoxcu.stoandl.gui.gtk`** (GTK,
+`APP_ID` in `gtk/src/config.rs`). The desktop-file basename, the Wayland `app_id` and
+the `Icon=` key all share the variant's id so the launcher/taskbar resolves the icon.
 
 ## Icon design
 

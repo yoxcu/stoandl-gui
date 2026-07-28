@@ -1,0 +1,66 @@
+# Contributor: yoxcu <mick@yoxcu.de>
+# Maintainer: yoxcu <mick@yoxcu.de>
+#
+# TEMPLATE — starting point for a postmarketOS/Alpine package of the GTK build of
+# the stoandl GUI. The Kirigami build is a separate package (../kirigami/APKBUILD,
+# stoandl-gui) and the two install side by side.
+# The release CI rewrites pkgver automatically, so `pkgver=0.1.0` below is just a
+# placeholder — a release build is always the tag's version, not this.
+# Building by hand: bump pkgver to a released tag, then run `abuild checksum` to
+# fill sha512sums (it downloads the release source tarball produced by CI). Verify
+# the depends/makedepends names against your Alpine branch (`apk search`) — GTK4 and
+# libadwaita package names drift between releases. The build is pure Rust/Cargo
+# against GTK4/libadwaita, so it is musl-clean.
+pkgname=stoandl-gui-gtk
+pkgver=0.1.0
+pkgrel=0
+pkgdesc="GTK4/libadwaita front-end for the stoandl Pebble companion daemon"
+url="https://github.com/yoxcu/stoandl-gui"
+arch="all"
+license="GPL-3.0-or-later"
+depends="
+	gtk4.0
+	libadwaita
+	hicolor-icon-theme
+	adwaita-icon-theme
+	"
+makedepends="
+	cargo
+	gtk4.0-dev
+	libadwaita-dev
+	blueprint-compiler
+	glib-dev
+	"
+# Both variants build from the one whole-repo release tarball (CI's git archive,
+# prefix stoandl-gui-$pkgver/), so the source filename and builddir are pinned to
+# that prefix — independent of $pkgname.
+source="stoandl-gui-$pkgver.tar.gz::https://github.com/yoxcu/stoandl-gui/releases/download/v$pkgver/stoandl-gui-$pkgver.tar.gz"
+builddir="$srcdir/stoandl-gui-$pkgver"
+
+build() {
+	cd "$builddir"/gtk
+	# --locked (not --frozen): honour the committed Cargo.lock but still allow
+	# cargo to fetch crate sources from the network (no vendored cargo-sources).
+	# The [[bin]] name is stoandl-gui-gtk, so that is the produced binary.
+	cargo build --release --locked
+}
+
+package() {
+	cd "$builddir"
+	install -Dm755 gtk/target/release/stoandl-gui-gtk \
+		"$pkgdir"/usr/bin/stoandl-gui-gtk
+	install -Dm644 data/de.yoxcu.stoandl.gui.gtk.desktop \
+		"$pkgdir"/usr/share/applications/de.yoxcu.stoandl.gui.gtk.desktop
+	install -Dm644 data/de.yoxcu.stoandl.gui.gtk.metainfo.xml \
+		"$pkgdir"/usr/share/metainfo/de.yoxcu.stoandl.gui.gtk.metainfo.xml
+	# Install ONLY this variant's app icons (de.yoxcu.stoandl.gui.gtk*). The GTK build
+	# carries the heart action icon inside its GResource bundle, so no theme copy is
+	# needed — and keeping this set disjoint from the Kirigami package's icons is what
+	# lets both packages be installed at once (apk forbids two packages owning a path).
+	local f
+	for f in $(find data/icons/hicolor -type f -name 'de.yoxcu.stoandl.gui.gtk*'); do
+		install -Dm644 "$f" "$pkgdir"/usr/share/"${f#data/}"
+	done
+}
+
+sha512sums=""  # run `abuild checksum` to populate

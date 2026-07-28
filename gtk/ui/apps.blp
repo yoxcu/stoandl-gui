@@ -1,0 +1,218 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The Apps tab: three segments (Faces / Apps / Extensions) selected by a pinned
+// linked toggle bar. Each segment has an empty state and a list; rows are built
+// in Rust (apps.rs). The install action is segment-aware (.pbw vs extension).
+template $StoandlAppsPage: Adw.BreakpointBin {
+  width-request: 360;
+  height-request: 294;
+
+  Adw.Breakpoint {
+    condition ("max-width: 550sp")
+
+    setters {
+      title_stack.visible-child-name: "title";
+      view_switcher.visible: false;
+      switcher_bar.reveal: true;
+    }
+  }
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      title-widget: Gtk.Stack title_stack {
+        Gtk.StackPage {
+          name: "switcher";
+
+          child: Adw.ViewSwitcher view_switcher {
+            policy: wide;
+          };
+        }
+
+        Gtk.StackPage {
+          name: "title";
+
+          child: Adw.WindowTitle {
+            title: _("Apps & Faces");
+          };
+        }
+      };
+
+      [start]
+      Gtk.Button install_button {
+        icon-name: "list-add-symbolic";
+        tooltip-text: _("Install .pbw");
+      }
+
+      [end]
+      Gtk.Button refresh_button {
+        icon-name: "view-refresh-symbolic";
+        tooltip-text: _("Refresh");
+      }
+
+      [end]
+      Gtk.Button restore_button {
+        icon-name: "edit-reset-symbolic";
+        tooltip-text: _("Restore default order");
+      }
+    }
+
+    // Pinned segment switcher.
+    [top]
+    Gtk.Box {
+      homogeneous: true;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 6;
+      margin-bottom: 6;
+
+      styles [
+        "linked",
+      ]
+
+      // Labels are ellipsizing Gtk.Labels (not the button's own label) so the
+      // homogeneous bar can shrink to phone widths instead of forcing a wide
+      // window minimum; counts are set on these in Rust.
+      Gtk.ToggleButton faces_btn {
+        active: true;
+
+        child: Gtk.Label faces_label {
+          label: _("Faces");
+          ellipsize: end;
+        };
+      }
+
+      Gtk.ToggleButton apps_btn {
+        group: faces_btn;
+
+        child: Gtk.Label apps_label {
+          label: _("Apps");
+          ellipsize: end;
+        };
+      }
+
+      Gtk.ToggleButton ext_btn {
+        group: faces_btn;
+
+        child: Gtk.Label ext_label {
+          label: _("Extensions");
+          ellipsize: end;
+        };
+      }
+    }
+
+    content: Gtk.Stack segment_stack {
+      transition-type: crossfade;
+
+      Gtk.StackPage {
+        name: "faces";
+
+        child: Gtk.Stack faces_stack {
+          Gtk.StackPage {
+            name: "empty";
+
+            child: Adw.StatusPage faces_status {
+              icon-name: "preferences-desktop-theme-symbolic";
+              title: _("No watchfaces");
+              description: _("Install a .pbw to get started.");
+            };
+          }
+
+          Gtk.StackPage {
+            name: "list";
+
+            child: Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+
+              child: Adw.Clamp {
+                maximum-size: 700;
+
+                child: Adw.PreferencesGroup faces_group {
+                  margin-top: 12;
+                  margin-bottom: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                };
+              };
+            };
+          }
+        };
+      }
+
+      Gtk.StackPage {
+        name: "apps";
+
+        child: Gtk.Stack apps_stack {
+          Gtk.StackPage {
+            name: "empty";
+
+            child: Adw.StatusPage apps_status {
+              icon-name: "application-x-executable-symbolic";
+              title: _("No apps");
+              description: _("Install a .pbw to get started.");
+            };
+          }
+
+          Gtk.StackPage {
+            name: "list";
+
+            child: Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+
+              child: Adw.Clamp {
+                maximum-size: 700;
+
+                child: Adw.PreferencesGroup apps_group {
+                  margin-top: 12;
+                  margin-bottom: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                };
+              };
+            };
+          }
+        };
+      }
+
+      Gtk.StackPage {
+        name: "ext";
+
+        child: Gtk.Stack ext_stack {
+          Gtk.StackPage {
+            name: "empty";
+
+            child: Adw.StatusPage ext_status {
+              icon-name: "application-x-addon-symbolic";
+              title: _("No extensions installed");
+              description: _("Extensions are host-side companions that drive watch notifications with quick replies and actions.");
+            };
+          }
+
+          Gtk.StackPage {
+            name: "list";
+
+            child: Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+
+              child: Adw.Clamp {
+                maximum-size: 700;
+
+                child: Adw.PreferencesGroup ext_group {
+                  margin-top: 12;
+                  margin-bottom: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+                  description: _("Extensions are host-side companions that drive watch notifications with quick replies and actions.");
+                };
+              };
+            };
+          }
+        };
+      }
+    };
+
+    [bottom]
+    Adw.ViewSwitcherBar switcher_bar {}
+  };
+}

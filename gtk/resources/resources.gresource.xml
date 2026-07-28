@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- <file> paths resolve against the GResource source root assembled by build.rs
+     (OUT_DIR/res): compiled Blueprint UI under ui/, plus the stylesheet.
+     Resource path = prefix + "/" + <file> text, e.g.
+     /de/yoxcu/stoandl/gui/ui/window.ui -->
+<gresources>
+  <gresource prefix="/de/yoxcu/stoandl/gui">
+    <file>style.css</file>
+    <file>ui/window.ui</file>
+    <file>ui/watch.ui</file>
+    <file>ui/battery.ui</file>
+    <file>ui/health.ui</file>
+    <file>ui/apps.ui</file>
+    <file>ui/notifications.ui</file>
+    <file>ui/settings.ui</file>
+    <!-- Custom named theme icon (monochrome heart). Laid out as an icon-theme dir so
+         GtkApplication's auto /de/yoxcu/stoandl/gui/icons path resolves it by name. -->
+    <file>icons/scalable/actions/stoandl-heart-symbolic.svg</file>
+  </gresource>
+</gresources>

@@ -1,0 +1,227 @@
+using Gtk 4.0;
+using Adw 1;
+
+// The Watch tab. An Adw.NavigationView so the watch-details / debug / language
+// views push as real pages (convergent, real back button). The root page is the
+// watch overview: header actions (pair / ring / sync), a Bluetooth-off banner,
+// and a content stack that swaps the no-watch empty state for the live content
+// (firmware, the active-watch hero, and the known-watches list).
+template $StoandlWatchPage: Adw.BreakpointBin {
+  width-request: 360;
+  height-request: 294;
+
+  Adw.Breakpoint {
+    condition ("max-width: 550sp")
+
+    setters {
+      title_stack.visible-child-name: "title";
+      view_switcher.visible: false;
+      switcher_bar.reveal: true;
+    }
+  }
+
+  child: Adw.NavigationView nav_view {
+    Adw.NavigationPage {
+      title: _("Watch");
+      tag: "watch";
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          // The root page owns the single header bar for this surface: window
+          // controls + the view switcher + this tab's actions.
+          title-widget: Gtk.Stack title_stack {
+            Gtk.StackPage {
+              name: "switcher";
+
+              child: Adw.ViewSwitcher view_switcher {
+                policy: wide;
+              };
+            }
+
+            Gtk.StackPage {
+              name: "title";
+
+              child: Adw.WindowTitle {
+                title: _("Watch");
+              };
+            }
+          };
+
+          [start]
+          Gtk.Button pair_button {
+            icon-name: "list-add-symbolic";
+            tooltip-text: _("Pair new watch");
+          }
+
+          [end]
+          Gtk.Button sync_button {
+            icon-name: "view-refresh-symbolic";
+            tooltip-text: _("Sync now");
+          }
+
+          [end]
+          Gtk.Button ring_button {
+            icon-name: "find-location-symbolic";
+            tooltip-text: _("Ring watch");
+          }
+        }
+
+        // Bluetooth-off (daemon up, adapter off/rfkill/airplane). Informational;
+        // the daemon reconnects on its own when BT returns.
+        [top]
+        Adw.Banner bt_banner {
+          title: _("Bluetooth is off — turn it on to connect your Pebble. The daemon reconnects automatically.");
+          revealed: false;
+        }
+
+        content: Gtk.Stack content_stack {
+          transition-type: crossfade;
+
+          Gtk.StackPage {
+            name: "empty";
+
+            child: Adw.StatusPage empty_status {
+              icon-name: "preferences-system-time-symbolic";
+              title: _("No watch connected");
+              description: _("Pair a Pebble to get started. The daemon is running and ready.");
+
+              child: Gtk.Button empty_pair_button {
+                label: _("Pair new watch");
+                halign: center;
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              };
+            };
+          }
+
+          Gtk.StackPage {
+            name: "content";
+
+            child: Gtk.ScrolledWindow {
+              hscrollbar-policy: never;
+
+              child: Adw.Clamp {
+                maximum-size: 700;
+
+                child: Gtk.Box {
+                  orientation: vertical;
+                  spacing: 12;
+                  margin-top: 12;
+                  margin-bottom: 12;
+                  margin-start: 12;
+                  margin-end: 12;
+
+                  // Firmware flashing-in-progress card.
+                  Gtk.Box fw_progress {
+                    visible: false;
+                    orientation: vertical;
+                    spacing: 6;
+
+                    styles [
+                      "card",
+                    ]
+
+                    Gtk.Label fw_phase_label {
+                      xalign: 0;
+                      margin-top: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+
+                      styles [
+                        "heading",
+                      ]
+                    }
+
+                    Gtk.ProgressBar fw_progressbar {
+                      margin-bottom: 12;
+                      margin-start: 12;
+                      margin-end: 12;
+                    }
+                  }
+
+                  // Firmware update available (both actions kept together).
+                  Adw.PreferencesGroup fw_update_group {
+                    visible: false;
+                    title: _("Firmware update");
+
+                    Adw.ActionRow fw_update_row {
+                      title: _("Update available");
+
+                      [suffix]
+                      Gtk.Box {
+                        spacing: 6;
+                        valign: center;
+
+                        Gtk.Button whatsnew_button {
+                          label: _("What’s new");
+                          valign: center;
+
+                          styles [
+                            "flat",
+                          ]
+                        }
+
+                        Gtk.Button update_button {
+                          label: _("Update now");
+                          valign: center;
+
+                          styles [
+                            "suggested-action",
+                          ]
+                        }
+                      }
+                    }
+                  }
+
+                  // Active-watch hero (populated in Rust; tap → details).
+                  Adw.PreferencesGroup hero_group {
+                    visible: false;
+                    title: _("Active watch");
+                  }
+
+                  // Battery insights entry — pushes the rich chart page.
+                  Adw.PreferencesGroup battery_group {
+                    visible: false;
+
+                    Adw.ActionRow battery_row {
+                      title: _("Battery insights");
+                      subtitle: _("Charge trend, voltage, time remaining");
+                      activatable: true;
+
+                      [prefix]
+                      Gtk.Image {
+                        icon-name: "battery-symbolic";
+                      }
+
+                      [suffix]
+                      Gtk.Image {
+                        icon-name: "go-next-symbolic";
+
+                        styles [
+                          "dim-label",
+                        ]
+                      }
+                    }
+                  }
+
+                  // Known watches (populated in Rust; inline connect/forget).
+                  Adw.PreferencesGroup known_group {
+                    visible: false;
+                    title: _("Known watches");
+                  }
+                };
+              };
+            };
+          }
+        };
+
+        [bottom]
+        Adw.ViewSwitcherBar switcher_bar {}
+      };
+    }
+  };
+}

@@ -1,7 +1,9 @@
 # Contributor: yoxcu <mick@yoxcu.de>
 # Maintainer: yoxcu <mick@yoxcu.de>
 #
-# TEMPLATE — starting point for a postmarketOS/Alpine package of the stoandl GUI.
+# TEMPLATE — starting point for a postmarketOS/Alpine package of the KIRIGAMI build
+# of the stoandl GUI. The GTK build is a separate package (../gtk/APKBUILD,
+# stoandl-gui-gtk) and the two install side by side.
 # The release CI rewrites pkgver automatically, so `pkgver=0.1.0` below is just a
 # placeholder — a release build is always the tag's version, not this.
 # Building by hand: bump pkgver to a released tag, then run `abuild checksum` to
@@ -31,11 +33,16 @@ makedepends="
 	qt6-qtdeclarative-dev
 	kirigami-dev
 	"
-source="$pkgname-$pkgver.tar.gz::https://github.com/yoxcu/stoandl-gui/releases/download/v$pkgver/stoandl-gui-$pkgver.tar.gz"
-builddir="$srcdir/$pkgname-$pkgver"
+# Both variants build from the one whole-repo release tarball (CI's git archive,
+# prefix stoandl-gui-$pkgver/), so the source filename and builddir are pinned to
+# that prefix — independent of $pkgname.
+source="stoandl-gui-$pkgver.tar.gz::https://github.com/yoxcu/stoandl-gui/releases/download/v$pkgver/stoandl-gui-$pkgver.tar.gz"
+builddir="$srcdir/stoandl-gui-$pkgver"
 
 build() {
-	cmake -B build -G Ninja \
+	# The CMake project lives in kirigami/ (it installs the desktop file, metainfo
+	# and this variant's icons from ../data).
+	cmake -S kirigami -B build -G Ninja \
 		-DCMAKE_BUILD_TYPE=MinSizeRel \
 		-DCMAKE_INSTALL_PREFIX=/usr \
 		-DCMAKE_INSTALL_LIBEXECDIR=lib

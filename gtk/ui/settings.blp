@@ -1,0 +1,157 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Settings tab: a landing list of categories that push focused sub-pages (KDE/
+// GNOME HIG for a large settings surface). The sub-pages are built in Rust and
+// pushed onto this Adw.NavigationView.
+template $StoandlSettingsPage: Adw.BreakpointBin {
+  width-request: 360;
+  height-request: 294;
+
+  Adw.Breakpoint {
+    condition ("max-width: 550sp")
+
+    setters {
+      title_stack.visible-child-name: "title";
+      view_switcher.visible: false;
+      switcher_bar.reveal: true;
+    }
+  }
+
+  child: Adw.NavigationView nav_view {
+    Adw.NavigationPage {
+      title: _("Settings");
+      tag: "settings";
+
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar {
+          title-widget: Gtk.Stack title_stack {
+            Gtk.StackPage {
+              name: "switcher";
+
+              child: Adw.ViewSwitcher view_switcher {
+                policy: wide;
+              };
+            }
+
+            Gtk.StackPage {
+              name: "title";
+
+              child: Adw.WindowTitle {
+                title: _("Settings");
+              };
+            }
+          };
+        }
+
+        content: Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.PreferencesPage {
+            Adw.PreferencesGroup {
+              Adw.ActionRow sync_row {
+                title: _("Sync");
+                subtitle: _("Weather, calendar, music, health, Do Not Disturb");
+                activatable: true;
+
+                [prefix]
+                Gtk.Image {
+                  icon-name: "emblem-synchronizing-symbolic";
+                }
+
+                [suffix]
+                Gtk.Image {
+                  icon-name: "go-next-symbolic";
+                }
+              }
+
+              Adw.ActionRow calendars_row {
+                title: _("Calendars");
+                subtitle: _("CalDAV accounts, iCal feeds and local calendars");
+                activatable: true;
+
+                [prefix]
+                Gtk.Image {
+                  icon-name: "x-office-calendar-symbolic";
+                }
+
+                [suffix]
+                Gtk.Image {
+                  icon-name: "go-next-symbolic";
+                }
+              }
+
+              Adw.ActionRow watch_row {
+                title: _("Watch settings");
+                subtitle: _("Quick launch, backlight, notifications, vibration…");
+                activatable: true;
+
+                [prefix]
+                Gtk.Image {
+                  icon-name: "preferences-system-time-symbolic";
+                }
+
+                [suffix]
+                Gtk.Image {
+                  icon-name: "go-next-symbolic";
+                }
+              }
+
+              Adw.ActionRow health_profile_row {
+                title: _("Health profile");
+                subtitle: _("Height, weight, age, units and heart-rate tracking");
+                activatable: true;
+
+                [prefix]
+                Gtk.Image {
+                  icon-name: "stoandl-heart-symbolic";
+                }
+
+                [suffix]
+                Gtk.Image {
+                  icon-name: "go-next-symbolic";
+                }
+              }
+
+              Adw.ActionRow general_row {
+                title: _("Daemon configuration");
+                subtitle: _("Units, sync providers and other stoandl options");
+                activatable: true;
+
+                [prefix]
+                Gtk.Image {
+                  icon-name: "emblem-system-symbolic";
+                }
+
+                [suffix]
+                Gtk.Image {
+                  icon-name: "go-next-symbolic";
+                }
+              }
+
+              Adw.ActionRow backup_row {
+                title: _("Backup &amp; diagnostics");
+                subtitle: _("Back up, restore, and collect a support bundle");
+                activatable: true;
+
+                [prefix]
+                Gtk.Image {
+                  icon-name: "document-save-symbolic";
+                }
+
+                [suffix]
+                Gtk.Image {
+                  icon-name: "go-next-symbolic";
+                }
+              }
+            }
+          };
+        };
+
+        [bottom]
+        Adw.ViewSwitcherBar switcher_bar {}
+      };
+    }
+  };
+}
