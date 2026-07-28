@@ -45,6 +45,48 @@ Kirigami.ScrollablePage {
     readonly property var unitOptions: ["metric", "imperial"]
     readonly property var genderOptions: ["female", "male", "other"]
 
+    // The daemon's D-Bus contract is ALWAYS metric — GetHealthProfile returns height_cm in cm and
+    // weight_kg in kg, and SetHealthProfile always parses those units, regardless of the "units" field
+    // (which is just the watch's own imperial/metric display preference). So when the profile is
+    // imperial we present ft/in + lb purely client-side: convert on display, convert back before write.
+    readonly property bool imperial: page.val("units") === "imperial"
+    readonly property real cmPerInch: 2.54
+    readonly property real lbPerKg: 2.2046226218
+
+    // height_cm (string) → whole feet / remaining whole inches, rounded to the nearest inch so ft·12+in
+    // always round-trips (e.g. 170 cm → 67 in → 5 ft 7 in, never a stray 6.93 in).
+    function heightTotalInches() {
+        var cm = parseFloat(page.val("height_cm"));
+        return isNaN(cm) ? NaN : Math.round(cm / page.cmPerInch);
+    }
+    function heightFeet() {
+        var ti = page.heightTotalInches();
+        return isNaN(ti) ? "" : String(Math.floor(ti / 12));
+    }
+    function heightInches() {
+        var ti = page.heightTotalInches();
+        return isNaN(ti) ? "" : String(ti % 12);
+    }
+    function applyHeightImperial(feetText, inchText) {
+        var ft = parseInt(feetText, 10);
+        var inch = parseFloat(inchText);
+        if (isNaN(ft)) ft = 0;
+        if (isNaN(inch)) inch = 0;
+        var cm = (ft * 12 + inch) * page.cmPerInch;
+        page.apply("height_cm", String(Math.round(cm * 10) / 10));
+    }
+
+    // weight_kg (string) ↔ lb, one decimal.
+    function weightLb() {
+        var kg = parseFloat(page.val("weight_kg"));
+        return isNaN(kg) ? "" : String(Math.round(kg * page.lbPerKg * 10) / 10);
+    }
+    function applyWeightImperial(lbText) {
+        var lb = parseFloat(lbText);
+        if (isNaN(lb)) return;
+        page.apply("weight_kg", String(Math.round((lb / page.lbPerKg) * 10) / 10));
+    }
+
     ColumnLayout {
         spacing: 0
 
@@ -62,20 +104,50 @@ Kirigami.ScrollablePage {
         FormCard.FormCard {
             visible: StoandlClient.daemonUp
 
+            // Height — metric: one cm field; imperial: feet + inches. Both representations stay present
+            // (visibility-toggled) so each keeps its own text binding: switching units re-reads the
+            // now-visible field from the reloaded (still-metric) profile instead of a broken binding.
             FormCard.FormTextFieldDelegate {
-                id: heightField
+                id: heightCmField
+                visible: !page.imperial
                 label: "Height (cm)"
                 text: page.val("height_cm")
                 inputMethodHints: Qt.ImhDigitsOnly
-                onEditingFinished: if (text !== page.val("height_cm")) page.apply("height_cm", text)
+                onEditingFinished: if (visible && text !== page.val("height_cm")) page.apply("height_cm", text)
+            }
+            FormCard.FormTextFieldDelegate {
+                id: heightFtField
+                visible: page.imperial
+                label: "Height (ft)"
+                text: page.heightFeet()
+                inputMethodHints: Qt.ImhDigitsOnly
+                onEditingFinished: if (visible && text !== page.heightFeet()) page.applyHeightImperial(text, heightInField.text)
+            }
+            FormCard.FormDelegateSeparator { visible: page.imperial }
+            FormCard.FormTextFieldDelegate {
+                id: heightInField
+                visible: page.imperial
+                label: "Height (in)"
+                text: page.heightInches()
+                inputMethodHints: Qt.ImhFormattedNumbersOnly
+                onEditingFinished: if (visible && text !== page.heightInches()) page.applyHeightImperial(heightFtField.text, text)
             }
             FormCard.FormDelegateSeparator {}
             FormCard.FormTextFieldDelegate {
-                id: weightField
+                id: weightKgField
+                visible: !page.imperial
                 label: "Weight (kg)"
                 text: page.val("weight_kg")
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
-                onEditingFinished: if (text !== page.val("weight_kg")) page.apply("weight_kg", text)
+                onEditingFinished: if (visible && text !== page.val("weight_kg")) page.apply("weight_kg", text)
+            }
+            FormCard.FormTextFieldDelegate {
+                id: weightLbField
+                visible: page.imperial
+                label: "Weight (lb)"
+                text: page.weightLb()
+                inputMethodHints: Qt.ImhFormattedNumbersOnly
+                onEditingFinished: if (visible && text !== page.weightLb()) page.applyWeightImperial(text)
             }
             FormCard.FormDelegateSeparator {}
             FormCard.FormTextFieldDelegate {

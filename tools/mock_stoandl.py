@@ -272,6 +272,16 @@ class MockStoandl(dbus.service.Object):
             "sleepTypicalMin": 426,     # 30-day typical sleep (constant)
             "lastSync": "2 min ago",
         }
+        # HOOK #8b: health *profile* (Get/SetHealthProfile). The daemon's D-Bus contract is ALWAYS
+        # metric — height_cm in cm, weight_kg in kg — regardless of the "units" field (which is only the
+        # watch's imperial/metric display preference). We store the same way; any imperial presentation
+        # is the client's job. Ordered so Get returns the daemon's key order.
+        self.health_profile = {
+            "tracking": "on", "activity_insights": "on", "sleep_insights": "on",
+            "hrm": "on", "hrm_interval": "10min", "units": "metric",
+            "height_cm": "170", "weight_kg": "70.0", "age": "30",
+            "gender": "other", "resting_hr": "60", "max_hr": "190",
+        }
         # Notifications (per-app store + master forwarding via sync["notifications"]).
         self.notif_apps = [
             {"name": "Signal",   "mute": "never",  "color": "default", "icon": "default", "vibe": "Double",   "last": 1718900000},
@@ -1139,6 +1149,35 @@ class MockStoandl(dbus.service.Object):
         # day
         d = today - datetime.timedelta(days=off)
         return [d], [d.strftime("%a %-d")]
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def GetHealthProfile(self):
+        return [rec(k, v) for k, v in self.health_profile.items()]
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def SetHealthProfile(self, key, value):
+        key = key.strip().lower()
+        if key in ("height", "height_cm"):
+            key = "height_cm"
+        elif key in ("weight", "weight_kg"):
+            key = "weight_kg"
+        if key not in self.health_profile:
+            return "error:Unknown health key '%s'" % key
+        v = value.strip()
+        # Mirror the daemon's normalisation for the numeric metric fields so imperial round-trips are
+        # observable: height_cm is stored as whole cm (daemon reports heightMm/10), weight_kg as 1dp kg.
+        if key == "height_cm":
+            try:
+                v = str(int(float(v)))
+            except ValueError:
+                return "error:Expected a number (cm)"
+        elif key == "weight_kg":
+            try:
+                v = "%.1f" % float(v)
+            except ValueError:
+                return "error:Expected a number (kg)"
+        self.health_profile[key] = v
+        return "ok:Set %s = %s" % (key, v)
 
     @dbus.service.method(IFACE, in_signature="si", out_signature="s")
     def GetHealthSummary(self, period_type, offset):
