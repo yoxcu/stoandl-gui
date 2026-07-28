@@ -7,9 +7,10 @@
 # runtime-version tracks the GNOME runtime (org.gnome.Platform 47 == GTK 4.16 /
 # libadwaita 1.6, which satisfies the crate's v4_12 / v1_6 feature minimums); bump
 # it in lockstep with the CI container image tag (gnome-4x). The Rust toolchain
-# comes from the org.freedesktop.Sdk.Extension.rust-stable SDK extension, and
-# blueprint-compiler + glib-compile-resources (both used by gtk/build.rs) ship
-# inside org.gnome.Sdk, so neither is bundled as a module.
+# comes from the org.freedesktop.Sdk.Extension.rust-stable SDK extension.
+# glib-compile-resources ships inside org.gnome.Sdk, but blueprint-compiler does NOT,
+# so it is built as its own module below (a build tool only — cleaned from the bundle)
+# ahead of stoandl-gui; gtk/build.rs invokes both.
 #
 # NETWORK BUILD (quick path): the stoandl-gui module builds with --share=network so
 # cargo fetches crates straight from crates.io. This is CI-friendly but NOT
@@ -42,6 +43,19 @@ build-options:
     CARGO_HOME: /run/build/stoandl-gui/cargo
 
 modules:
+  # blueprint-compiler is NOT in org.gnome.Sdk 47, so build it here (pure-Python, meson
+  # install only — no compile) BEFORE stoandl-gui. It installs to /app/bin so it is on
+  # PATH when gtk/build.rs runs `blueprint-compiler batch-compile`; cleanup:['*'] drops
+  # it from the final bundle since it is only a build-time tool.
+  - name: blueprint-compiler
+    buildsystem: meson
+    cleanup:
+      - '*'
+    sources:
+      - type: git
+        url: https://gitlab.gnome.org/jwestman/blueprint-compiler.git
+        tag: v0.14.0
+
   - name: stoandl-gui
     buildsystem: simple
     build-options:
