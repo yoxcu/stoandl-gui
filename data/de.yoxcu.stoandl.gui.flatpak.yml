@@ -4,9 +4,10 @@
 # runtime-version tracks the GNOME runtime (org.gnome.Platform 47 == GTK 4.16 /
 # libadwaita 1.6, which satisfies the crate's v4_12 / v1_6 feature minimums); bump
 # it in lockstep with the CI container image tag (gnome-4x). The Rust toolchain
-# comes from the org.freedesktop.Sdk.Extension.rust-stable SDK extension, and
-# blueprint-compiler + glib-compile-resources (both used by gtk/build.rs) ship
-# inside org.gnome.Sdk, so neither is bundled as a module.
+# comes from the org.freedesktop.Sdk.Extension.rust-stable SDK extension.
+# glib-compile-resources (used by gtk/build.rs) ships inside org.gnome.Sdk, but
+# blueprint-compiler does NOT, so it is built from source as a throwaway module
+# below (see that module's comment) — otherwise gtk/build.rs panics with ENOENT.
 #
 # NETWORK BUILD (quick path): the stoandl-gui module builds with --share=network so
 # cargo fetches crates straight from crates.io. This is CI-friendly but NOT
@@ -39,6 +40,22 @@ build-options:
     CARGO_HOME: /run/build/stoandl-gui/cargo
 
 modules:
+  # gtk/build.rs shells out to `blueprint-compiler batch-compile`, but the tool is
+  # NOT on the org.gnome.Sdk//47 sandbox PATH (only glib-compile-resources is), so
+  # the build panics at build.rs:42 with ENOENT. Build it from source as a build-only
+  # module — `cleanup: '*'` drops it from the shipped bundle. Source downloads happen
+  # outside the sandbox, so no --share=network is needed here. Pinned near the 0.19.0
+  # used in dev (.container/Dockerfile); the .blp files use only stock Gtk 4.0 / Adw 1
+  # syntax, which any recent release compiles.
+  - name: blueprint-compiler
+    buildsystem: meson
+    cleanup:
+      - '*'
+    sources:
+      - type: git
+        url: https://gitlab.gnome.org/jwestman/blueprint-compiler.git
+        tag: v0.20.4
+
   - name: stoandl-gui
     buildsystem: simple
     build-options:
