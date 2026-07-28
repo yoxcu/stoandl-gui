@@ -27,5 +27,6 @@ Requires the toolchain from `../.container/Dockerfile` (Rust, `libgtk-4-dev`,
 
 - `ui/*.blp` — Blueprint UI, compiled to `.ui` and bundled as a GResource.
 - `src/dbus/` — `StoandlClient` (the only D-Bus toucher) + wire parsing.
-- `src/pages/` — one module per screen (Watch/Health/Apps/Notifications/Settings…).
+- `src/pages/` — one module per screen (Watch/Health/Apps/Alerts/Settings…; the
+  Alerts module + stack page keep the internal id `notifications`).
 - `src/window.rs` / `application.rs` — the Adwaita shell.

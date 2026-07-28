@@ -109,6 +109,13 @@ tab-separated payloads. "CLI" is the `stoandl` subcommand that calls each method
 |---|---|---|---|
 | `ListWatches` | `() → as` | Known watches, one record each: `name\tstate\tbattery`. | `watch list` (also bare `watch`) |
 | `Battery` | `() → s` | Active watch's battery: `ok:<name>\t<level>` (0–100), `unknown:<name>`, or `notready:`. | `watch battery` |
+| `BatteryInsights` | `(s) → s` | Rich insights for the Battery sub-page. `ok:` + 12 tab fields: `name, level, charging(0\|1), dischargePerHour, hoursRemaining, chargeSessions7d, lastChargedEpoch, min24h, max24h, sampleCount, voltage, source`. `hoursRemaining`/`voltage` empty when unknown/GATT-source. `unknown:<name>` / `notready:`. Parsed by `battery_insights(watch)`. | `watch battery insights` |
+| `BatteryHistory` | `(s,x) → s` | Battery %-over-time series for `(watch, sinceEpoch)` — the chart feed. `ok:` + newline-joined `ts\tlevel\tsource\tvoltage` rows (`source` = `heartbeat`\|`gatt`). Parsed by `battery_history(watch, since)`. | `watch battery history` |
+| `BatteryActivity` | `(s,x) → s` | Per-interval drop + notification counts for `(watch, sinceEpoch)` — the drain bars + notification overlay. `ok:` + newline-joined `ts\tdrop\tnotif\tnotifDnd` rows (oldest first). Parsed by `battery_activity(watch, since)`. | *(GUI-only)* |
+| `BatteryPower` | `(s,x) → s` | Drain-attribution estimate for `(watch, sinceEpoch)` — the "what drew power" donut. `ok:` + newline-joined `category\testDrainPct\tsharePct` rows (largest share first; `estDrainPct` anchored to the measured SoC drop, `0` when the window never discharged). Parsed by `battery_power(watch, since)`. | *(GUI-only)* |
+| `GetHealthProfile` | `() → as` | The watch's own health-tracking config as `key\tvalue` records (height/weight/age/sex/units, insights, HRM + interval, resting/max HR). Write side is `SetHealthProfile`. | `health profile` |
+| `SetHealthProfile` | `(s,s) → s` | Set one health-profile `key` to `value`; `ok:` / `notfound:` (daemon may normalise, so re-read). | `health profile set <key> <value>` |
+| `SendTestNotification` | `(s,s) → s` | Push a test notification `(title, body)` through the normal mute/style/filter path. `ok:sent` / `notready:` / `error:`. | *(GUI-only)* |
 | `Connect` | `(s) → s` | Connect/switch to a known watch by name (exact-then-unique-substring); hands it the single connection slot. | `watch connect <name>` |
 | `Pair` | `() → s` | Open a ~2-min pairing window; returns `ok:` immediately, poll `PairStatus`. | `watch pair` |
 | `PairStatus` | `() → s` | Pairing outcome: `pending:<msg>` / `ok:` / `error:` / `timeout:`. | (polled by `watch pair` and `watch repair`) |
