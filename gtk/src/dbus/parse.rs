@@ -769,6 +769,147 @@ pub fn parse_calendar_sources(rows: &[String]) -> Vec<CalendarSource> {
         .collect()
 }
 
+// --- Battery-insights typed builders ---------------------------------------
+
+/// Split a newline-joined body of TAB records (BatteryHistory/Activity/Power).
+fn split_rows(tail: &str) -> Vec<Vec<String>> {
+    tail.split('\n')
+        .filter(|r| !r.is_empty())
+        .map(|r| r.split('\t').map(str::to_string).collect())
+        .collect()
+}
+
+/// `BatteryInsights(watch)` → `ok:` + 12 TAB fields.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BatteryInsights {
+    pub name: String,
+    pub level: f64,
+    pub charging: bool,
+    pub discharge_per_hour: f64,
+    pub hours_remaining: String, // "" when unknown/charging
+    pub charge_sessions: i32,
+    pub last_charged_epoch: i64,
+    pub min24h: f64,
+    pub max24h: f64,
+    pub sample_count: i32,
+    pub voltage: String, // "" for the gatt source
+    pub source: String,
+}
+
+pub fn parse_battery_insights(s: &Status) -> Option<BatteryInsights> {
+    if !s.ok() {
+        return None;
+    }
+    let d = |n: usize| s.field(n).parse::<f64>().unwrap_or(0.0);
+    Some(BatteryInsights {
+        name: s.field(0).to_string(),
+        level: d(1),
+        charging: s.field(2) == "1",
+        discharge_per_hour: d(3),
+        hours_remaining: s.field(4).to_string(),
+        charge_sessions: s.field(5).parse().unwrap_or(0),
+        last_charged_epoch: s.field(6).parse().unwrap_or(0),
+        min24h: d(7),
+        max24h: d(8),
+        sample_count: s.field(9).parse().unwrap_or(0),
+        voltage: s.field(10).to_string(),
+        source: s.field(11).to_string(),
+    })
+}
+
+/// A `BatteryHistory` sample: `ts \t level \t source \t voltage` (oldest first).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BatterySample {
+    pub ts: i64,
+    pub level: f64,
+    pub source: String,
+    pub voltage: String,
+}
+
+pub fn parse_battery_history(tail: &str) -> Vec<BatterySample> {
+    split_rows(tail)
+        .into_iter()
+        .map(|f| {
+            let g = |n: usize| f.get(n).map(String::as_str).unwrap_or("");
+            BatterySample {
+                ts: g(0).parse().unwrap_or(0),
+                level: g(1).parse().unwrap_or(0.0),
+                source: g(2).to_string(),
+                voltage: g(3).to_string(),
+            }
+        })
+        .collect()
+}
+
+/// A `BatteryActivity` interval: `ts \t drop \t notif \t notifDnd`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BatteryActivity {
+    pub ts: i64,
+    pub drop: f64,
+    pub notif: i32,
+    pub notif_dnd: i32,
+}
+
+pub fn parse_battery_activity(tail: &str) -> Vec<BatteryActivity> {
+    split_rows(tail)
+        .into_iter()
+        .map(|f| {
+            let g = |n: usize| f.get(n).map(String::as_str).unwrap_or("");
+            BatteryActivity {
+                ts: g(0).parse().unwrap_or(0),
+                drop: g(1).parse().unwrap_or(0.0),
+                notif: g(2).parse().unwrap_or(0),
+                notif_dnd: g(3).parse().unwrap_or(0),
+            }
+        })
+        .collect()
+}
+
+/// A `BatteryPower` slice: `category \t estDrainPct \t sharePct` (largest first).
+/// `est_drain_pct` is the anchored per-subsystem drain (percent of battery drained
+/// over the window; 0 when the window never discharged, so only `share` is meaningful);
+/// `share` is the slice's percent of the modeled drain (the pie wedge).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BatteryPowerSlice {
+    pub category: String,
+    pub est_drain_pct: f64,
+    pub share: f64,
+}
+
+pub fn parse_battery_power(tail: &str) -> Vec<BatteryPowerSlice> {
+    split_rows(tail)
+        .into_iter()
+        .map(|f| {
+            let g = |n: usize| f.get(n).map(String::as_str).unwrap_or("");
+            BatteryPowerSlice {
+                category: g(0).to_string(),
+                est_drain_pct: g(1).parse().unwrap_or(0.0),
+                share: g(2).parse().unwrap_or(0.0),
+            }
+        })
+        .collect()
+}
+
+/// `MusicStatus()` → `ok:<playing|paused>\t<player>\t<track>`. `ok` is false when
+/// the daemon reports no active player (`idle:`/`notready:`), in which case the Sync
+/// row falls back to its "Last sync · …" subtitle.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MusicStatus {
+    pub ok: bool,
+    pub playing: bool,
+    pub player: String,
+    pub track: String,
+}
+
+pub fn parse_music_status(s: &Status) -> MusicStatus {
+    MusicStatus {
+        ok: s.ok(),
+        playing: s.field(0) == "playing",
+        player: s.field(1).to_string(),
+        track: s.field(2).to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1032,5 +1173,36 @@ mod tests {
         let src = parse_calendar_sources(&["s1\tcaldav\thttps://x\tbob\tWork CalDAV".into()]);
         assert_eq!(src[0].source_type, "caldav");
         assert_eq!(src[0].username, "bob");
+    }
+
+    #[test]
+    fn battery_builders() {
+        let s = parse_status(
+            "ok:Time Steel\t72.5\t1\t4.20\t\t3\t1719800000\t41.0\t100.0\t168\t4.05\theartbeat",
+        );
+        let bi = parse_battery_insights(&s).unwrap();
+        assert!((bi.level - 72.5).abs() < 1e-9);
+        assert!(bi.charging);
+        assert_eq!(bi.hours_remaining, ""); // charging → empty
+        assert_eq!(bi.charge_sessions, 3);
+        assert_eq!(bi.sample_count, 168);
+        assert_eq!(bi.source, "heartbeat");
+        assert!(parse_battery_insights(&parse_status("notready:no watch")).is_none());
+
+        let hist = parse_battery_history("1719800000\t80.0\theartbeat\t4.10\n1719803600\t76.5\theartbeat\t4.05");
+        assert_eq!(hist.len(), 2);
+        assert_eq!(hist[0].ts, 1719800000);
+        assert!((hist[1].level - 76.5).abs() < 1e-9);
+        assert!(parse_battery_history("").is_empty());
+
+        let act = parse_battery_activity("1719803600\t3.5\t4\t0");
+        assert!((act[0].drop - 3.5).abs() < 1e-9);
+        assert_eq!(act[0].notif, 4);
+
+        let pw = parse_battery_power("System\t2.38\t34\nDisplay\t1.26\t18");
+        assert_eq!(pw[0].category, "System");
+        assert!((pw[0].share - 34.0).abs() < 1e-9);
+        assert!((pw[0].est_drain_pct - 2.38).abs() < 1e-9);
+        assert!((pw[1].est_drain_pct - 1.26).abs() < 1e-9);
     }
 }

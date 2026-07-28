@@ -63,6 +63,20 @@ fn fw_phase_label(phase: &str, percent: i32) -> String {
     }
 }
 
+fn lang_phase_label(phase: &str, percent: i32) -> String {
+    match phase {
+        "downloading" => "Downloading language pack…".into(),
+        "installing" | "inprogress" => {
+            if percent >= 0 {
+                format!("Installing… {percent}%")
+            } else {
+                "Installing…".into()
+            }
+        }
+        _ => "Installing…".into(),
+    }
+}
+
 mod imp {
     use super::*;
 
@@ -100,6 +114,10 @@ mod imp {
         #[template_child]
         pub hero_group: TemplateChild<adw::PreferencesGroup>,
         #[template_child]
+        pub battery_group: TemplateChild<adw::PreferencesGroup>,
+        #[template_child]
+        pub battery_row: TemplateChild<adw::ActionRow>,
+        #[template_child]
         pub known_group: TemplateChild<adw::PreferencesGroup>,
         #[template_child]
         pub view_switcher: TemplateChild<adw::ViewSwitcher>,
@@ -124,6 +142,12 @@ mod imp {
         // language-status success can reload it in place. Plus its dynamic rows.
         pub lang_group: RefCell<Option<adw::PreferencesGroup>>,
         pub lang_rows: RefCell<Vec<gtk::Widget>>,
+        // Live install progress on the language page: an indeterminate bar (pulses
+        // until a % arrives), shown only while an install is in flight.
+        pub lang_progress_group: RefCell<Option<adw::PreferencesGroup>>,
+        pub lang_progressbar: RefCell<Option<gtk::ProgressBar>>,
+        pub lang_busy: Cell<bool>,
+        pub lang_percent: Cell<i32>,
         // The details page's "Language" row (while a details page is on the stack),
         // so an install success updates its subtitle live too (not just the list).
         pub details_lang_row: RefCell<Option<adw::ActionRow>>,
@@ -217,6 +241,11 @@ impl StoandlWatchPage {
             self,
             move |_| page.client().find_watch()
         ));
+        self.imp().battery_row.connect_activated(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| page.open_battery()
+        ));
         self.imp().sync_button.connect_clicked(glib::clone!(
             #[weak(rename_to = page)]
             self,
@@ -306,7 +335,7 @@ impl StoandlWatchPage {
         client.connect_language_status(glib::clone!(
             #[weak(rename_to = page)]
             self,
-            move |_, kind, _pct, detail| page.handle_language_status(kind, detail)
+            move |_, kind, pct, detail| page.handle_language_status(kind, pct, detail)
         ));
 
         // daemon-up / bluetooth-on drive chrome + a firmware re-check on connect.
@@ -376,6 +405,9 @@ impl StoandlWatchPage {
 
         self.rebuild_hero(&watches);
         self.rebuild_known(&watches);
+        // Battery insights entry: only meaningful with a connected watch.
+        imp.battery_group
+            .set_visible(watches.iter().any(|w| w.connected));
         self.update_chrome(); // ring button depends on connected_watch
 
         dbg_smoke(&format!(
@@ -444,23 +476,29 @@ impl StoandlWatchPage {
         imp.known_group.set_visible(!watches.is_empty());
 
         for w in watches {
+            // "connecting" is the transient state between disconnected and connected —
+            // surface it (no Connect button, a "connecting" chip) rather than showing a
+            // connecting watch as plain disconnected.
+            let connecting = w.state == "connecting";
             let subtitle = if w.connected {
                 let mut s = transport_label(&w.transport);
                 if !w.battery.is_empty() {
                     s.push_str(&format!(" · {}%", w.battery));
                 }
                 s
+            } else if connecting {
+                "Connecting…".to_string()
             } else {
                 "disconnected".to_string()
             };
             let row = adw::ActionRow::builder()
                 .title(&esc(&w.name))
                 .subtitle(&esc(&subtitle))
-                .activatable(!w.connected)
+                .activatable(!w.connected && !connecting)
                 .build();
 
             let icon = gtk::Image::from_icon_name("preferences-system-time-symbolic");
-            if !w.connected {
+            if !w.connected && !connecting {
                 icon.add_css_class("dim-label");
             }
             row.add_prefix(&icon);
@@ -470,6 +508,14 @@ impl StoandlWatchPage {
                 pill.set_valign(gtk::Align::Center);
                 pill.add_css_class("status-chip");
                 pill.add_css_class("success");
+                row.add_suffix(&pill);
+            } else if connecting {
+                // Accent (neutral emphasis), not warning/amber — "connecting" is a
+                // benign, self-resolving transition, not a problem needing attention.
+                let pill = gtk::Label::new(Some("connecting"));
+                pill.set_valign(gtk::Align::Center);
+                pill.add_css_class("status-chip");
+                pill.add_css_class("accent");
                 row.add_suffix(&pill);
             } else {
                 let connect = gtk::Button::with_label("Connect");
@@ -495,7 +541,7 @@ impl StoandlWatchPage {
             ));
             row.add_suffix(&forget);
 
-            if !w.connected {
+            if !w.connected && !connecting {
                 let name = w.name.clone();
                 row.connect_activated(glib::clone!(
                     #[weak(rename_to = page)]
@@ -567,6 +613,13 @@ impl StoandlWatchPage {
             }
             "timeout" => {
                 self.toast("Flash timed out");
+                self.imp().fw_phase.replace(String::new());
+                self.imp().fw_percent.set(-1);
+            }
+            // Idle is terminal (defence-in-depth): a stray idle/notready frame after a
+            // flash must clear the banner, not re-show "Working…". The client normalises
+            // most of these away; this catches any that slip through.
+            "idle" | "notready" => {
                 self.imp().fw_phase.replace(String::new());
                 self.imp().fw_percent.set(-1);
             }
@@ -838,7 +891,29 @@ impl StoandlWatchPage {
         self.open_details();
         self.open_debug_page();
         self.open_language_page();
-        dbg_smoke("exercised details/debug/language pages");
+        self.open_battery();
+        if let Some(bp) = self
+            .imp()
+            .nav_view
+            .find_page("battery")
+            .and_downcast::<super::battery::StoandlBatteryPage>()
+        {
+            bp.smoke_exercise(); // also hit the multi-day draw path
+        }
+        dbg_smoke("exercised details/debug/language/battery pages");
+    }
+
+    // --- battery insights (pushed navigation page) ----------------------------
+
+    /// Push the rich battery-insights page (its own NavigationPage subclass). It
+    /// fetches its own data on `bind_client`. Guarded against a double push.
+    fn open_battery(&self) {
+        if self.imp().nav_view.find_page("battery").is_some() {
+            return;
+        }
+        let bp = super::battery::StoandlBatteryPage::new();
+        bp.bind_client(&self.client());
+        self.imp().nav_view.push(&bp);
     }
 
     // --- watch details (pushed navigation pages) ------------------------------
@@ -1118,6 +1193,11 @@ impl StoandlWatchPage {
             self,
             move || page.pick_firmware_file()
         )));
+        intro.add(&action_row("Write notification…", "mail-unread-symbolic", false, glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move || page.open_test_notification_dialog()
+        )));
         intro.add(&action_row("Factory reset", "dialog-warning-symbolic", true, glib::clone!(
             #[weak(rename_to = page)]
             self,
@@ -1293,6 +1373,70 @@ impl StoandlWatchPage {
         dialog.present(Some(self));
     }
 
+    /// Compose + send a test notification (Title + optional Body) through the
+    /// daemon's normal mute/style/filter path. Send is enabled only with a title.
+    fn open_test_notification_dialog(&self) {
+        let dialog = adw::AlertDialog::new(
+            Some("Write notification"),
+            Some("Send a test notification to the watch through the normal mute, style and filter path."),
+        );
+        let group = adw::PreferencesGroup::new();
+        let title_row = adw::EntryRow::builder().title("Title").build();
+        let body_row = adw::EntryRow::builder().title("Body (optional)").build();
+        group.add(&title_row);
+        group.add(&body_row);
+        dialog.set_extra_child(Some(&group));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("send", "Send");
+        dialog.set_response_appearance("send", adw::ResponseAppearance::Suggested);
+        dialog.set_response_enabled("send", false);
+        dialog.set_default_response(Some("send"));
+        dialog.set_close_response("cancel");
+
+        title_row.connect_changed(glib::clone!(
+            #[weak]
+            dialog,
+            move |e| dialog.set_response_enabled("send", !e.text().trim().is_empty())
+        ));
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                #[weak]
+                title_row,
+                #[weak]
+                body_row,
+                move |_, resp| {
+                    if resp != "send" {
+                        return;
+                    }
+                    let title = title_row.text().to_string();
+                    let body = body_row.text().to_string();
+                    let client = page.client();
+                    glib::spawn_future_local(glib::clone!(
+                        #[weak]
+                        page,
+                        #[strong]
+                        client,
+                        async move {
+                            let s = client.send_test_notification(&title, &body).await;
+                            let msg = if s.ok() {
+                                "Test notification sent".to_string()
+                            } else {
+                                let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
+                                format!("Notification: {m}")
+                            };
+                            page.toast(&msg);
+                        }
+                    ));
+                }
+            ),
+        );
+        dialog.present(Some(self));
+        title_row.grab_focus(); // a compose dialog focuses its first entry (HIG)
+    }
+
     fn pick_firmware_file(&self) {
         let filter = gtk::FileFilter::new();
         filter.set_name(Some("Pebble firmware (*.pbz)"));
@@ -1439,6 +1583,26 @@ impl StoandlWatchPage {
 
     fn open_language_page(&self) {
         let prefs = adw::PreferencesPage::new();
+
+        // Install-progress group (hidden until an install is in flight). The group
+        // title is a stable section header; the live phase/percent rides on the bar's
+        // own text (never the group title).
+        let progress_group = adw::PreferencesGroup::builder()
+            .title("Installing language pack")
+            .build();
+        let progressbar = gtk::ProgressBar::builder()
+            .margin_top(6)
+            .margin_bottom(6)
+            .show_text(true)
+            .build();
+        progress_group.add(&progressbar);
+        progress_group.set_visible(false);
+        prefs.add(&progress_group);
+        self.imp().lang_progress_group.replace(Some(progress_group));
+        self.imp().lang_progressbar.replace(Some(progressbar));
+        // Reflect any install that's already in flight when the page is (re)opened.
+        self.update_lang_progress("");
+
         let group = adw::PreferencesGroup::builder()
             .description("Load a language pack onto the watch. The current one is marked.")
             .build();
@@ -1467,6 +1631,8 @@ impl StoandlWatchPage {
             move |_| {
                 page.imp().lang_group.replace(None);
                 page.imp().lang_rows.borrow_mut().clear();
+                page.imp().lang_progress_group.replace(None);
+                page.imp().lang_progressbar.replace(None);
             }
         ));
         self.imp().nav_view.push(&dp);
@@ -1519,6 +1685,11 @@ impl StoandlWatchPage {
                             let s = client.install_language(&id).await;
                             if s.ok() {
                                 page.toast(&format!("Loading {display} onto watch…"));
+                                // Show the indeterminate bar immediately, before the
+                                // first LanguageProgress signal arrives.
+                                page.imp().lang_busy.set(true);
+                                page.imp().lang_percent.set(-1);
+                                page.update_lang_progress("downloading");
                             } else {
                                 let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
                                 page.toast(&format!("Language: {m}"));
@@ -1532,7 +1703,42 @@ impl StoandlWatchPage {
         }
     }
 
-    fn handle_language_status(&self, kind: &str, detail: &str) {
+    /// Show/hide + drive the language install progress bar from the current
+    /// `lang_busy`/`lang_percent` state (indeterminate pulse until a % arrives).
+    fn update_lang_progress(&self, phase: &str) {
+        let imp = self.imp();
+        let busy = imp.lang_busy.get();
+        if let Some(g) = imp.lang_progress_group.borrow().as_ref() {
+            g.set_visible(busy);
+        }
+        if busy {
+            if let Some(bar) = imp.lang_progressbar.borrow().as_ref() {
+                let pct = imp.lang_percent.get();
+                bar.set_text(Some(&lang_phase_label(phase, pct))); // live status on the bar itself
+                if pct < 0 {
+                    bar.pulse();
+                } else {
+                    bar.set_fraction(pct as f64 / 100.0);
+                }
+            }
+        }
+    }
+
+    fn handle_language_status(&self, kind: &str, percent: i32, detail: &str) {
+        let imp = self.imp();
+        match kind {
+            "success" | "failed" | "disconnected" => {
+                imp.lang_busy.set(false);
+                self.update_lang_progress("");
+            }
+            "idle" | "notready" | "" => {}
+            _ => {
+                // downloading / installing / inprogress — live install in flight.
+                imp.lang_busy.set(true);
+                imp.lang_percent.set(percent);
+                self.update_lang_progress(kind);
+            }
+        }
         match kind {
             "success" => {
                 self.toast("Language pack installed");

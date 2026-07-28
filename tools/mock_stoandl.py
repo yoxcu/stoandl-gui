@@ -88,6 +88,8 @@ class MockStoandl(dbus.service.Object):
             {"uuid": "c91b77a0", "type": "watchapp", "order": 8,
              "flags": ["sideloaded"], "title": "Tezel", "developer": "lavers", "version": "0.9"},
         ]
+        # Declared order of the built-in entries — the "system default" RestoreSystemAppOrder resets to.
+        self._default_order = [a["uuid"] for a in self.apps]
         self._sideload_seq = 0
         # Extensions. HOOK #7: `config` (none|url|schema) + `description` + `author` + `version`.
         self.exts = [
@@ -133,6 +135,10 @@ class MockStoandl(dbus.service.Object):
             "health": {"enabled": False, "available": True, "lastSync": "never"},
             "dnd": {"enabled": True, "available": True, "lastSync": "synced"},
         }
+        # Live now-playing surfaced on the Music sync row (MusicStatus). player="" → idle → the
+        # row falls back to its "Last sync · …" subtitle.
+        self._music = {"playing": True, "player": "Spotify",
+                       "track": "Alice Coltrane — Journey in Satchidananda"}
         # Editable calendar sources (ListCalendarSources) + the discovered calendars they fan out to
         # (ListCalendars, each tagged with its owning source's id via accountId).
         self.calendar_sources = [
@@ -272,6 +278,22 @@ class MockStoandl(dbus.service.Object):
             "sleepTypicalMin": 426,     # 30-day typical sleep (constant)
             "lastSync": "2 min ago",
         }
+        # The watch's own health-tracking config (write side: the Health-profile settings
+        # sub-page via GetHealthProfile/SetHealthProfile). Keyed key→value strings.
+        self.health_profile = {
+            "height_cm": "178",
+            "weight_kg": "74",
+            "age": "31",
+            "gender": "other",
+            "units": "metric",
+            "tracking": "on",
+            "activity_insights": "on",
+            "sleep_insights": "on",
+            "hrm": "on",
+            "hrm_interval": "10min",
+            "resting_hr": "58",
+            "max_hr": "189",
+        }
         # Notifications (per-app store + master forwarding via sync["notifications"]).
         self.notif_apps = [
             {"name": "Signal",   "mute": "never",  "color": "default", "icon": "default", "vibe": "Double",   "last": 1718900000},
@@ -324,6 +346,107 @@ class MockStoandl(dbus.service.Object):
             return "notready:"
         level = self.watches[name]["battery"] or "0"
         return f"ok:{rec(name, level)}"
+
+    # --- Battery insights (BatteryHistory / Insights / Activity / Power) ----
+    def _battery_points(self, since, now):
+        """A plausible hourly discharge curve: recharge overnight (00:00-06:00) then discharge
+        through the day. Each point is [ts, level, charging, voltage] (soc + volts)."""
+        step = 3600
+        pts = []
+        t = int(since) - (int(since) % step)
+        while t <= now:
+            day_pos = (t % 86400) / 86400.0
+            if day_pos < 0.25:
+                level = 60.0 + (day_pos / 0.25) * 40.0            # 60 -> 100 (on charger)
+                charging = True
+            else:
+                level = 100.0 - ((day_pos - 0.25) / 0.75) * 70.0  # 100 -> 30 (discharging)
+                charging = False
+            volt = round(3.55 + (level / 100.0) * 0.65, 3)        # ~3.55 .. 4.20 V
+            pts.append([t, round(level, 2), charging, volt])
+            t += step
+        return pts
+
+    @dbus.service.method(IFACE, in_signature="sx", out_signature="s")
+    def BatteryHistory(self, watch, sinceEpoch):
+        name = self._connected_name()
+        if name is None:
+            return "notready:no watch connected"
+        now = int(time.time())
+        pts = self._battery_points(int(sinceEpoch), now)
+        return "ok:" + "\n".join(rec(p[0], p[1], "heartbeat", p[3]) for p in pts)
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def BatteryInsights(self, watch):
+        name = self._connected_name()
+        if name is None:
+            return "notready:no watch connected"
+        now = int(time.time())
+        pts = self._battery_points(now - 7 * 86400, now)
+        if len(pts) < 2:
+            return f"unknown:{name}"
+        last = pts[-1]
+        level, charging, volt = last[1], last[2], last[3]
+        day = [p for p in pts if p[0] >= now - 86400]
+        drop = secs = 0.0
+        for i in range(1, len(day)):
+            dl = day[i][1] - day[i - 1][1]
+            dt = day[i][0] - day[i - 1][0]
+            if dl < 0 and dt > 0:
+                drop += -dl
+                secs += dt
+        rate = drop / (secs / 3600.0) if secs > 0 else 0.0
+        hours = "" if (charging or rate <= 0) else f"{level / rate:.1f}"
+        sessions = 0
+        in_charge = False
+        last_charged = -1
+        for p in pts:
+            if p[2]:
+                if not in_charge:
+                    sessions += 1
+                    in_charge = True
+                last_charged = p[0]
+            else:
+                in_charge = False
+        mn = min(p[1] for p in day)
+        mx = max(p[1] for p in day)
+        return "ok:" + rec(name, round(level, 2), 1 if charging else 0, f"{rate:.2f}", hours,
+                           sessions, last_charged, round(mn, 2), round(mx, 2), len(pts), volt, "heartbeat")
+
+    @dbus.service.method(IFACE, in_signature="sx", out_signature="s")
+    def BatteryActivity(self, watch, sinceEpoch):
+        # Per-interval drop + notification counts (deterministic, hour-of-day shaped).
+        name = self._connected_name()
+        if name is None:
+            return "notready:no watch connected"
+        now = int(time.time())
+        pts = self._battery_points(int(sinceEpoch), now)
+        rows = []
+        for i in range(1, len(pts)):
+            dl = pts[i - 1][1] - pts[i][1]                       # positive = discharge
+            drop = round(dl, 2) if dl > 0 else 0.0
+            hod = (pts[i][0] % 86400) // 3600                    # 0..23
+            notif = ((hod * 3) % 7) if 7 <= hod <= 23 else 0     # awake-hours notifications
+            notif_dnd = notif if hod >= 22 else 0
+            rows.append(rec(pts[i][0], drop, notif, notif_dnd))
+        return "ok:" + "\n".join(rows)
+
+    @dbus.service.method(IFACE, in_signature="sx", out_signature="s")
+    def BatteryPower(self, watch, sinceEpoch):
+        # Battery-drain attribution (estimate): category\testDrainPct\tsharePct, largest share first.
+        # Fixed illustrative split (weights sum to 1.0). estDrainPct = total_drop × weight (slices sum
+        # to the measured discharge → drain-anchored; 0 when the window never discharged); sharePct =
+        # weight × 100 (the pie wedge). "System" is the always-on floor slice.
+        name = self._connected_name()
+        if name is None:
+            return "notready:no watch connected"
+        now = int(time.time())
+        pts = self._battery_points(int(sinceEpoch), now)
+        total_drop = sum(max(0.0, pts[i - 1][1] - pts[i][1]) for i in range(1, len(pts)))
+        weights = [("System", 0.34), ("Display", 0.18), ("Bluetooth", 0.14), ("CPU", 0.13),
+                   ("Heart rate", 0.11), ("Vibration", 0.06), ("Speaker", 0.04)]
+        body = "\n".join(rec(cat, round(total_drop * w, 2), round(w * 100.0, 1)) for cat, w in weights)
+        return "ok:" + body
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def WatchDetails(self):
@@ -568,6 +691,36 @@ class MockStoandl(dbus.service.Object):
         self.LockerChanged()
         return f"ok:installed {title}"
 
+    @dbus.service.method(IFACE, in_signature="si", out_signature="s")
+    def SetAppOrder(self, query, order):
+        # Move an entry to `order`, swapping with whichever entry currently holds it (the GUI
+        # hands us the neighbour's order for a one-slot move). Orders stay unique/contiguous.
+        app = self._resolve_app(query)
+        if app is None:
+            return f"notfound:no app matching '{query}'"
+        if app == "ambiguous":
+            return f"ambiguous:'{query}' matches several apps"
+        order = int(order)
+        holder = next((a for a in self.apps if a["order"] == order and a is not app), None)
+        if holder is not None:
+            holder["order"] = app["order"]
+        app["order"] = order
+        self.LockerChanged()
+        return f"ok:reordered {app['title']}"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def RestoreSystemAppOrder(self):
+        # Reset built-in entries to their declared order; sideloaded keep their relative spot after.
+        default_index = {u: i for i, u in enumerate(self._default_order)}
+        builtins = sorted((a for a in self.apps if a["uuid"] in default_index),
+                          key=lambda a: default_index[a["uuid"]])
+        extras = sorted((a for a in self.apps if a["uuid"] not in default_index),
+                        key=lambda a: a["order"])
+        for i, a in enumerate(builtins + extras):
+            a["order"] = i
+        self.LockerChanged()
+        return "ok:restored default order"
+
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def OpenConfig(self, query):
         app = self._resolve_app(query)
@@ -761,6 +914,16 @@ class MockStoandl(dbus.service.Object):
         self.sync[service]["enabled"] = bool(enabled)
         return f"ok:{service} {'enabled' if enabled else 'disabled'}"
 
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def MusicStatus(self):
+        # Live now-playing for the Music sync row: ok:<playing|paused>\t<player>\t<track>.
+        # No active player → idle: (the row falls back to its "Last sync · …" subtitle).
+        m = self._music
+        if not m.get("player"):
+            return "idle:"
+        state = "playing" if m["playing"] else "paused"
+        return "ok:" + rec(state, m["player"], m["track"])
+
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def ListCalendars(self):
         return [rec(c["id"], c["name"], "enabled" if c["enabled"] else "disabled", c.get("accountId", ""))
@@ -910,6 +1073,15 @@ class MockStoandl(dbus.service.Object):
                 continue
             a[field] = "default" if val == "default" else val
         return f"ok:{a['name']} style updated"
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def SendTestNotification(self, title, body):
+        # Push a synthetic notification through the normal mute/style/filter path.
+        if self._connected_name() is None:
+            return "notready:no watch connected"
+        if not title:
+            return "error:title is required"
+        return "ok:sent"
 
     # HOOK (notifications): regex filters (config-backed).
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
@@ -1130,6 +1302,18 @@ class MockStoandl(dbus.service.Object):
         if key not in known:
             return f"notfound:no config key '{key}'"
         self.config[key] = value
+        return f"ok:{key} = {value}"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def GetHealthProfile(self):
+        # The watch's own health-tracking config as key\tvalue records.
+        return [rec(k, v) for k, v in self.health_profile.items()]
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def SetHealthProfile(self, key, value):
+        if key not in self.health_profile:
+            return f"notfound:no health-profile key '{key}'"
+        self.health_profile[key] = value
         return f"ok:{key} = {value}"
 
     # --- Firmware ----------------------------------------------------------

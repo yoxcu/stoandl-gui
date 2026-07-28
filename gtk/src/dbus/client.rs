@@ -16,14 +16,17 @@ use gtk::subclass::prelude::*;
 
 use crate::config::{CALL_TIMEOUT_MS, DBUS_IFACE, DBUS_NAME, DBUS_PATH, FIND_TIMEOUT_MS};
 use crate::dbus::parse::{
-    parse_apps, parse_calendar_sources, parse_calendars, parse_config_schema, parse_config_values,
-    parse_ext_list, parse_ext_schema, parse_firmware_info, parse_health_summary, parse_heart_bars,
-    parse_heart_samples, parse_languages, parse_notif_filters, parse_notif_list, parse_open_config,
-    parse_percent, parse_sleep_bars, parse_sleep_timeline, parse_status, parse_step_bars,
-    parse_sync_status, parse_watch_details, parse_watch_prefs, parse_watches, AppRow, Calendar,
-    CalendarSource, ConfigField, ExtField, ExtRow, FirmwareInfo, HealthSummary, HeartBar,
-    HeartSample, LanguageRow, NotifApp, NotifFilter, SleepBar, SleepSegment, Status, StepBar,
-    SyncStatus, WatchDetails, WatchPref, WatchRow,
+    parse_apps, parse_battery_activity, parse_battery_history, parse_battery_insights,
+    parse_battery_power, parse_calendar_sources, parse_calendars, parse_config_schema,
+    parse_config_values, parse_ext_list, parse_ext_schema, parse_firmware_info,
+    parse_health_summary, parse_heart_bars, parse_heart_samples, parse_languages,
+    parse_music_status, parse_notif_filters, parse_notif_list, parse_open_config, parse_percent,
+    parse_sleep_bars, parse_sleep_timeline, parse_status, parse_step_bars, parse_sync_status,
+    parse_watch_details, parse_watch_prefs, parse_watches, AppRow, BatteryActivity, BatteryInsights,
+    BatteryPowerSlice, BatterySample, Calendar, CalendarSource, ConfigField, ExtField, ExtRow,
+    FirmwareInfo, HealthSummary, HeartBar, HeartSample, LanguageRow, MusicStatus, NotifApp,
+    NotifFilter, SleepBar, SleepSegment, Status, StepBar, SyncStatus, WatchDetails, WatchPref,
+    WatchRow,
 };
 
 const FDO_NAME: &str = "org.freedesktop.DBus";
@@ -578,6 +581,38 @@ impl StoandlClient {
         ));
     }
 
+    // --- Battery insights (rich; empty watch = the connected one) ------------
+
+    pub async fn battery_insights(&self, watch: &str) -> (Status, Option<BatteryInsights>) {
+        let s = self.call_status("BatteryInsights", Some((watch,).to_variant()), CALL_TIMEOUT_MS).await;
+        let info = parse_battery_insights(&s);
+        (s, info)
+    }
+    pub async fn battery_history(&self, watch: &str, since: i64) -> Vec<BatterySample> {
+        let s = self.call_status("BatteryHistory", Some((watch, since).to_variant()), CALL_TIMEOUT_MS).await;
+        if s.ok() {
+            parse_battery_history(&s.tail)
+        } else {
+            Vec::new()
+        }
+    }
+    pub async fn battery_activity(&self, watch: &str, since: i64) -> Vec<BatteryActivity> {
+        let s = self.call_status("BatteryActivity", Some((watch, since).to_variant()), CALL_TIMEOUT_MS).await;
+        if s.ok() {
+            parse_battery_activity(&s.tail)
+        } else {
+            Vec::new()
+        }
+    }
+    pub async fn battery_power(&self, watch: &str, since: i64) -> Vec<BatteryPowerSlice> {
+        let s = self.call_status("BatteryPower", Some((watch, since).to_variant()), CALL_TIMEOUT_MS).await;
+        if s.ok() {
+            parse_battery_power(&s.tail)
+        } else {
+            Vec::new()
+        }
+    }
+
     // --- Watch details / rename / dev connection / diagnostics ---------------
 
     pub async fn watch_details(&self) -> Option<WatchDetails> {
@@ -712,11 +747,15 @@ impl StoandlClient {
         }
         if phase == "reboot" || (phase == "notready" && imp.fw_seen_activity.get()) {
             self.stop_firmware_poll();
+            // Terminal: disarm the activity flag so a trailing idle/notready frame
+            // hits the no-flicker guard below instead of re-showing the banner.
+            imp.fw_seen_activity.set(false);
             self.signal_firmware_status("success", 100, "Watch is rebooting");
             return;
         }
         if phase == "failed" {
             self.stop_firmware_poll();
+            imp.fw_seen_activity.set(false);
             self.signal_firmware_status("failed", -1, detail);
             return;
         }
@@ -934,6 +973,15 @@ impl StoandlClient {
     pub async fn sideload_app(&self, path: &str) -> Status {
         self.call_status("SideloadApp", Some((path,).to_variant()), CALL_TIMEOUT_MS).await
     }
+    /// Move a face/app one slot within its list by handing it the neighbour's `order`;
+    /// the daemon repacks neighbours and re-syncs the watch menu. Re-fetch `ListApps` after.
+    pub async fn set_app_order(&self, id: &str, order: i32) -> Status {
+        self.call_status("SetAppOrder", Some((id, order).to_variant()), CALL_TIMEOUT_MS).await
+    }
+    /// Restore the default order of system (non-sideloaded) entries; sideloaded keep their spot.
+    pub async fn restore_system_app_order(&self) -> Status {
+        self.call_status("RestoreSystemAppOrder", None, CALL_TIMEOUT_MS).await
+    }
 
     /// OpenConfig — the reply may be a bare URL, empty (none), or a status.
     /// Returns (kind, url, msg); the page opens the URL.
@@ -1031,6 +1079,10 @@ impl StoandlClient {
     pub async fn set_sync_enabled(&self, service: &str, enabled: bool) -> Status {
         self.call_status("SetSyncEnabled", Some((service, enabled).to_variant()), CALL_TIMEOUT_MS).await
     }
+    /// Live now-playing for the Music sync row; falls back (ok=false) when no player is active.
+    pub async fn music_status(&self) -> MusicStatus {
+        parse_music_status(&self.call_status("MusicStatus", None, CALL_TIMEOUT_MS).await)
+    }
 
     pub async fn notif_list(&self) -> Vec<NotifApp> {
         parse_notif_list(&self.call_list("NotifList", None).await)
@@ -1043,6 +1095,10 @@ impl StoandlClient {
     }
     pub async fn notif_set_style(&self, name: &str, color: &str, icon: &str, vibe: &str) -> Status {
         self.call_status("NotifSetStyle", Some((name, color, icon, vibe).to_variant()), CALL_TIMEOUT_MS).await
+    }
+    /// Push a test notification through the normal mute/style/filter path.
+    pub async fn send_test_notification(&self, title: &str, body: &str) -> Status {
+        self.call_status("SendTestNotification", Some((title, body).to_variant()), CALL_TIMEOUT_MS).await
     }
     pub async fn notif_list_filters(&self) -> Vec<NotifFilter> {
         parse_notif_filters(&self.call_list("NotifListFilters", None).await)
@@ -1078,6 +1134,17 @@ impl StoandlClient {
     }
     pub async fn set_config(&self, key: &str, value: &str) -> Status {
         self.call_status("SetConfig", Some((key, value).to_variant()), CALL_TIMEOUT_MS).await
+    }
+
+    /// The watch's own health-tracking config (height/weight/age/sex/units, insights,
+    /// HRM + interval, resting/max HR) as `key → value`. Write side is `set_health_profile`.
+    pub async fn health_profile(&self) -> std::collections::HashMap<String, String> {
+        parse_config_values(&self.call_list("GetHealthProfile", None).await)
+            .into_iter()
+            .collect()
+    }
+    pub async fn set_health_profile(&self, key: &str, value: &str) -> Status {
+        self.call_status("SetHealthProfile", Some((key, value).to_variant()), CALL_TIMEOUT_MS).await
     }
 
     // Calendars: sources (CalDAV/iCal) + their discovered calendars.

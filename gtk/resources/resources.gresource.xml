@@ -8,9 +8,13 @@
     <file>style.css</file>
     <file>ui/window.ui</file>
     <file>ui/watch.ui</file>
+    <file>ui/battery.ui</file>
     <file>ui/health.ui</file>
     <file>ui/apps.ui</file>
     <file>ui/notifications.ui</file>
     <file>ui/settings.ui</file>
+    <!-- Custom named theme icon (monochrome heart). Laid out as an icon-theme dir so
+         GtkApplication's auto /de/yoxcu/stoandl/gui/icons path resolves it by name. -->
+    <file>icons/scalable/actions/stoandl-heart-symbolic.svg</file>
   </gresource>
 </gresources>

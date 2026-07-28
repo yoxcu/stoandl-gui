@@ -52,6 +52,14 @@ fn main() {
     println!("cargo:rerun-if-changed=resources/style.css");
     println!("cargo:rerun-if-changed=resources/resources.gresource.xml");
 
+    // 3b. Custom named theme icon (monochrome heart) under the GResource root, laid
+    // out as an icon-theme dir so GtkApplication's auto `/…/gui/icons` path resolves it.
+    let icon_rel = "icons/scalable/actions/stoandl-heart-symbolic.svg";
+    let icon_dst = res_dir.join(icon_rel);
+    fs::create_dir_all(icon_dst.parent().expect("icon parent")).expect("create res/icons dir");
+    fs::copy(Path::new("resources").join(icon_rel), &icon_dst).expect("copy heart icon");
+    println!("cargo:rerun-if-changed=resources/{icon_rel}");
+
     // 4. Bundle. The .gresource.xml <file> paths resolve under res_dir.
     glib_build_tools::compile_resources(
         &[res_dir.to_str().expect("utf8 res_dir")],

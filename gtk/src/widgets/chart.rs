@@ -15,6 +15,8 @@ const LABEL_H: f64 = 16.0; // reserved strip for x-axis labels
 pub struct Palette {
     pub accent: gdk::RGBA,
     pub error: gdk::RGBA,
+    pub warning: gdk::RGBA,
+    pub success: gdk::RGBA,
     pub fg: gdk::RGBA,
 }
 
@@ -28,7 +30,30 @@ pub fn palette(w: &impl IsA<gtk::Widget>) -> Palette {
     let error = ctx
         .lookup_color("error_color")
         .unwrap_or_else(|| gdk::RGBA::new(0.88, 0.11, 0.14, 1.0));
-    Palette { accent, error, fg }
+    let warning = ctx
+        .lookup_color("warning_color")
+        .unwrap_or_else(|| gdk::RGBA::new(0.90, 0.58, 0.0, 1.0));
+    let success = ctx
+        .lookup_color("success_color")
+        .unwrap_or_else(|| gdk::RGBA::new(0.18, 0.76, 0.49, 1.0));
+    Palette { accent, error, warning, success, fg }
+}
+
+/// HSL(a) → RGBA (for the power-donut per-category slice colours).
+pub fn hsla(h: f64, s: f64, l: f64, a: f64) -> gdk::RGBA {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let hp = (h.rem_euclid(1.0)) * 6.0;
+    let x = c * (1.0 - (hp % 2.0 - 1.0).abs());
+    let (r1, g1, b1) = match hp as i32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    gdk::RGBA::new((r1 + m) as f32, (g1 + m) as f32, (b1 + m) as f32, a as f32)
 }
 
 pub fn with_alpha(c: gdk::RGBA, a: f32) -> gdk::RGBA {
@@ -341,6 +366,156 @@ pub fn draw_sleep_timeline(
         let x = (frac * w - tw / 2.0).clamp(0.0, w - tw);
         text(cr, label, x, track_h + 4.0, with_alpha(fg, 0.5), FONT);
     }
+}
+
+// --- battery insights charts -------------------------------------------------
+
+/// Battery % over time: a fixed 0-100 line + area, faint gridlines, and
+/// notification-density bands behind it. `hist`/`notif` are `(epoch, value)`.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_battery_line(
+    cr: &cairo::Context,
+    w: f64,
+    h: f64,
+    hist: &[(f64, f64)],
+    notif: &[(f64, i32)],
+    t0: f64,
+    span: f64,
+    accent: gdk::RGBA,
+    fg: gdk::RGBA,
+) {
+    if w < 20.0 || h < 20.0 || span <= 0.0 {
+        return;
+    }
+    let pad = 4.0;
+    let py = |lv: f64| h - (lv / 100.0) * (h - 2.0 * pad) - pad;
+    let px = |ts: f64| (((ts - t0) / span) * w).clamp(0.0, w);
+
+    for g in [0.0f64, 25.0, 50.0, 75.0, 100.0] {
+        let gy = py(g);
+        set(cr, with_alpha(fg, 0.12));
+        cr.set_line_width(1.0);
+        cr.move_to(0.0, gy.round() + 0.5);
+        cr.line_to(w, gy.round() + 0.5);
+        let _ = cr.stroke();
+    }
+
+    // notification-density bands (denser hours = more visible), behind the line.
+    let max_n = notif.iter().map(|(_, n)| *n).max().unwrap_or(0);
+    if max_n > 0 {
+        let bw = ((w / (span / 3600.0)) * 0.7).clamp(2.0, 24.0);
+        for (ts, n) in notif {
+            if *n <= 0 {
+                continue;
+            }
+            let alpha = 0.06 + 0.20 * (*n as f64 / max_n as f64);
+            set(cr, with_alpha(accent, alpha as f32));
+            cr.rectangle(px(*ts) - bw / 2.0, 0.0, bw, h);
+            let _ = cr.fill();
+        }
+    }
+
+    if hist.is_empty() {
+        return;
+    }
+    if hist.len() == 1 {
+        let (ts, lv) = hist[0];
+        set(cr, accent);
+        cr.arc(px(ts), py(lv), 3.0, 0.0, 2.0 * std::f64::consts::PI);
+        let _ = cr.fill();
+        return;
+    }
+    // area under the curve.
+    cr.move_to(px(hist[0].0), py(hist[0].1));
+    for (ts, lv) in &hist[1..] {
+        cr.line_to(px(*ts), py(*lv));
+    }
+    cr.line_to(px(hist[hist.len() - 1].0), h);
+    cr.line_to(px(hist[0].0), h);
+    cr.close_path();
+    let grad = cairo::LinearGradient::new(0.0, 0.0, 0.0, h);
+    grad.add_color_stop_rgba(0.0, accent.red() as f64, accent.green() as f64, accent.blue() as f64, 0.30);
+    grad.add_color_stop_rgba(1.0, accent.red() as f64, accent.green() as f64, accent.blue() as f64, 0.0);
+    let _ = cr.set_source(&grad);
+    let _ = cr.fill();
+    // the line.
+    cr.move_to(px(hist[0].0), py(hist[0].1));
+    for (ts, lv) in &hist[1..] {
+        cr.line_to(px(*ts), py(*lv));
+    }
+    set(cr, accent);
+    cr.set_line_width(2.0);
+    cr.set_line_join(cairo::LineJoin::Round);
+    let _ = cr.stroke();
+}
+
+/// Per-interval battery drop bars, aligned to the same time window.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_drain_bars(
+    cr: &cairo::Context,
+    w: f64,
+    h: f64,
+    bars: &[(f64, f64)],
+    t0: f64,
+    span: f64,
+    max_drop: f64,
+    color: gdk::RGBA,
+    fg: gdk::RGBA,
+) {
+    if w < 20.0 || h < 20.0 || span <= 0.0 {
+        return;
+    }
+    let pad = 4.0;
+    set(cr, with_alpha(fg, 0.12));
+    cr.set_line_width(1.0);
+    cr.move_to(0.0, (h - pad).round() + 0.5);
+    cr.line_to(w, (h - pad).round() + 0.5);
+    let _ = cr.stroke();
+    if bars.is_empty() {
+        return;
+    }
+    let maxd = if max_drop > 0.0 { max_drop } else { 1.0 };
+    let px = |ts: f64| ((ts - t0) / span) * w;
+    let bar_w = ((w / (span / 3600.0)) * 0.7).clamp(2.0, 28.0);
+    set(cr, with_alpha(color, 0.75));
+    for (ts, drop) in bars {
+        if *drop <= 0.0 {
+            continue;
+        }
+        let bh = (drop / maxd) * (h - 2.0 * pad);
+        cr.rectangle(px(*ts) - bar_w / 2.0, h - pad - bh, bar_w, bh);
+        let _ = cr.fill();
+    }
+}
+
+/// A donut chart of `(share, colour)` slices (largest first), starting at 12 o'clock.
+pub fn draw_donut(cr: &cairo::Context, w: f64, h: f64, slices: &[(f64, gdk::RGBA)]) {
+    if slices.is_empty() || w < 8.0 || h < 8.0 {
+        return;
+    }
+    let total: f64 = slices.iter().map(|(s, _)| *s).sum();
+    if total <= 0.0 {
+        return;
+    }
+    let (cx, cy) = (w / 2.0, h / 2.0);
+    let r = w.min(h) / 2.0 - 2.0;
+    let rin = r * 0.58;
+    let mut a0 = -std::f64::consts::FRAC_PI_2;
+    for (share, color) in slices {
+        let a1 = a0 + (share / total) * 2.0 * std::f64::consts::PI;
+        cr.move_to(cx, cy);
+        cr.arc(cx, cy, r, a0, a1);
+        cr.close_path();
+        set(cr, *color);
+        let _ = cr.fill();
+        a0 = a1;
+    }
+    // punch a transparent hole → donut (independent of the card background).
+    cr.set_operator(cairo::Operator::DestOut);
+    cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+    cr.arc(cx, cy, rin, 0.0, 2.0 * std::f64::consts::PI);
+    let _ = cr.fill();
+    cr.set_operator(cairo::Operator::Over);
 }
 
 // --- daily heart-rate line ---------------------------------------------------

@@ -98,6 +98,22 @@ template $StoandlSettingsPage: Adw.BreakpointBin {
                 }
               }
 
+              Adw.ActionRow health_profile_row {
+                title: _("Health profile");
+                subtitle: _("Height, weight, age, units and heart-rate tracking");
+                activatable: true;
+
+                [prefix]
+                Gtk.Image {
+                  icon-name: "stoandl-heart-symbolic";
+                }
+
+                [suffix]
+                Gtk.Image {
+                  icon-name: "go-next-symbolic";
+                }
+              }
+
               Adw.ActionRow general_row {
                 title: _("Daemon configuration");
                 subtitle: _("Units, sync providers and other stoandl options");

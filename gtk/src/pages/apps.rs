@@ -54,6 +54,8 @@ mod imp {
         #[template_child]
         pub refresh_button: TemplateChild<gtk::Button>,
         #[template_child]
+        pub restore_button: TemplateChild<gtk::Button>,
+        #[template_child]
         pub faces_btn: TemplateChild<gtk::ToggleButton>,
         #[template_child]
         pub apps_btn: TemplateChild<gtk::ToggleButton>,
@@ -170,6 +172,11 @@ impl StoandlAppsPage {
                 page.toast("Refreshed");
             }
         ));
+        self.imp().restore_button.connect_clicked(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| page.restore_order()
+        ));
         for (btn, seg) in [
             (self.imp().faces_btn.get(), "faces"),
             (self.imp().apps_btn.get(), "apps"),
@@ -237,6 +244,24 @@ impl StoandlAppsPage {
         self.imp()
             .install_button
             .set_tooltip_text(Some(if seg == "ext" { "Install extension" } else { "Install .pbw" }));
+        // Reorder is a faces/apps concept only — no ordering on the Extensions segment.
+        self.imp().restore_button.set_visible(seg != "ext");
+    }
+
+    /// Restore the default order of system entries (sideloaded keep their spot).
+    fn restore_order(&self) {
+        let client = self.client();
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            client,
+            async move {
+                let s = client.restore_system_app_order().await;
+                page.toast(if s.ok() { "Default order restored" } else { "Could not restore order" });
+                client.refresh_apps().await; // authoritative re-fetch
+            }
+        ));
     }
 
     fn reload(&self) {
@@ -266,14 +291,14 @@ impl StoandlAppsPage {
         let others: Vec<AppRow> = apps.iter().filter(|a| !a.is_face).cloned().collect();
 
         Self::clear(&imp.faces_group, &imp.faces_rows);
-        for a in &faces {
-            let row = self.app_row(a);
+        for (i, a) in faces.iter().enumerate() {
+            let row = self.app_row(a, i, faces.len());
             imp.faces_group.add(&row);
             imp.faces_rows.borrow_mut().push(row.upcast());
         }
         Self::clear(&imp.apps_group, &imp.apps_rows);
-        for a in &others {
-            let row = self.app_row(a);
+        for (i, a) in others.iter().enumerate() {
+            let row = self.app_row(a, i, others.len());
             imp.apps_group.add(&row);
             imp.apps_rows.borrow_mut().push(row.upcast());
         }
@@ -305,7 +330,7 @@ impl StoandlAppsPage {
 
     // --- app row --------------------------------------------------------------
 
-    fn app_row(&self, app: &AppRow) -> adw::ActionRow {
+    fn app_row(&self, app: &AppRow, idx: usize, count: usize) -> adw::ActionRow {
         let who = if app.developer.is_empty() { &app.uuid } else { &app.developer };
         let subtitle = if app.version.is_empty() {
             who.clone()
@@ -380,6 +405,41 @@ impl StoandlAppsPage {
             row.add_suffix(&del);
         }
 
+        // Reorder within this list (faces or apps); hidden for a single-item list.
+        // Each button hands the daemon the neighbour's slot (SetAppOrder). The pair is
+        // `.linked` so it reads as one segmented control (keeps a busy row legible).
+        if count > 1 {
+            let reorder = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+            reorder.add_css_class("linked");
+            reorder.set_valign(gtk::Align::Center);
+
+            let up = gtk::Button::from_icon_name("go-up-symbolic");
+            up.add_css_class("flat");
+            up.set_tooltip_text(Some("Move up"));
+            up.set_sensitive(idx > 0);
+            let (uuid, is_face) = (app.uuid.clone(), app.is_face);
+            up.connect_clicked(glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |_| page.move_app(&uuid, is_face, -1)
+            ));
+            reorder.append(&up);
+
+            let down = gtk::Button::from_icon_name("go-down-symbolic");
+            down.add_css_class("flat");
+            down.set_tooltip_text(Some("Move down"));
+            down.set_sensitive(idx + 1 < count);
+            let (uuid, is_face) = (app.uuid.clone(), app.is_face);
+            down.connect_clicked(glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |_| page.move_app(&uuid, is_face, 1)
+            ));
+            reorder.append(&down);
+
+            row.add_suffix(&reorder);
+        }
+
         let app = app.clone();
         row.connect_activated(glib::clone!(
             #[weak(rename_to = page)]
@@ -387,6 +447,38 @@ impl StoandlAppsPage {
             move |_| page.launch(&app)
         ));
         row
+    }
+
+    /// Move an entry one slot within its list (faces or apps) by handing the daemon
+    /// the neighbour's `order`; then re-fetch (no reorder-specific signal to rely on).
+    fn move_app(&self, uuid: &str, is_face: bool, delta: i32) {
+        let mut group: Vec<AppRow> =
+            self.client().apps().into_iter().filter(|a| a.is_face == is_face).collect();
+        group.sort_by_key(|a| a.order);
+        let Some(pos) = group.iter().position(|a| a.uuid == uuid) else {
+            return;
+        };
+        let target = pos as i32 + delta;
+        if target < 0 || target as usize >= group.len() {
+            return;
+        }
+        let neighbour_order = group[target as usize].order;
+        let uuid = uuid.to_string();
+        let client = self.client();
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            client,
+            async move {
+                let s = client.set_app_order(&uuid, neighbour_order).await;
+                if !s.ok() {
+                    let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
+                    page.toast(&format!("Reorder: {m}"));
+                }
+                client.refresh_apps().await; // authoritative re-fetch
+            }
+        ));
     }
 
     fn launch(&self, app: &AppRow) {

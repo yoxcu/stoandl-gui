@@ -10,7 +10,7 @@ use adw::subclass::prelude::*;
 use gtk::{gio, glib, CompositeTemplate};
 
 use super::esc;
-use crate::dbus::{Calendar, CalendarSource, StoandlClient, WatchPref};
+use crate::dbus::{Calendar, CalendarSource, MusicStatus, StoandlClient, WatchPref};
 use crate::window::StoandlWindow;
 
 fn source_icon(t: &str) -> &'static str {
@@ -97,15 +97,124 @@ fn sync_label(service: &str) -> &'static str {
         _ => "Sync",
     }
 }
+
+/// The Music row shows the now-playing track when a player is active; every other
+/// service (and an idle Music service) falls back to its last-sync label.
+/// Mirrors `SyncSettingsPage.qml::serviceDescription`.
+fn service_description(service: &str, last_sync: &str, music: &MusicStatus) -> String {
+    if service == "music" && music.ok {
+        if music.playing {
+            return if !music.track.is_empty() {
+                format!("Now playing · {}", esc(&music.track))
+            } else {
+                format!("Playing · {}", esc(&music.player))
+            };
+        }
+        if !music.track.is_empty() {
+            return format!("Paused · {}", esc(&music.track));
+        }
+    }
+    format!(
+        "Last sync · {}",
+        if last_sync.is_empty() { "never".into() } else { esc(last_sync) }
+    )
+}
 fn sync_icon(service: &str) -> &'static str {
     match service {
         "weather" => "weather-clear-symbolic",
         "calendar" => "x-office-calendar-symbolic",
         "music" => "media-playback-start-symbolic",
-        "health" => "emblem-favorite-symbolic",
+        "health" => "stoandl-heart-symbolic",
         "dnd" => "notifications-disabled-symbolic",
         _ => "emblem-synchronizing-symbolic",
     }
+}
+
+// --- Health-profile row builders (each applies-then-reloads via the page) -----
+
+/// An on/off field stored as `"on"`/`"off"`.
+fn hp_switch(group: &adw::PreferencesGroup, page: &StoandlSettingsPage, key: &'static str, label: &str, subtitle: &str, on: bool) -> adw::SwitchRow {
+    let row = adw::SwitchRow::builder().title(label).subtitle(subtitle).active(on).build();
+    row.connect_active_notify(glib::clone!(
+        #[weak]
+        page,
+        move |r| page.apply_health_profile(key, if r.is_active() { "on" } else { "off" })
+    ));
+    group.add(&row);
+    row
+}
+
+/// A fixed-option field; the daemon takes the option value back verbatim.
+fn hp_combo(group: &adw::PreferencesGroup, page: &StoandlSettingsPage, key: &'static str, label: &str, options: &[&str], cur: &str) -> adw::ComboRow {
+    let model = gtk::StringList::new(options);
+    let row = adw::ComboRow::builder().title(label).model(&model).build();
+    row.set_selected(options.iter().position(|o| *o == cur).unwrap_or(0) as u32);
+    let opts: Vec<String> = options.iter().map(|s| s.to_string()).collect();
+    row.connect_selected_notify(glib::clone!(
+        #[weak]
+        page,
+        move |r| {
+            if let Some(v) = opts.get(r.selected() as usize) {
+                page.apply_health_profile(key, v);
+            }
+        }
+    ));
+    group.add(&row);
+    row
+}
+
+/// Leading numeric value of a stored profile string ("178" / "58" → f64).
+fn hp_num(s: &str) -> f64 {
+    s.trim()
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect::<String>()
+        .parse()
+        .unwrap_or(0.0)
+}
+
+/// A bounded integer field as an `Adw.SpinRow` — the HIG widget for numeric-with-
+/// range input (stepper + clamp). `cur_display` is the value in the *displayed* unit;
+/// `store` maps the (integer) displayed value back to the string the daemon stores
+/// (identity for unit-independent fields; cm/kg conversion for imperial height/weight).
+/// Debounced like the watch-prefs number row, since the spin fires per step and each
+/// apply re-fetches the form.
+fn hp_spin(
+    group: &adw::PreferencesGroup,
+    page: &StoandlSettingsPage,
+    key: &'static str,
+    label: &str,
+    min: f64,
+    max: f64,
+    cur_display: f64,
+    store: impl Fn(i64) -> String + 'static,
+) {
+    let adj = gtk::Adjustment::new(cur_display.round().clamp(min, max), min, max, 1.0, 10.0, 0.0);
+    let row = adw::SpinRow::new(Some(&adj), 1.0, 0);
+    row.set_title(label);
+    adj.connect_value_changed(glib::clone!(
+        #[weak]
+        page,
+        move |a| {
+            let stored = store(a.value().round() as i64);
+            if let Some(t) = page.imp().hp_debounce.borrow_mut().take() {
+                t.remove();
+            }
+            let src = glib::timeout_add_local_once(
+                std::time::Duration::from_millis(500),
+                glib::clone!(
+                    #[weak]
+                    page,
+                    move || {
+                        page.imp().hp_debounce.borrow_mut().take();
+                        page.apply_health_profile(key, &stored);
+                    }
+                ),
+            );
+            page.imp().hp_debounce.borrow_mut().replace(src);
+        }
+    ));
+    group.add(&row);
 }
 
 mod imp {
@@ -123,6 +232,8 @@ mod imp {
         #[template_child]
         pub watch_row: TemplateChild<adw::ActionRow>,
         #[template_child]
+        pub health_profile_row: TemplateChild<adw::ActionRow>,
+        #[template_child]
         pub general_row: TemplateChild<adw::ActionRow>,
         #[template_child]
         pub backup_row: TemplateChild<adw::ActionRow>,
@@ -138,6 +249,12 @@ mod imp {
         // General sub-page (persisted so SetConfig can re-fetch).
         pub general_group: RefCell<Option<adw::PreferencesGroup>>,
         pub general_rows: RefCell<Vec<gtk::Widget>>,
+        // Health-profile sub-page (rebuilt after each SetHealthProfile, which may normalise).
+        // hp_reload_gen guards against overlapping reloads racing on the whole-group swap.
+        pub hp_page: RefCell<Option<adw::PreferencesPage>>,
+        pub hp_groups: RefCell<Vec<adw::PreferencesGroup>>,
+        pub hp_reload_gen: std::cell::Cell<u64>,
+        pub hp_debounce: RefCell<Option<glib::SourceId>>, // pending SpinRow write timer
         // Watch-prefs sub-page rebuild state (re-fetch after each mutation).
         pub wp_page: RefCell<Option<adw::PreferencesPage>>,
         pub wp_groups: RefCell<Vec<adw::PreferencesGroup>>,
@@ -225,6 +342,11 @@ impl StoandlSettingsPage {
             self,
             move |_| page.push_watch_prefs()
         ));
+        self.imp().health_profile_row.connect_activated(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| page.push_health_profile()
+        ));
         self.imp().general_row.connect_activated(glib::clone!(
             #[weak(rename_to = page)]
             self,
@@ -260,6 +382,10 @@ impl StoandlSettingsPage {
                     Some("general") => {
                         imp.general_group.replace(None);
                         imp.general_rows.borrow_mut().clear();
+                    }
+                    Some("healthprofile") => {
+                        imp.hp_page.replace(None);
+                        imp.hp_groups.borrow_mut().clear();
                     }
                     _ => {}
                 }
@@ -355,16 +481,14 @@ impl StoandlSettingsPage {
                 for w in page.imp().sync_rows.borrow_mut().drain(..) {
                     group.remove(&w);
                 }
+                let music = client.music_status().await;
                 for s in client.get_sync_status().await {
                     if s.service == "notifications" {
-                        continue; // lives on the Notifications tab
+                        continue; // lives on the Alerts tab
                     }
                     let row = adw::SwitchRow::builder()
                         .title(sync_label(&s.service))
-                        .subtitle(&format!(
-                            "Last sync · {}",
-                            if s.last_sync.is_empty() { "never".into() } else { esc(&s.last_sync) }
-                        ))
+                        .subtitle(&service_description(&s.service, &s.last_sync, &music))
                         .active(s.enabled)
                         .sensitive(s.available)
                         .build();
@@ -501,7 +625,11 @@ impl StoandlSettingsPage {
                             page.imp().general_rows.borrow_mut().push(row.upcast());
                         }
                         _ => {
-                            let row = adw::EntryRow::builder().title(&esc(&f.label)).build();
+                            // show_apply_button: without it AdwEntryRow never emits `apply`.
+                            let row = adw::EntryRow::builder()
+                                .title(&esc(&f.label))
+                                .show_apply_button(true)
+                                .build();
                             row.set_text(&cur);
                             let prev = cur.clone();
                             row.connect_apply(glib::clone!(
@@ -543,6 +671,112 @@ impl StoandlSettingsPage {
         ));
     }
 
+    // --- Health-profile sub-page ---------------------------------------------
+
+    fn push_health_profile(&self) {
+        let prefs = adw::PreferencesPage::new();
+        self.imp().hp_page.replace(Some(prefs.clone()));
+        let np = Self::nav_page("Health profile", "healthprofile", &prefs, None);
+        self.nav().push(&np);
+        self.reload_health_profile();
+    }
+
+    fn reload_health_profile(&self) {
+        let Some(page_widget) = self.imp().hp_page.borrow().clone() else {
+            return;
+        };
+        // Bump the generation so a slower, overlapping reload bails instead of
+        // re-adding a second copy of the (whole-group-swapped) form.
+        let gen = self.imp().hp_reload_gen.get().wrapping_add(1);
+        self.imp().hp_reload_gen.set(gen);
+        let client = self.client();
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            client,
+            async move {
+                let imp = page.imp();
+                let hp = client.health_profile().await;
+                if imp.hp_reload_gen.get() != gen {
+                    return; // a newer reload superseded us
+                }
+                // Cancel any pending SpinRow write — the rows it targets are about to be destroyed.
+                if let Some(t) = imp.hp_debounce.borrow_mut().take() {
+                    t.remove();
+                }
+                for g in imp.hp_groups.borrow_mut().drain(..) {
+                    page_widget.remove(&g);
+                }
+                let get = |k: &str| hp.get(k).cloned().unwrap_or_default();
+
+                // Height/weight are ALWAYS stored metric (cm/kg); when units=imperial we
+                // display in/lb and convert back to metric on save (the daemon never sees
+                // imperial). Changing the units combo rebuilds the form with the new unit.
+                let imperial = get("units") == "imperial";
+                let height_cm = hp_num(&get("height_cm"));
+                let weight_kg = hp_num(&get("weight_kg"));
+                let you = adw::PreferencesGroup::builder().title("You").build();
+                if imperial {
+                    hp_spin(&you, &page, "height_cm", "Height (in)", 39.0, 98.0, height_cm / 2.54,
+                        |v| ((v as f64 * 2.54).round() as i64).to_string());
+                    hp_spin(&you, &page, "weight_kg", "Weight (lb)", 66.0, 440.0, weight_kg * 2.20462,
+                        |v| ((v as f64 / 2.20462).round() as i64).to_string());
+                } else {
+                    hp_spin(&you, &page, "height_cm", "Height (cm)", 100.0, 250.0, height_cm, |v| v.to_string());
+                    hp_spin(&you, &page, "weight_kg", "Weight (kg)", 30.0, 200.0, weight_kg, |v| v.to_string());
+                }
+                hp_spin(&you, &page, "age", "Age", 0.0, 120.0, hp_num(&get("age")), |v| v.to_string());
+                hp_combo(&you, &page, "gender", "Sex", &["female", "male", "other"], &get("gender"));
+                hp_combo(&you, &page, "units", "Units", &["metric", "imperial"], &get("units"));
+                page_widget.add(&you);
+
+                let tracking = adw::PreferencesGroup::builder()
+                    .title("Tracking")
+                    .description("What the watch records and derives on-device.")
+                    .build();
+                let tracking_on = get("tracking") == "on";
+                hp_switch(&tracking, &page, "tracking", "Health tracking", "Steps, sleep and activity", tracking_on);
+                let ai = hp_switch(&tracking, &page, "activity_insights", "Activity insights", "Move/stand reminders and goals", get("activity_insights") == "on");
+                let si = hp_switch(&tracking, &page, "sleep_insights", "Sleep insights", "Sleep stages and summaries", get("sleep_insights") == "on");
+                ai.set_sensitive(tracking_on); // insights are meaningless with tracking off
+                si.set_sensitive(tracking_on);
+                page_widget.add(&tracking);
+
+                let hr = adw::PreferencesGroup::builder().title("Heart rate").build();
+                let hrm_on = get("hrm") == "on";
+                hp_switch(&hr, &page, "hrm", "Heart-rate monitor", "Continuous optical heart rate", hrm_on);
+                let interval = hp_combo(&hr, &page, "hrm_interval", "Sampling interval", &["10min", "30min", "1h", "off"], &get("hrm_interval"));
+                interval.set_sensitive(hrm_on); // only meaningful while the HRM is on
+                hp_spin(&hr, &page, "resting_hr", "Resting HR (bpm)", 30.0, 120.0, hp_num(&get("resting_hr")), |v| v.to_string());
+                hp_spin(&hr, &page, "max_hr", "Max HR (bpm)", 100.0, 220.0, hp_num(&get("max_hr")), |v| v.to_string());
+                page_widget.add(&hr);
+
+                imp.hp_groups.replace(vec![you, tracking, hr]);
+                dbg_smoke(&format!("settings: health profile loaded {} keys", hp.len()));
+            }
+        ));
+    }
+
+    fn apply_health_profile(&self, key: &str, value: &str) {
+        let client = self.client();
+        let (key, value) = (key.to_string(), value.to_string());
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            client,
+            async move {
+                let s = client.set_health_profile(&key, &value).await;
+                if !s.ok() {
+                    let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
+                    page.toast(&format!("Health profile: {m}"));
+                }
+                page.reload_health_profile(); // re-fetch is authoritative (daemon may normalise)
+            }
+        ));
+    }
+
     // --- Backup & diagnostics sub-page ---------------------------------------
 
     fn push_backup(&self) {
@@ -550,7 +784,7 @@ impl StoandlSettingsPage {
 
         let backup = adw::PreferencesGroup::builder().title("Backup").build();
         let back_row = adw::ActionRow::builder()
-            .title("Back up now")
+            .title("Back up now…")
             .subtitle("Save a full backup of the watch and daemon state")
             .activatable(true)
             .build();
@@ -558,7 +792,10 @@ impl StoandlSettingsPage {
         back_row.connect_activated(glib::clone!(
             #[weak(rename_to = page)]
             self,
-            move |_| page.run_cli(&["backup"], "Backing up…", "Backup complete", "Backup failed")
+            move |_| page.pick_save_run(
+                "stoandl-backup.tar.gz", "backup",
+                "Backing up…", "Backup complete", "Backup failed",
+            )
         ));
         backup.add(&back_row);
         let restore_row = adw::ActionRow::builder()
@@ -577,7 +814,7 @@ impl StoandlSettingsPage {
 
         let diag = adw::PreferencesGroup::builder().title("Diagnostics").build();
         let support_row = adw::ActionRow::builder()
-            .title("Create support bundle")
+            .title("Create support bundle…")
             .subtitle("Collect logs and diagnostics for a bug report")
             .activatable(true)
             .build();
@@ -585,9 +822,10 @@ impl StoandlSettingsPage {
         support_row.connect_activated(glib::clone!(
             #[weak(rename_to = page)]
             self,
-            move |_| {
-                page.run_cli(&["support"], "Building support bundle…", "Support bundle created", "Support bundle failed")
-            }
+            move |_| page.pick_save_run(
+                "stoandl-support.tar.gz", "support",
+                "Building support bundle…", "Support bundle created", "Support bundle failed",
+            )
         ));
         diag.add(&support_row);
         prefs.add(&diag);
@@ -621,6 +859,45 @@ impl StoandlSettingsPage {
                                 "Restore complete",
                                 "Restore failed",
                             );
+                        }
+                    }
+                }
+            ),
+        );
+    }
+
+    /// Prompt for a save location, then run `stoandl <verb> <abs-path>`. Cancelling
+    /// the dialog runs nothing. (The co-located CLI takes the output path positionally.)
+    fn pick_save_run(
+        &self,
+        default_name: &str,
+        verb: &'static str,
+        pending: &'static str,
+        ok_msg: &'static str,
+        fail_prefix: &'static str,
+    ) {
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some("Gzip tarball (*.tar.gz)"));
+        filter.add_suffix("tar.gz");
+        filter.add_suffix("tgz");
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+        let dialog = gtk::FileDialog::builder()
+            .title("Choose where to save")
+            .initial_name(default_name)
+            .filters(&filters)
+            .build();
+        let parent = self.root().and_downcast::<gtk::Window>();
+        dialog.save(
+            parent.as_ref(),
+            gio::Cancellable::NONE,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |res| {
+                    if let Ok(file) = res {
+                        if let Some(path) = file.path() {
+                            page.run_cli(&[verb, &path.to_string_lossy()], pending, ok_msg, fail_prefix);
                         }
                     }
                 }
@@ -1371,6 +1648,7 @@ impl StoandlSettingsPage {
         }
         self.push_sync();
         self.push_general();
+        self.push_health_profile();
         self.push_backup();
         self.push_watch_prefs();
         self.push_calendars();

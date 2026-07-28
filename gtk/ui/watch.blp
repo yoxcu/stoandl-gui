@@ -183,6 +183,31 @@ template $StoandlWatchPage: Adw.BreakpointBin {
                     title: _("Active watch");
                   }
 
+                  // Battery insights entry — pushes the rich chart page.
+                  Adw.PreferencesGroup battery_group {
+                    visible: false;
+
+                    Adw.ActionRow battery_row {
+                      title: _("Battery insights");
+                      subtitle: _("Charge trend, voltage, time remaining");
+                      activatable: true;
+
+                      [prefix]
+                      Gtk.Image {
+                        icon-name: "battery-symbolic";
+                      }
+
+                      [suffix]
+                      Gtk.Image {
+                        icon-name: "go-next-symbolic";
+
+                        styles [
+                          "dim-label",
+                        ]
+                      }
+                    }
+                  }
+
                   // Known watches (populated in Rust; inline connect/forget).
                   Adw.PreferencesGroup known_group {
                     visible: false;

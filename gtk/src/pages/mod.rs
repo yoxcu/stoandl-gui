@@ -3,6 +3,7 @@
 //! not-yet-ported tabs get an `Adw.StatusPage` placeholder.
 
 mod apps;
+mod battery;
 mod health;
 mod notifications;
 mod settings;
@@ -38,7 +39,7 @@ pub fn install(view_stack: &adw::ViewStack, client: &StoandlClient) {
 
     let health = StoandlHealthPage::new();
     health.bind_client(client);
-    view_stack.add_titled_with_icon(&health, Some("health"), "Health", "emblem-favorite-symbolic");
+    view_stack.add_titled_with_icon(&health, Some("health"), "Health", "stoandl-heart-symbolic");
     health.bind_switcher(view_stack);
 
     let apps = StoandlAppsPage::new();
@@ -48,10 +49,12 @@ pub fn install(view_stack: &adw::ViewStack, client: &StoandlClient) {
 
     let notifs = StoandlNotificationsPage::new();
     notifs.bind_client(client);
+    // Tab labelled "Alerts" (short, no wrap on narrow); the stack page name stays
+    // "notifications" (internal id). Renamed on main (feat(nav)).
     view_stack.add_titled_with_icon(
         &notifs,
         Some("notifications"),
-        "Notifications",
+        "Alerts",
         "preferences-system-notifications-symbolic",
     );
     notifs.bind_switcher(view_stack);

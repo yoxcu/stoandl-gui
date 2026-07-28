@@ -1,0 +1,80 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Battery insights — pushed from the Watch tab. A NavigationPage, so it is the
+// sole surface when shown (its header keeps the window controls + a back button).
+// A range switcher (24 h / 7 days / 30 days) is a secondary top bar; the cards
+// (level gauge, %-over-time chart, drain bars, power donut, trends) are built in
+// Rust into content_box.
+template $StoandlBatteryPage: Adw.NavigationPage {
+  title: _("Battery");
+  tag: "battery";
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    [top]
+    Gtk.Box range_bar {
+      homogeneous: true;
+      margin-start: 12;
+      margin-end: 12;
+      margin-top: 6;
+      margin-bottom: 6;
+
+      styles [
+        "linked",
+      ]
+
+      Gtk.ToggleButton range_24h {
+        label: _("24 h");
+        active: true;
+      }
+
+      Gtk.ToggleButton range_7d {
+        label: _("7 days");
+        group: range_24h;
+      }
+
+      Gtk.ToggleButton range_30d {
+        label: _("30 days");
+        group: range_24h;
+      }
+    }
+
+    content: Gtk.Stack battery_stack {
+      transition-type: crossfade;
+
+      Gtk.StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage empty_status {
+          icon-name: "battery-symbolic";
+          title: _("No battery data yet");
+          description: _("Insights build up as the watch reports. The analytics heartbeat arrives about once an hour.");
+        };
+      }
+
+      Gtk.StackPage {
+        name: "content";
+
+        child: Gtk.ScrolledWindow {
+          hscrollbar-policy: never;
+
+          child: Adw.Clamp {
+            maximum-size: 700;
+
+            child: Gtk.Box content_box {
+              orientation: vertical;
+              spacing: 18;
+              margin-top: 12;
+              margin-bottom: 12;
+              margin-start: 12;
+              margin-end: 12;
+            };
+          };
+        };
+      }
+    };
+  };
+}

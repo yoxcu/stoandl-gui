@@ -17,6 +17,21 @@ use crate::window::StoandlWindow;
 const VIBES: [&str; 5] = ["Standard", "Double", "Long", "Subtle", "Heartbeat"];
 const ICONS: [&str; 4] = ["Default", "Bell", "Calendar", "Chat"];
 
+/// Curated subset of the watch's TimelineColor palette. `.0` = display name, `.1` =
+/// the enum name the daemon stores (NotifSetStyle takes a name, not a hex; NotifList
+/// ships no allowed set, so it's hardcoded), `.2` = the swatch RGB (None = "default",
+/// no override). Mirrors NotificationsPage.qml colorOptions (same names, values, hexes).
+const COLORS: [(&str, &str, Option<(f64, f64, f64)>); 8] = [
+    ("Default", "default", None),
+    ("Red", "Red", Some((1.0, 0.0, 0.0))),
+    ("Orange", "Orange", Some((1.0, 0.333, 0.0))), // #FF5500
+    ("Yellow", "ChromeYellow", Some((1.0, 0.667, 0.0))), // #FFAA00
+    ("Green", "Green", Some((0.0, 1.0, 0.0))),
+    ("Cyan", "Cyan", Some((0.0, 1.0, 1.0))),
+    ("Blue", "BlueMoon", Some((0.0, 0.333, 1.0))), // #0055FF
+    ("Violet", "VividViolet", Some((0.667, 0.0, 1.0))), // #AA00FF
+];
+
 fn dbg_smoke(msg: &str) {
     if std::env::var_os("STOANDL_SMOKE_MS").is_some() {
         eprintln!("stoandl-smoke: {msg}");
@@ -497,8 +512,67 @@ impl StoandlNotificationsPage {
             ));
         }
 
-        // Vibration + icon.
+        // Colour + vibration + icon.
         let g2 = adw::PreferencesGroup::new();
+
+        let color_labels: Vec<&str> = COLORS.iter().map(|(t, _, _)| *t).collect();
+        let color_model = gtk::StringList::new(&color_labels);
+        let color_row = adw::ComboRow::builder()
+            .title("Notification color")
+            .subtitle("Accent colour on the watch")
+            .model(&color_model)
+            .build();
+        let sel0 = COLORS.iter().position(|(_, v, _)| *v == app.color).unwrap_or(0);
+        color_row.set_selected(sel0 as u32);
+
+        // A swatch prefix reflecting the current selection (the QML showed a colour
+        // per option); "default" draws a themed outline ring, not a fill.
+        let swatch = gtk::DrawingArea::new();
+        swatch.set_content_width(18);
+        swatch.set_content_height(18);
+        swatch.set_valign(gtk::Align::Center);
+        let sel = std::rc::Rc::new(std::cell::Cell::new(sel0));
+        swatch.set_draw_func(glib::clone!(
+            #[strong]
+            sel,
+            move |a, cr, w, h| {
+                let rad = ((w.min(h) as f64) / 2.0 - 1.0).max(1.0);
+                cr.arc(w as f64 / 2.0, h as f64 / 2.0, rad, 0.0, 2.0 * std::f64::consts::PI);
+                match COLORS[sel.get()].2 {
+                    Some((r, g, b)) => {
+                        cr.set_source_rgb(r, g, b);
+                        let _ = cr.fill();
+                    }
+                    None => {
+                        let c = a.color(); // themed foreground → no hardcoded colour
+                        cr.set_source_rgba(c.red() as f64, c.green() as f64, c.blue() as f64, 0.4);
+                        cr.set_line_width(1.5);
+                        let _ = cr.stroke();
+                    }
+                }
+            }
+        ));
+        color_row.add_prefix(&swatch);
+
+        let name = app.name.clone();
+        color_row.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[weak]
+            swatch,
+            #[strong]
+            sel,
+            move |r| {
+                let idx = r.selected() as usize;
+                sel.set(idx);
+                swatch.queue_draw();
+                let (text, value, _) =
+                    COLORS.get(idx).copied().unwrap_or(("Default", "default", None));
+                page.set_app_style(&name, value, "", "", format!("Color · {text}"));
+            }
+        ));
+        g2.add(&color_row);
+
         let vibe_model = gtk::StringList::new(&VIBES);
         let vibe_row = adw::ComboRow::builder().title("Vibration").model(&vibe_model).build();
         vibe_row.set_selected(VIBES.iter().position(|v| *v == app.vibe).unwrap_or(0) as u32);
