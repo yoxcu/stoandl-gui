@@ -1,0 +1,64 @@
+# Flatpak manifest for the stoandl GUI. Built in CI (.github/workflows/release.yml)
+# and shipped as a de.yoxcu.stoandl.gui.flatpak bundle on tagged releases.
+#
+# runtime-version tracks the GNOME runtime (org.gnome.Platform 47 == GTK 4.16 /
+# libadwaita 1.6, which satisfies the crate's v4_12 / v1_6 feature minimums); bump
+# it in lockstep with the CI container image tag (gnome-4x). The Rust toolchain
+# comes from the org.freedesktop.Sdk.Extension.rust-stable SDK extension, and
+# blueprint-compiler + glib-compile-resources (both used by gtk/build.rs) ship
+# inside org.gnome.Sdk, so neither is bundled as a module.
+#
+# NETWORK BUILD (quick path): the stoandl-gui module builds with --share=network so
+# cargo fetches crates straight from crates.io. This is CI-friendly but NOT
+# Flathub-clean. FOLLOW-UP for a Flathub submission / reproducible offline build:
+# generate data/cargo-sources.json from gtk/Cargo.lock with flatpak-cargo-generator.py,
+# add it to sources:, drop --share=network, and build with `cargo --offline`.
+id: de.yoxcu.stoandl.gui
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: stoandl-gui
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # The GUI is a D-Bus client of the stoandl daemon on the session bus.
+  - --talk-name=de.yoxcu.stoandl
+  # NOTE: backup / restore / support-bundle shell out to the co-located `stoandl` CLI,
+  # and "Start daemon" runs `systemctl --user` — neither works from inside the sandbox.
+  # Those degrade gracefully; wiring them via `flatpak-spawn --host` (needs
+  # --talk-name=org.freedesktop.Flatpak) is a deliberate follow-up, not enabled here.
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/stoandl-gui/cargo
+
+modules:
+  - name: stoandl-gui
+    buildsystem: simple
+    build-options:
+      # Quick path (see header): let cargo reach crates.io. Drop this once
+      # data/cargo-sources.json is vendored for an offline Flathub build.
+      build-args:
+        - --share=network
+    build-commands:
+      # cargo builds only the binary — CMake used to install the desktop file,
+      # metainfo, and icon tree, so we do that by hand below.
+      - cargo build --release --manifest-path gtk/Cargo.toml
+      - install -Dm755 gtk/target/release/stoandl-gui /app/bin/stoandl-gui
+      - install -Dm644 data/de.yoxcu.stoandl.gui.desktop /app/share/applications/de.yoxcu.stoandl.gui.desktop
+      - install -Dm644 data/de.yoxcu.stoandl.gui.metainfo.xml /app/share/metainfo/de.yoxcu.stoandl.gui.metainfo.xml
+      - |
+        for f in $(find data/icons/hicolor -type f); do
+          install -Dm644 "$f" "/app/share/${f#data/}"
+        done
+    sources:
+      # The manifest lives in data/, so the project root is one level up. A fresh CI
+      # checkout has no build/ dir (it is git-ignored), so this copies clean sources.
+      - type: dir
+        path: ..

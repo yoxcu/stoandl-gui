@@ -1,7 +1,9 @@
 # Desktop integration assets
 
-Launcher entry and application icons for the stoandl GUI. These are installed by
-CMake (`cmake --build build --target install`) — no manual copying needed:
+Launcher entry and application icons for the stoandl GUI. On the GTK4 branch cargo
+only builds the binary, so these are installed by the packaging build — the APKBUILD
+(`abuild`) and the Flatpak manifest (`data/de.yoxcu.stoandl.gui.flatpak.yml`) each copy
+them into place, no manual copying needed:
 
 | File                                         | Installed to                                          |
 | -------------------------------------------- | ----------------------------------------------------- |
@@ -11,17 +13,16 @@ CMake (`cmake --build build --target install`) — no manual copying needed:
 
 > **Wayland note:** the window icon comes from the compositor matching the window's
 > `app_id` (`de.yoxcu.stoandl.gui`) to the **installed** `.desktop` file and reading its
-> `Icon=`. Running the binary straight from `build/` shows no icon on Wayland — you must
-> install (`cmake --install build --prefix ~/.local`). The embedded Qt-resource icon only
-> covers X11 / the uninstalled case.
+> `Icon=`. Running the binary straight from `gtk/target/` shows no icon on Wayland — the
+> `.desktop` file and icon tree must be installed first (an `apk add` / Flatpak install
+> does this, or `install -D` them into a prefix on `XDG_DATA_DIRS` by hand).
 
-The application ID is **`de.yoxcu.stoandl.gui`** — the reverse-DNS of the app's
-`setOrganizationDomain` (`yoxcu.de`) and a sibling of the daemon's bus name
-`de.yoxcu.stoandl`. The desktop-file basename, the Wayland `app_id`
-(`setDesktopFileName` in `src/main.cpp`), and the `Icon=` key all share this name so
-the launcher/taskbar resolves the icon on both Wayland (via the `.desktop` match) and
-X11 (via `QApplication::setWindowIcon`). A subset of the PNG sizes is also embedded as
-a Qt resource so the window icon shows even when running uninstalled from `build/`.
+The application ID is **`de.yoxcu.stoandl.gui`** — the reverse-DNS of the app's domain
+(`yoxcu.de`) and a sibling of the daemon's bus name `de.yoxcu.stoandl`. The desktop-file
+basename, the Wayland `app_id` (the GApplication application id), and the `Icon=` key all
+share this name so the launcher/taskbar resolves the icon via the installed `.desktop`
+match. The GTK build does not embed the window icon in the binary, so it only shows once
+the icon tree and `.desktop` file are installed.
 
 ## Icon design
 

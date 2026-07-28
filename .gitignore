@@ -10,3 +10,7 @@ __pycache__/
 /target/
 /gtk/target/
 Cargo.lock.bak
+
+# Never commit a private abuild signing key dropped in the working tree; only the
+# .rsa.pub half under packaging/keys/ is tracked.
+*.rsa

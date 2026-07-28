@@ -1,0 +1,56 @@
+# Contributor: yoxcu <mick@yoxcu.de>
+# Maintainer: yoxcu <mick@yoxcu.de>
+#
+# TEMPLATE — starting point for a postmarketOS/Alpine package of the stoandl GUI.
+# The release CI rewrites pkgver automatically, so `pkgver=0.1.0` below is just a
+# placeholder — a release build is always the tag's version, not this.
+# Building by hand: bump pkgver to a released tag, then run `abuild checksum` to
+# fill sha512sums (it downloads the release source tarball produced by CI). Verify
+# the depends/makedepends names against your Alpine branch (`apk search`) — GTK4 and
+# libadwaita package names drift between releases. The build is pure Rust/Cargo
+# against GTK4/libadwaita, so it is musl-clean.
+pkgname=stoandl-gui
+pkgver=0.1.0
+pkgrel=0
+pkgdesc="GTK4/libadwaita front-end for the stoandl Pebble companion daemon"
+url="https://github.com/yoxcu/stoandl-gui"
+arch="all"
+license="GPL-3.0-or-later"
+depends="
+	gtk4.0
+	libadwaita
+	hicolor-icon-theme
+	adwaita-icon-theme
+	"
+makedepends="
+	cargo
+	gtk4.0-dev
+	libadwaita-dev
+	blueprint-compiler
+	glib-dev
+	"
+source="$pkgname-$pkgver.tar.gz::https://github.com/yoxcu/stoandl-gui/releases/download/v$pkgver/stoandl-gui-$pkgver.tar.gz"
+builddir="$srcdir/$pkgname-$pkgver"
+
+build() {
+	cd "$builddir"/gtk
+	# --locked (not --frozen): honour the committed Cargo.lock but still allow
+	# cargo to fetch crate sources from the network (no vendored cargo-sources).
+	cargo build --release --locked
+}
+
+package() {
+	cd "$builddir"
+	install -Dm755 gtk/target/release/stoandl-gui \
+		"$pkgdir"/usr/bin/stoandl-gui
+	install -Dm644 data/de.yoxcu.stoandl.gui.desktop \
+		"$pkgdir"/usr/share/applications/de.yoxcu.stoandl.gui.desktop
+	install -Dm644 data/de.yoxcu.stoandl.gui.metainfo.xml \
+		"$pkgdir"/usr/share/metainfo/de.yoxcu.stoandl.gui.metainfo.xml
+	local f
+	for f in $(find data/icons/hicolor -type f \( -name '*.png' -o -name '*.svg' \)); do
+		install -Dm644 "$f" "$pkgdir"/usr/share/"${f#data/}"
+	done
+}
+
+sha512sums=""  # run `abuild checksum` to populate
