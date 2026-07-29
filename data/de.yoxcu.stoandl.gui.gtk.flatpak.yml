@@ -46,7 +46,10 @@ modules:
   # blueprint-compiler is NOT in org.gnome.Sdk 47, so build it here (pure-Python, meson
   # install only — no compile) BEFORE stoandl-gui. It installs to /app/bin so it is on
   # PATH when gtk/build.rs runs `blueprint-compiler batch-compile`; cleanup:['*'] drops
-  # it from the final bundle since it is only a build-time tool.
+  # it from the final bundle since it is only a build-time tool. Source downloads happen
+  # outside the sandbox, so this module needs no --share=network.
+  # Pinned near the version used in dev (.container/Dockerfile ships Ubuntu's, ~0.19);
+  # the .blp use only stock Gtk 4.0 / Adw 1 syntax, so any recent release compiles them.
   - name: blueprint-compiler
     buildsystem: meson
     cleanup:
@@ -54,7 +57,7 @@ modules:
     sources:
       - type: git
         url: https://gitlab.gnome.org/jwestman/blueprint-compiler.git
-        tag: v0.14.0
+        tag: v0.20.4
 
   - name: stoandl-gui
     buildsystem: simple
