@@ -1169,7 +1169,11 @@ QVariantMap StoandlClient::setWatchPref(const QString &id, const QString &value)
 
 QVariantList StoandlClient::configSchema()
 {
-    // Record: key \t type \t label \t options(comma) \t desc
+    // Record: key \t type \t label \t options(comma) \t desc \t group \t apply \t min \t max \t unit
+    //         \t placeholder
+    // Columns 5+ were appended to the original 5-column contract, so an older daemon simply leaves them
+    // empty — hence the defaults below rather than a hard read. type ∈ {toggle, combo, text, int, list};
+    // apply ∈ {live, restart} ("restart" = the daemon only picks the value up when it starts).
     QVariantList rows;
     const QVariantList records = list(QStringLiteral("GetConfigSchema"));
     for (const QVariant &v : records) {
@@ -1181,6 +1185,16 @@ QVariantList StoandlClient::configSchema()
         m[QStringLiteral("options")] = f.value(3).isEmpty() ? QStringList()
                                                             : f.value(3).split(QLatin1Char(','));
         m[QStringLiteral("desc")]    = f.value(4);
+        m[QStringLiteral("group")]   = f.value(5).isEmpty() ? QStringLiteral("Settings") : f.value(5);
+        m[QStringLiteral("restart")] = f.value(6) == QLatin1String("restart");
+        // A number field without bounds would give the spin box a 0..0 range, so fall back to a wide one.
+        bool okMin = false, okMax = false;
+        const int lo = f.value(7).toInt(&okMin);
+        const int hi = f.value(8).toInt(&okMax);
+        m[QStringLiteral("min")] = okMin ? lo : 0;
+        m[QStringLiteral("max")] = okMax ? hi : 1000000;
+        m[QStringLiteral("unit")] = f.value(9);
+        m[QStringLiteral("placeholder")] = f.value(10);
         rows.append(m);
     }
     return rows;

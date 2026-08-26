@@ -679,7 +679,12 @@ pub fn parse_watch_prefs(rows: &[String]) -> Vec<WatchPref> {
         .collect()
 }
 
-/// A `GetConfigSchema` record: `key \t type \t label \t options(comma) \t desc`.
+/// A `GetConfigSchema` record: `key \t type \t label \t options(comma) \t desc \t group \t apply
+/// \t min \t max \t unit \t placeholder`.
+///
+/// Columns 5..=10 were appended to the daemon's original 5-column contract, so an older daemon simply
+/// omits them — every one of them has a sane fallback below rather than a hard read. `field_type` is
+/// one of `toggle | combo | text | int | list`; an unknown future kind falls back to a text entry.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ConfigField {
     pub key: String,
@@ -687,6 +692,16 @@ pub struct ConfigField {
     pub label: String,
     pub options: Vec<String>,
     pub desc: String,
+    /// Section header to file this key under. Empty from an old daemon → one "Settings" group.
+    pub group: String,
+    /// True when the daemon only reads this key at startup, so the GUI can say so on the row.
+    pub restart: bool,
+    /// `int` only: inclusive bounds and the unit shown next to the number.
+    pub min: i64,
+    pub max: i64,
+    pub unit: String,
+    /// `text`/`list` only: hint text documenting the expected shape.
+    pub placeholder: String,
 }
 
 pub fn parse_config_schema(rows: &[String]) -> Vec<ConfigField> {
@@ -700,6 +715,13 @@ pub fn parse_config_schema(rows: &[String]) -> Vec<ConfigField> {
                 label: g(2).to_string(),
                 options: split_comma(g(3)),
                 desc: g(4).to_string(),
+                group: if g(5).is_empty() { "Settings".into() } else { g(5).to_string() },
+                restart: g(6) == "restart",
+                // Unbounded from an old daemon would give the spin button a 0..0 range.
+                min: g(7).parse().unwrap_or(0),
+                max: g(8).parse().unwrap_or(1_000_000),
+                unit: g(9).to_string(),
+                placeholder: g(10).to_string(),
             }
         })
         .collect()
@@ -1166,9 +1188,30 @@ mod tests {
         let vals = parse_config_values(&["theme\tdark".into(), "port\t9000".into()]);
         assert_eq!(vals[0], ("theme".into(), "dark".into()));
 
+        // A 5-column row from an older daemon still parses, with usable fallbacks.
+        assert_eq!(sch[0].group, "Settings");
+        assert!(!sch[0].restart);
+        assert_eq!((sch[0].min, sch[0].max), (0, 1_000_000));
+        assert!(sch[0].unit.is_empty() && sch[0].placeholder.is_empty());
+
         let cals = parse_calendars(&["c1\tWork\tenabled\tacc1".into(), "c2\tHome\tdisabled\tacc1".into()]);
         assert!(cals[0].enabled && !cals[1].enabled);
         assert_eq!(cals[0].account_id, "acc1");
+
+        // Full 11-column schema rows: every widget kind, plus group / restart / range / placeholder.
+        let full = parse_config_schema(&[
+            "weather.interval\tint\tRefresh interval\t\tHow often weather is re-fetched\tWeather\tlive\t5\t1440\tmin\t".into(),
+            "classic.discover\ttoggle\tBluetooth Classic\t\tExperimental\tConnection\trestart\t\t\t\t".into(),
+            "weather.locations\tlist\tLocations\t\tName:lat:lon entries\tWeather\tlive\t\t\t\tBerlin:52.52:13.405".into(),
+        ]);
+        assert_eq!(full[0].field_type, "int");
+        assert_eq!((full[0].min, full[0].max), (5, 1440));
+        assert_eq!(full[0].unit, "min");
+        assert_eq!(full[0].group, "Weather");
+        assert!(!full[0].restart);
+        assert!(full[1].restart); // the GUI must be able to say "needs a restart"
+        assert_eq!(full[2].field_type, "list");
+        assert_eq!(full[2].placeholder, "Berlin:52.52:13.405");
 
         let src = parse_calendar_sources(&["s1\tcaldav\thttps://x\tbob\tWork CalDAV".into()]);
         assert_eq!(src[0].source_type, "caldav");

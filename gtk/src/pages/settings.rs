@@ -9,7 +9,8 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gio, glib, CompositeTemplate};
 
-use super::esc;
+use super::{action_row, esc, temp_path};
+use crate::dbus::parse::ConfigField;
 use crate::dbus::{Calendar, CalendarSource, MusicStatus, StoandlClient, WatchPref};
 use crate::window::StoandlWindow;
 
@@ -238,17 +239,29 @@ mod imp {
         #[template_child]
         pub backup_row: TemplateChild<adw::ActionRow>,
         #[template_child]
+        pub debug_row: TemplateChild<adw::ActionRow>,
+        #[template_child]
         pub view_switcher: TemplateChild<adw::ViewSwitcher>,
         #[template_child]
         pub switcher_bar: TemplateChild<adw::ViewSwitcherBar>,
 
         pub client: OnceCell<StoandlClient>,
+        // The shell view stack (bound with the switcher), so a started firmware
+        // flash can bring the Watch tab — which carries the progress card — forward.
+        pub shell_stack: OnceCell<adw::ViewStack>,
+        // Debug sub-page: the watch-scoped rows + the "no watch" hint group, so a
+        // watches-changed can gate them live while the page is open.
+        pub debug_watch_rows: RefCell<Vec<adw::ActionRow>>,
+        pub debug_hint: RefCell<Option<adw::PreferencesGroup>>,
+        pub debug_bound: std::cell::Cell<bool>,
         // Sync sub-page (persisted so force-sync/toggle can refresh Last-sync).
         pub sync_group: RefCell<Option<adw::PreferencesGroup>>,
         pub sync_rows: RefCell<Vec<gtk::Widget>>,
-        // General sub-page (persisted so SetConfig can re-fetch).
-        pub general_group: RefCell<Option<adw::PreferencesGroup>>,
-        pub general_rows: RefCell<Vec<gtk::Widget>>,
+        // General sub-page (persisted so SetConfig can re-fetch). Rebuilt group-at-a-time like the
+        // watch-prefs page, since the schema now carries a section header per key.
+        pub general_page: RefCell<Option<adw::PreferencesPage>>,
+        pub general_groups: RefCell<Vec<adw::PreferencesGroup>>,
+        pub general_debounce: RefCell<Option<glib::SourceId>>, // pending SpinRow write timer
         // Health-profile sub-page (rebuilt after each SetHealthProfile, which may normalise).
         // hp_reload_gen guards against overlapping reloads racing on the whole-group swap.
         pub hp_page: RefCell<Option<adw::PreferencesPage>>,
@@ -380,12 +393,19 @@ impl StoandlSettingsPage {
                         imp.sync_rows.borrow_mut().clear();
                     }
                     Some("general") => {
-                        imp.general_group.replace(None);
-                        imp.general_rows.borrow_mut().clear();
+                        imp.general_page.replace(None);
+                        imp.general_groups.borrow_mut().clear();
+                        if let Some(t) = imp.general_debounce.borrow_mut().take() {
+                            t.remove();
+                        }
                     }
                     Some("healthprofile") => {
                         imp.hp_page.replace(None);
                         imp.hp_groups.borrow_mut().clear();
+                    }
+                    Some("debug") => {
+                        imp.debug_watch_rows.borrow_mut().clear();
+                        imp.debug_hint.replace(None);
                     }
                     _ => {}
                 }
@@ -556,16 +576,14 @@ impl StoandlSettingsPage {
 
     fn push_general(&self) {
         let prefs = adw::PreferencesPage::new();
-        let group = adw::PreferencesGroup::new();
-        prefs.add(&group);
-        self.imp().general_group.replace(Some(group));
+        self.imp().general_page.replace(Some(prefs.clone()));
         let np = Self::nav_page("Daemon configuration", "general", &prefs, None);
         self.nav().push(&np);
         self.reload_general();
     }
 
     fn reload_general(&self) {
-        let Some(group) = self.imp().general_group.borrow().clone() else {
+        let Some(prefs) = self.imp().general_page.borrow().clone() else {
             return;
         };
         let client = self.client();
@@ -575,81 +593,187 @@ impl StoandlSettingsPage {
             #[strong]
             client,
             async move {
-                for w in page.imp().general_rows.borrow_mut().drain(..) {
-                    group.remove(&w);
-                }
                 let schema = client.config_schema().await;
                 let values: std::collections::HashMap<String, String> =
                     client.get_config().await.into_iter().collect();
-                for f in &schema {
-                    let cur = values.get(&f.key).cloned().unwrap_or_default();
-                    let key = f.key.clone();
-                    match f.field_type.as_str() {
-                        "toggle" => {
-                            let row = adw::SwitchRow::builder()
-                                .title(&esc(&f.label))
-                                .subtitle(&esc(&f.desc))
-                                .active(cur == "true")
-                                .build();
-                            row.connect_active_notify(glib::clone!(
-                                #[weak]
-                                page,
-                                move |r| page.apply_config(&key, if r.is_active() { "true" } else { "false" })
-                            ));
-                            group.add(&row);
-                            page.imp().general_rows.borrow_mut().push(row.upcast());
-                        }
-                        "combo" => {
-                            let model = gtk::StringList::new(
-                                &f.options.iter().map(String::as_str).collect::<Vec<_>>(),
-                            );
-                            let row = adw::ComboRow::builder()
-                                .title(&esc(&f.label))
-                                .subtitle(&esc(&f.desc))
-                                .model(&model)
-                                .build();
-                            row.set_selected(
-                                f.options.iter().position(|o| *o == cur).unwrap_or(0) as u32,
-                            );
-                            let opts = f.options.clone();
-                            row.connect_selected_notify(glib::clone!(
-                                #[weak]
-                                page,
-                                move |r| {
-                                    if let Some(v) = opts.get(r.selected() as usize) {
-                                        page.apply_config(&key, v);
-                                    }
-                                }
-                            ));
-                            group.add(&row);
-                            page.imp().general_rows.borrow_mut().push(row.upcast());
-                        }
-                        _ => {
-                            // show_apply_button: without it AdwEntryRow never emits `apply`.
-                            let row = adw::EntryRow::builder()
-                                .title(&esc(&f.label))
-                                .show_apply_button(true)
-                                .build();
-                            row.set_text(&cur);
-                            let prev = cur.clone();
-                            row.connect_apply(glib::clone!(
-                                #[weak]
-                                page,
-                                move |r| {
-                                    let v = r.text().to_string();
-                                    if v != prev {
-                                        page.apply_config(&key, &v);
-                                    }
-                                }
-                            ));
-                            group.add(&row);
-                            page.imp().general_rows.borrow_mut().push(row.upcast());
-                        }
-                    }
+
+                // A rebuild destroys the SpinRow a debounce timer would fire into, so cancel it first.
+                if let Some(t) = page.imp().general_debounce.borrow_mut().take() {
+                    t.remove();
                 }
-                dbg_smoke(&format!("settings: general loaded {} keys", schema.len()));
+                for g in page.imp().general_groups.borrow_mut().drain(..) {
+                    prefs.remove(&g);
+                }
+                // One PreferencesGroup per schema section, in first-seen order (the daemon emits the
+                // fields in display order, so the sections come out ordered too).
+                let mut groups: Vec<(String, adw::PreferencesGroup)> = Vec::new();
+                for f in &schema {
+                    let group = match groups.iter().find(|(t, _)| *t == f.group) {
+                        Some((_, g)) => g.clone(),
+                        None => {
+                            let g = adw::PreferencesGroup::builder().title(&esc(&f.group)).build();
+                            prefs.add(&g);
+                            page.imp().general_groups.borrow_mut().push(g.clone());
+                            groups.push((f.group.clone(), g.clone()));
+                            g
+                        }
+                    };
+                    let cur = values.get(&f.key).cloned().unwrap_or_default();
+                    group.add(&page.cfg_row(f, &cur));
+                }
+                dbg_smoke(&format!(
+                    "settings: general loaded {} keys in {} groups",
+                    schema.len(),
+                    groups.len()
+                ));
             }
         ));
+    }
+
+    /// The daemon marks keys it only reads at startup. Say so on the row — otherwise flipping one
+    /// looks exactly like a live change while doing nothing until the service is restarted.
+    fn cfg_subtitle(f: &ConfigField) -> String {
+        if f.restart {
+            format!("{} — takes effect after restarting stoandl", f.desc)
+        } else {
+            f.desc.clone()
+        }
+    }
+
+    /// One row per schema kind. `text`, `list` and any future kind fall back to an entry row, so an
+    /// unknown type stays editable rather than disappearing.
+    fn cfg_row(&self, f: &ConfigField, cur: &str) -> gtk::Widget {
+        let key = f.key.clone();
+        let subtitle = Self::cfg_subtitle(f);
+        match f.field_type.as_str() {
+            "toggle" => {
+                let row = adw::SwitchRow::builder()
+                    .title(&esc(&f.label))
+                    .subtitle(&esc(&subtitle))
+                    .active(cur == "true")
+                    .build();
+                row.connect_active_notify(glib::clone!(
+                    #[weak(rename_to = page)]
+                    self,
+                    move |r| page.apply_config(&key, if r.is_active() { "true" } else { "false" })
+                ));
+                row.upcast()
+            }
+            "combo" => {
+                let model =
+                    gtk::StringList::new(&f.options.iter().map(String::as_str).collect::<Vec<_>>());
+                let row = adw::ComboRow::builder()
+                    .title(&esc(&f.label))
+                    .subtitle(&esc(&subtitle))
+                    .model(&model)
+                    .build();
+                row.set_selected(f.options.iter().position(|o| o == cur).unwrap_or(0) as u32);
+                let opts = f.options.clone();
+                row.connect_selected_notify(glib::clone!(
+                    #[weak(rename_to = page)]
+                    self,
+                    move |r| {
+                        if let Some(v) = opts.get(r.selected() as usize) {
+                            page.apply_config(&key, v);
+                        }
+                    }
+                ));
+                row.upcast()
+            }
+            "int" => {
+                // Same shape as the watch-prefs number row: bounded adjustment, unit in the title,
+                // and a debounced commit (the spin fires per step and each apply rebuilds this row).
+                let step = (((f.max - f.min).max(1)) as f64 / 100.0).round().max(1.0);
+                let val = cur.parse::<f64>().unwrap_or(f.min as f64);
+                let adj = gtk::Adjustment::new(
+                    val.clamp(f.min as f64, f.max as f64),
+                    f.min as f64,
+                    f.max as f64,
+                    step,
+                    step * 10.0,
+                    0.0,
+                );
+                let row = adw::SpinRow::new(Some(&adj), step, 0);
+                let title = if f.unit.is_empty() {
+                    f.label.clone()
+                } else {
+                    format!("{} ({})", f.label, f.unit)
+                };
+                row.set_title(&esc(&title));
+                if !subtitle.is_empty() {
+                    row.set_subtitle(&esc(&subtitle));
+                }
+                adj.connect_value_changed(glib::clone!(
+                    #[weak(rename_to = page)]
+                    self,
+                    move |a| {
+                        let v = a.value().round() as i64;
+                        if let Some(t) = page.imp().general_debounce.borrow_mut().take() {
+                            t.remove();
+                        }
+                        let key = key.clone();
+                        let src = glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(500),
+                            glib::clone!(
+                                #[weak]
+                                page,
+                                move || {
+                                    page.imp().general_debounce.borrow_mut().take();
+                                    page.apply_config(&key, &v.to_string());
+                                }
+                            ),
+                        );
+                        page.imp().general_debounce.borrow_mut().replace(src);
+                    }
+                ));
+                row.upcast()
+            }
+            // text | list | unknown. AdwEntryRow has no subtitle, so the description and the
+            // placeholder (which documents the expected shape, e.g. Name:lat:lon) go on an ActionRow
+            // with the entry as its suffix — the same information the switch/combo rows carry.
+            _ => {
+                let row = adw::ActionRow::builder().title(&esc(&f.label)).build();
+                if !subtitle.is_empty() {
+                    row.set_subtitle(&esc(&subtitle));
+                }
+                let entry = gtk::Entry::builder()
+                    .text(cur)
+                    .placeholder_text(&f.placeholder)
+                    .valign(gtk::Align::Center)
+                    .hexpand(true)
+                    .width_chars(18)
+                    .build();
+                // Commit on Enter or focus-out only: apply_config rebuilds this row, so committing
+                // per keystroke would fight the user mid-edit.
+                let commit = {
+                    let prev = cur.to_string();
+                    move |page: &Self, e: &gtk::Entry| {
+                        let v = e.text().to_string();
+                        if v != prev {
+                            page.apply_config(&key, &v);
+                        }
+                    }
+                };
+                let commit2 = commit.clone();
+                entry.connect_activate(glib::clone!(
+                    #[weak(rename_to = page)]
+                    self,
+                    move |e| commit(&page, e)
+                ));
+                let focus = gtk::EventControllerFocus::new();
+                focus.connect_leave(glib::clone!(
+                    #[weak(rename_to = page)]
+                    self,
+                    #[weak]
+                    entry,
+                    move |_| commit2(&page, &entry)
+                ));
+                entry.add_controller(focus);
+                row.add_suffix(&entry);
+                row.set_activatable_widget(Some(&entry));
+                row.upcast()
+            }
+        }
     }
 
     fn apply_config(&self, key: &str, value: &str) {

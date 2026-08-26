@@ -45,6 +45,11 @@ def rec(*fields):
     return "\t".join(str(f) for f in fields)
 
 
+# Column order of a GetConfigSchema record (see MockStoandl.config_schema).
+CONFIG_COLS = ("key", "type", "label", "options", "desc", "group", "apply",
+               "min", "max", "unit", "placeholder")
+
+
 class MockStoandl(dbus.service.Object):
     def __init__(self, bus, path):
         super().__init__(bus, path)
@@ -251,24 +256,88 @@ class MockStoandl(dbus.service.Object):
             {"id": "fr_FR", "iso": "Francais",     "name": "French",       "installed": False, "source": "rebble"},
             {"id": "ja_JP", "iso": "Nihongo",      "name": "Japanese",     "installed": False, "source": "github"},
         ]
-        # HOOK #10: daemon config (stoandl.conf) over D-Bus, schema-driven.
+        # HOOK #10: daemon config (stoandl.conf) over D-Bus, schema-driven. These are the REAL keys the
+        # daemon's GUI_CONFIG_FIELDS exposes (config/ConfigSchema.kt) — not invented ones — so a GUI
+        # rendered against the mock is rendered against the real contract.
+        #
+        # Row = (key, type, label, options, desc, group, apply, min, max, unit, placeholder), the 11
+        # columns GetConfigSchema emits. type ∈ toggle|combo|text|int|list; apply ∈ live|restart.
+        # Columns 5+ were appended to the original 5-column contract; a client that reads only the first
+        # five still works, which is exactly what this mock lets you check.
         self.config_schema = [
-            {"key": "units", "type": "combo", "label": "Units",
-             "options": "Metric,Imperial", "desc": ""},
-            {"key": "weather_provider", "type": "combo", "label": "Weather provider",
-             "options": "Open-Meteo", "desc": ""},
-            {"key": "auto_reconnect", "type": "toggle", "label": "Reconnect automatically",
-             "options": "", "desc": "Reconnect when the watch comes back in range"},
-            {"key": "calendar_window", "type": "combo", "label": "Timeline window",
-             "options": "1 day,3 days,7 days", "desc": ""},
-            {"key": "log_level", "type": "combo", "label": "Log level",
-             "options": "error,info,debug", "desc": ""},
-            {"key": "calendar.discover", "type": "toggle", "label": "Auto-discover local calendars",
-             "options": "", "desc": "Find the desktop's local .ics calendars"},
+            dict(zip(CONFIG_COLS, row)) for row in [
+                # key, type, label, options, desc, group, apply, min, max, unit, placeholder
+                ("notification.per_app", "toggle", "Per-app notifications", "", "Track apps and enforce per-app mute host-side", "Notifications", "live", "", "", "", ""),
+                ("notification.default_mute", "combo", "Default mute for new apps", "Never,Always,Weekdays,Weekends", "How a newly-seen app is muted until you change it", "Notifications", "live", "", "", "", ""),
+                ("notification.sync_to_watch", "toggle", "Sync the app list to the watch", "", "Push the per-app list and mute states to the watch's BlobDB", "Notifications", "restart", "", "", "", ""),
+                ("alerts.enabled", "toggle", "Alerts from stoandl", "", "Master switch for the desktop alerts stoandl raises about itself", "stoandl alerts", "live", "", "", "", ""),
+                ("alerts.pairing", "toggle", "Pairing problems", "", "Alert when a watch loses its pairing or keeps dropping the link", "stoandl alerts", "live", "", "", "", ""),
+                ("alerts.bluetooth", "toggle", "Bluetooth blocked", "", "Alert when another app's Bluetooth scan is blocking reconnects", "stoandl alerts", "live", "", "", "", ""),
+                ("alerts.extensions", "toggle", "Extension problems", "", "Alert when an installed extension needs configuring", "stoandl alerts", "live", "", "", "", ""),
+                ("call.dialer_apps", "list", "Dialer apps", "", "Notifications from these apps are suppressed (the native call screen replaces them)", "Calls & contacts", "live", "", "", "", "spacebar,calls"),
+                ("contacts.vcard_paths", "list", "Contact files", "", "vCard files or directories scanned for caller ID. No egress.", "Calls & contacts", "live", "", "", "", "~/.local/share/contacts"),
+                ("weather.locations", "list", "Locations", "", "Fixed locations to fetch weather for, as Name:lat:lon entries", "Weather", "live", "", "", "", "Berlin:52.52:13.405"),
+                ("weather.location_source", "combo", "Extra locations from", "Manual,GNOME,Command", "Where additional fixed locations come from besides the list above", "Weather", "live", "", "", "", ""),
+                ("weather.location_command", "text", "Location command", "", "Run for the Command source; must print Name:lat:lon lines", "Weather", "live", "", "", "", "/usr/local/bin/my-locations"),
+                ("weather.units", "combo", "Temperature units", "Metric,Imperial", "Unit sent to the watch's weather", "Weather", "live", "", "", "", ""),
+                ("weather.interval", "int", "Refresh interval", "", "How often weather is re-fetched", "Weather", "live", "5", "1440", "min", ""),
+                ("weather.gps", "toggle", "Current-location weather", "", "Add a GeoClue2-tracked current location alongside the fixed ones", "Weather", "live", "", "", "", ""),
+                ("weather.gps_name", "text", "Current-location label", "", "Shown on the watch when reverse geocoding is off", "Weather", "live", "", "", "", "Current location"),
+                ("weather.gps_desktop_id", "text", "GeoClue desktop id", "", "Must match the allow-list entry in /etc/geoclue/geoclue.conf", "Weather", "live", "", "", "", "stoandl"),
+                ("weather.reverse_geocode", "toggle", "Reverse-geocode GPS", "", "Name the GPS location via OSM Nominatim (sends coordinates to a web service)", "Weather", "live", "", "", "", ""),
+                ("weather.pins", "toggle", "Weather timeline pins", "", "Add sunrise/sunset pins for the primary location", "Weather", "live", "", "", "", ""),
+                ("calendar.discover", "toggle", "Auto-discover local calendars", "", "Find the desktop's local .ics calendars. No egress.", "Calendar", "live", "", "", "", ""),
+                ("calendar.sync_interval", "int", "Re-read interval", "", "How often calendars are re-read", "Calendar", "live", "5", "1440", "min", ""),
+                ("music.enabled", "toggle", "Music control", "", "Bridge desktop media players to the watch's Music app", "Music", "live", "", "", "", ""),
+                ("music.volume", "combo", "Volume buttons", "System,Player", "What the watch volume buttons control", "Music", "live", "", "", "", ""),
+                ("music.volume_up_command", "text", "Volume-up command", "", "Overrides the auto-detected System-volume backend", "Music", "live", "", "", "", "wpctl set-volume @DEFAULT_SINK@ 5%+"),
+                ("music.volume_down_command", "text", "Volume-down command", "", "Overrides the auto-detected System-volume backend", "Music", "live", "", "", "", "wpctl set-volume @DEFAULT_SINK@ 5%-"),
+                ("health.sync", "toggle", "Health sync", "", "Pull steps/sleep/HR from the watch on connect", "Health", "live", "", "", "", ""),
+                ("health.export", "toggle", "Health export", "", "Project synced health data to NDJSON files", "Health", "live", "", "", "", ""),
+                ("health.export_samples", "toggle", "Export minute-level samples", "", "Also export per-minute steps and heart rate", "Health", "live", "", "", "", ""),
+                ("health.export_days", "int", "Export window", "", "How many days back the export re-projects", "Health", "live", "1", "365", "days", ""),
+                ("battery.heartbeat", "toggle", "Battery insights", "", "Decode the watch's hourly analytics heartbeat", "Battery", "live", "", "", "", ""),
+                ("battery.history", "toggle", "Battery level history", "", "Log the BLE battery level over time", "Battery", "live", "", "", "", ""),
+                ("battery.retention_days", "int", "History retention", "", "How much battery history to keep before pruning", "Battery", "live", "1", "3650", "days", ""),
+                ("firmware.notify", "toggle", "Firmware update alerts", "", "Notify when newer firmware is available", "Firmware", "live", "", "", "", ""),
+                ("firmware.github", "toggle", "Firmware source: Core (GitHub)", "", "Check GitHub (PebbleOS) — opt-in network egress", "Firmware", "live", "", "", "", ""),
+                ("firmware.github_repo", "text", "GitHub repository", "", "owner/repo whose releases publish per-board .pbz bundles", "Firmware", "live", "", "", "", "coredevices/PebbleOS"),
+                ("firmware.github_prereleases", "toggle", "Include GitHub pre-releases", "", "Consider pre-releases too", "Firmware", "live", "", "", "", ""),
+                ("firmware.cohorts", "toggle", "Firmware source: classic (Rebble)", "", "Check Rebble's cohorts — opt-in network egress", "Firmware", "live", "", "", "", ""),
+                ("firmware.cohorts_url", "text", "Cohorts service URL", "", "Override for a self-hosted mirror", "Firmware", "live", "", "", "", "https://cohorts.rebble.io"),
+                ("language.download", "toggle", "Language pack download", "", "Download language packs from the online catalog — opt-in network egress", "Language", "live", "", "", "", ""),
+                ("classic.discover", "toggle", "Bluetooth Classic (classic-era watches)", "", "Discover, pair and connect Pebble Time / Time Steel over Bluetooth Classic", "Connection", "restart", "", "", "", ""),
+                ("connection.autoswitch", "toggle", "Auto-switch between watches", "", "Connect whichever paired watch is in range", "Connection", "live", "", "", "", ""),
+                ("dnd.sync", "combo", "Do Not Disturb sync", "Off,To watch,To host,Both", "Mirror desktop Do Not Disturb and the watch's Quiet Time", "Do Not Disturb", "live", "", "", "", ""),
+                ("geolocation.enabled", "toggle", "Watchapp geolocation", "", "Expose the device's GPS to watchapps / PKJS", "Privacy", "live", "", "", "", ""),
+                ("datalog.enabled", "toggle", "Datalog capture", "", "Save custom-watchapp datalog to NDJSON files", "Developer", "restart", "", "", "", ""),
+                ("developer.autostart", "toggle", "Developer connection autostart", "", "Start the LAN dev server (port 9000) on every connect — UNAUTHENTICATED", "Developer", "live", "", "", "", ""),
+            ]
         ]
         self.config = {
-            "units": "Metric", "weather_provider": "Open-Meteo", "auto_reconnect": "true",
-            "calendar_window": "3 days", "log_level": "info", "calendar.discover": "false",
+            "notification.per_app": "true", "notification.default_mute": "Never",
+            "notification.sync_to_watch": "false",
+            "alerts.enabled": "true", "alerts.pairing": "true", "alerts.bluetooth": "true",
+            "alerts.extensions": "true",
+            "call.dialer_apps": "spacebar,calls", "contacts.vcard_paths": "",
+            "weather.locations": "Berlin:52.52:13.405", "weather.location_source": "Manual",
+            "weather.location_command": "", "weather.units": "Metric", "weather.interval": "30",
+            "weather.gps": "false", "weather.gps_name": "Current location",
+            "weather.gps_desktop_id": "stoandl", "weather.reverse_geocode": "false",
+            "weather.pins": "true",
+            "calendar.discover": "false", "calendar.sync_interval": "30",
+            "music.enabled": "true", "music.volume": "System",
+            "music.volume_up_command": "", "music.volume_down_command": "",
+            "health.sync": "true", "health.export": "true", "health.export_samples": "false",
+            "health.export_days": "30",
+            "battery.heartbeat": "true", "battery.history": "true", "battery.retention_days": "90",
+            "firmware.notify": "true", "firmware.github": "false",
+            "firmware.github_repo": "coredevices/PebbleOS", "firmware.github_prereleases": "false",
+            "firmware.cohorts": "false", "firmware.cohorts_url": "https://cohorts.rebble.io",
+            "language.download": "false",
+            "classic.discover": "true", "connection.autoswitch": "true",
+            "dnd.sync": "Off", "geolocation.enabled": "false",
+            "datalog.enabled": "false", "developer.autostart": "false",
         }
         # HOOK #8: health. Per-day data is GENERATED deterministically from each date's ordinal
         # (see the _*_for/_window helpers) so the period-aware GetHealthSummary/GetHealthSeries
@@ -1289,8 +1358,7 @@ class MockStoandl(dbus.service.Object):
     # --- Daemon config (HOOK #10) ------------------------------------------
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def GetConfigSchema(self):
-        return [rec(c["key"], c["type"], c["label"], c["options"], c["desc"])
-                for c in self.config_schema]
+        return [rec(*(c[col] for col in CONFIG_COLS)) for c in self.config_schema]
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def GetConfig(self):
@@ -1298,11 +1366,46 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
     def SetConfig(self, key, value):
-        known = {c["key"] for c in self.config_schema}
-        if key not in known:
+        # Mirrors the daemon's ConfigField.parse(): the GUI must handle a rejection with a reason, not
+        # just a silent revert, so the mock rejects the same things the daemon does.
+        field = next((c for c in self.config_schema if c["key"] == key), None)
+        if field is None:
             return f"notfound:no config key '{key}'"
-        self.config[key] = value
-        return f"ok:{key} = {value}"
+        v = str(value).strip()
+        kind = field["type"]
+        if kind == "combo":
+            opts = [o for o in field["options"].split(",") if o]
+            match = next((o for o in opts if o.lower() == v.lower()), None)
+            if match is None:
+                return f"error:invalid value '{value}' for {key} (expected one of {field['options']})"
+            v = match
+        elif kind == "toggle":
+            if v.lower() in ("true", "yes", "on", "1"):
+                v = "true"
+            elif v.lower() in ("false", "no", "off", "0"):
+                v = "false"
+            else:
+                return f"error:invalid value '{value}' for {key} (expected true or false)"
+        elif kind == "int":
+            try:
+                n = int(v)
+            except ValueError:
+                return f"error:invalid value '{value}' for {key} (expected a whole number)"
+            if field["min"] != "" and n < int(field["min"]):
+                return f"error:{key} must be at least {field['min']}"
+            if field["max"] != "" and n > int(field["max"]):
+                return f"error:{key} must be at most {field['max']}"
+            v = str(n)
+        else:  # text | list — stoandl.conf is one `key = value` line with '#' starting a comment
+            if "\n" in v or "\r" in v:
+                return f"error:{key}: must be a single line"
+            if "#" in v:
+                return f"error:{key}: cannot contain '#' (it starts a comment in stoandl.conf)"
+            if kind == "list":
+                v = ",".join(p.strip() for p in v.split(",") if p.strip())
+        self.config[key] = v
+        tail = " (restart stoandl to apply)" if field["apply"] == "restart" else ""
+        return f"ok:{key} = {v}{tail}"
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def GetHealthProfile(self):

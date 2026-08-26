@@ -42,6 +42,32 @@ Kirigami.ApplicationWindow {
         pageStack.replace(pageComponents[index]);
     }
 
+    // Headless verification harness (sandbox only, gated on STOANDL_SMOKE_MS). Steps through every
+    // destination one per tick, deep-exercises the Settings sub-pages, then quits — so an offscreen run
+    // against the mock proves QML → StoandlClient → D-Bus → render end-to-end and self-terminates.
+    // The GTK front-end has the same hook (window.rs::maybe_start_smoke).
+    Timer {
+        id: smokeTimer
+        property int step: 0
+        running: StoandlClient.smokeMs > 0
+        interval: Math.max(1, StoandlClient.smokeMs)
+        repeat: true
+        onTriggered: {
+            if (smokeTimer.step >= root.pageComponents.length) {
+                console.log("stoandl-smoke: cycled all " + root.pageComponents.length + " pages, quitting");
+                smokeTimer.running = false;
+                Qt.quit();
+                return;
+            }
+            root.showTab(smokeTimer.step);
+            console.log("stoandl-smoke: page " + smokeTimer.step);
+            var cur = root.pageStack.currentItem;
+            if (cur && typeof cur.smokeExercise === "function")
+                cur.smokeExercise();
+            smokeTimer.step += 1;
+        }
+    }
+
     // No global drawer — navigation is the (responsive) tab bar. Putting the
     // NavigationTabBar in the window footer makes it sit BELOW content on mobile
     // and relocate ABOVE content on desktop, per the KDE HIG.

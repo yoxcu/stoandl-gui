@@ -29,12 +29,18 @@ class StoandlClient : public QObject
     // Host Bluetooth on/usable (BluetoothStatus, polled on the 20 s watch tick). The daemon detects
     // adapter-off / rfkill / airplane-mode; the GUI shows a "Bluetooth is off" state when this is false.
     Q_PROPERTY(bool bluetoothOn READ bluetoothOn NOTIFY bluetoothOnChanged)
+    // Headless verification harness (sandbox only): milliseconds per step when STOANDL_SMOKE_MS is
+    // set, else 0. Main.qml steps through every tab, exercises the Settings sub-pages and quits, so
+    // `QT_QPA_PLATFORM=offscreen tools/run-with-mock.sh` proves QML -> D-Bus -> mock -> render
+    // end-to-end and self-terminates. The GTK front-end has the same hook (window.rs).
+    Q_PROPERTY(int smokeMs READ smokeMs CONSTANT)
 
 public:
     explicit StoandlClient(QObject *parent = nullptr);
 
     bool daemonUp() const { return m_daemonUp; }
     bool bluetoothOn() const { return m_bluetoothOn; }
+    static int smokeMs() { return qEnvironmentVariableIntValue("STOANDL_SMOKE_MS"); }
 
     // Parsed status string: "kind:tail", tail tab-split into fields.
     struct Status {
