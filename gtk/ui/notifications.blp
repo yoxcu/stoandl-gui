@@ -47,6 +47,12 @@ template $StoandlNotificationsPage: Adw.BreakpointBin {
         icon-name: "list-add-symbolic";
         tooltip-text: _("Add filter");
       }
+
+      [end]
+      Gtk.Button send_test_button {
+        icon-name: "mail-send-symbolic";
+        tooltip-text: _("Send a test notification");
+      }
     }
 
     content: Gtk.ScrolledWindow {
@@ -70,6 +76,12 @@ template $StoandlNotificationsPage: Adw.BreakpointBin {
         Adw.PreferencesGroup filters_group {
           title: _("Filters");
           description: _("Filters use regex on the notification title and body. Block hides matching notifications; allow always forwards them.");
+        }
+
+        // stoandl's own alerts (pairing, Bluetooth, extensions, firmware) are daemon
+        // config keys, so they live on the schema-driven Daemon configuration page.
+        Adw.PreferencesGroup {
+          description: _("This screen covers notifications forwarded from desktop apps. stoandl's own alerts — pairing problems, a Bluetooth scan blocking reconnects, an extension that needs setup, firmware updates — are under Settings → Daemon configuration.");
         }
       };
     };

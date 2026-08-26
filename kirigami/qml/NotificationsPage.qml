@@ -61,7 +61,35 @@ Kirigami.ScrollablePage {
 
     Component.onCompleted: page.reload()
 
+    // Push one through the real send path — the same choke point desktop and extension notifications
+    // use, so per-app mute, the filters and the master switch all apply. That is the point: it answers
+    // "is anything on this screen stopping my notifications?" rather than bypassing them to look good.
+    function sendTest() {
+        var r = StoandlClient.call("SendTestNotification",
+                                   ["Test notification", "Sent from stoandl at " + Qt.formatTime(new Date(), "HH:mm")]);
+        if (r.ok) {
+            page.toast("Test notification sent to the watch");
+        } else {
+            page.toast(r.kind === "notready" ? "No watch connected"
+                                             : "Not sent: " + (r.tail || r.kind));
+        }
+        page.reload();
+    }
+
+    // Headless smoke harness (STOANDL_SMOKE_MS) — see Main.qml. Covers the send-test path, the only
+    // control on this page that goes through SendTestNotification.
+    function smokeExercise() {
+        page.sendTest();
+        console.log("stoandl-smoke: exercised notifications page");
+    }
+
     actions: [
+        Kirigami.Action {
+            icon.name: "mail-send-symbolic"
+            text: "Send test"
+            enabled: StoandlClient.daemonUp
+            onTriggered: page.sendTest()
+        },
         Kirigami.Action {
             icon.name: "list-add"
             text: "Add filter"
@@ -302,6 +330,11 @@ Kirigami.ScrollablePage {
             font: Kirigami.Theme.smallFont
             opacity: 0.7
             wrapMode: Text.WordWrap
+        }
+
+        FormCard.FormSectionText {
+            visible: StoandlClient.daemonUp
+            text: "This screen covers notifications forwarded from desktop apps. stoandl's own alerts — pairing problems, a Bluetooth scan blocking reconnects, an extension that needs setup, firmware updates — are under Settings → Daemon configuration."
         }
     }
 

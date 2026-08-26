@@ -57,6 +57,8 @@ mod imp {
         #[template_child]
         pub add_filter_button: TemplateChild<gtk::Button>,
         #[template_child]
+        pub send_test_button: TemplateChild<gtk::Button>,
+        #[template_child]
         pub forward_switch: TemplateChild<adw::SwitchRow>,
         #[template_child]
         pub forwarding_group: TemplateChild<adw::PreferencesGroup>,
@@ -140,6 +142,11 @@ impl StoandlNotificationsPage {
             #[weak(rename_to = page)]
             self,
             move |_| page.open_add_filter()
+        ));
+        self.imp().send_test_button.connect_clicked(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| page.send_test()
         ));
         // Master forward toggle (guarded against programmatic sets in update).
         self.imp().forward_switch.connect_active_notify(glib::clone!(
@@ -680,6 +687,42 @@ impl StoandlNotificationsPage {
         ));
     }
 
+    /// Push one notification through the real send path — the same choke point desktop and extension
+    /// notifications use, so per-app mute, the filters and the master switch all apply. That is the
+    /// point: it answers "is anything on this screen stopping my notifications?" rather than bypassing
+    /// them to look good.
+    fn send_test(&self) {
+        let client = self.client();
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            client,
+            async move {
+                let body = format!(
+                    "Sent from stoandl at {}",
+                    glib::DateTime::now_local()
+                        .ok()
+                        .and_then(|d| d.format("%H:%M").ok())
+                        .map(|s| s.to_string())
+                        .unwrap_or_default()
+                );
+                let s = client.send_test_notification("Test notification", &body).await;
+                if s.ok() {
+                    page.toast("Test notification sent to the watch");
+                } else if s.kind == "notready" {
+                    page.toast("No watch connected");
+                } else {
+                    let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
+                    page.toast(&format!("Not sent: {m}"));
+                }
+                // Re-fetch is authoritative: a test send lazily tracks "stoandl" as a new app, so the
+                // per-app list gains a row.
+                page.reload().await;
+            }
+        ));
+    }
+
     fn open_add_filter(&self) {
         let pattern = adw::EntryRow::builder().title("Regex pattern").build();
         pattern.add_css_class("mono");
@@ -755,6 +798,9 @@ impl StoandlNotificationsPage {
         if std::env::var_os("STOANDL_SMOKE_MS").is_none() {
             return;
         }
+        // Exercise the send-test path too — it is the only control here that goes through
+        // SendTestNotification, so nothing else would cover it.
+        self.send_test();
         dbg_smoke("exercised notifications page");
     }
 }
