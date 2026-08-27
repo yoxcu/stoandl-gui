@@ -9,7 +9,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gio, glib, CompositeTemplate};
 
-use super::{action_row, esc, temp_path};
+use super::{action_row, combo_row, debounce, esc, spin_row, switch_row, temp_path};
 use crate::dbus::parse::ConfigField;
 use crate::dbus::{Calendar, CalendarSource, MusicStatus, StoandlClient, WatchPref};
 use crate::window::StoandlWindow;
@@ -135,31 +135,34 @@ fn sync_icon(service: &str) -> &'static str {
 
 /// An on/off field stored as `"on"`/`"off"`.
 fn hp_switch(group: &adw::PreferencesGroup, page: &StoandlSettingsPage, key: &'static str, label: &str, subtitle: &str, on: bool) -> adw::SwitchRow {
-    let row = adw::SwitchRow::builder().title(label).subtitle(subtitle).active(on).build();
-    row.connect_active_notify(glib::clone!(
-        #[weak]
-        page,
-        move |r| page.apply_health_profile(key, if r.is_active() { "on" } else { "off" })
-    ));
+    let row = switch_row(
+        label,
+        subtitle,
+        on,
+        glib::clone!(
+            #[weak]
+            page,
+            move |v: bool| page.apply_health_profile(key, if v { "on" } else { "off" })
+        ),
+    );
     group.add(&row);
     row
 }
 
 /// A fixed-option field; the daemon takes the option value back verbatim.
 fn hp_combo(group: &adw::PreferencesGroup, page: &StoandlSettingsPage, key: &'static str, label: &str, options: &[&str], cur: &str) -> adw::ComboRow {
-    let model = gtk::StringList::new(options);
-    let row = adw::ComboRow::builder().title(label).model(&model).build();
-    row.set_selected(options.iter().position(|o| *o == cur).unwrap_or(0) as u32);
     let opts: Vec<String> = options.iter().map(|s| s.to_string()).collect();
-    row.connect_selected_notify(glib::clone!(
-        #[weak]
-        page,
-        move |r| {
-            if let Some(v) = opts.get(r.selected() as usize) {
-                page.apply_health_profile(key, v);
-            }
-        }
-    ));
+    let row = combo_row(
+        label,
+        "",
+        &opts,
+        cur,
+        glib::clone!(
+            #[weak]
+            page,
+            move |v: &str| page.apply_health_profile(key, v)
+        ),
+    );
     group.add(&row);
     row
 }
@@ -190,31 +193,32 @@ fn hp_spin(
     cur_display: f64,
     store: impl Fn(i64) -> String + 'static,
 ) {
-    let adj = gtk::Adjustment::new(cur_display.round().clamp(min, max), min, max, 1.0, 10.0, 0.0);
-    let row = adw::SpinRow::new(Some(&adj), 1.0, 0);
-    row.set_title(label);
-    adj.connect_value_changed(glib::clone!(
-        #[weak]
-        page,
-        move |a| {
-            let stored = store(a.value().round() as i64);
-            if let Some(t) = page.imp().hp_debounce.borrow_mut().take() {
-                t.remove();
+    let row = spin_row(
+        label,
+        "",
+        min as i64,
+        max as i64,
+        cur_display.round(),
+        glib::clone!(
+            #[weak]
+            page,
+            move |v: i64| {
+                let stored = store(v);
+                let src = debounce(
+                    &page.imp().hp_debounce,
+                    glib::clone!(
+                        #[weak]
+                        page,
+                        move || {
+                            page.imp().hp_debounce.borrow_mut().take();
+                            page.apply_health_profile(key, &stored);
+                        }
+                    ),
+                );
+                page.imp().hp_debounce.borrow_mut().replace(src);
             }
-            let src = glib::timeout_add_local_once(
-                std::time::Duration::from_millis(500),
-                glib::clone!(
-                    #[weak]
-                    page,
-                    move || {
-                        page.imp().hp_debounce.borrow_mut().take();
-                        page.apply_health_profile(key, &stored);
-                    }
-                ),
-            );
-            page.imp().hp_debounce.borrow_mut().replace(src);
-        }
-    ));
+        ),
+    );
     group.add(&row);
 }
 
@@ -646,87 +650,63 @@ impl StoandlSettingsPage {
         let key = f.key.clone();
         let subtitle = Self::cfg_subtitle(f);
         match f.field_type.as_str() {
-            "toggle" => {
-                let row = adw::SwitchRow::builder()
-                    .title(&esc(&f.label))
-                    .subtitle(&esc(&subtitle))
-                    .active(cur == "true")
-                    .build();
-                row.connect_active_notify(glib::clone!(
+            "toggle" => switch_row(
+                &esc(&f.label),
+                &esc(&subtitle),
+                cur == "true",
+                glib::clone!(
                     #[weak(rename_to = page)]
                     self,
-                    move |r| page.apply_config(&key, if r.is_active() { "true" } else { "false" })
-                ));
-                row.upcast()
-            }
-            "combo" => {
-                let model =
-                    gtk::StringList::new(&f.options.iter().map(String::as_str).collect::<Vec<_>>());
-                let row = adw::ComboRow::builder()
-                    .title(&esc(&f.label))
-                    .subtitle(&esc(&subtitle))
-                    .model(&model)
-                    .build();
-                row.set_selected(f.options.iter().position(|o| o == cur).unwrap_or(0) as u32);
-                let opts = f.options.clone();
-                row.connect_selected_notify(glib::clone!(
+                    move |on: bool| page.apply_config(&key, if on { "true" } else { "false" })
+                ),
+            )
+            .upcast(),
+            "combo" => combo_row(
+                &esc(&f.label),
+                &esc(&subtitle),
+                &f.options,
+                cur,
+                glib::clone!(
                     #[weak(rename_to = page)]
                     self,
-                    move |r| {
-                        if let Some(v) = opts.get(r.selected() as usize) {
-                            page.apply_config(&key, v);
-                        }
-                    }
-                ));
-                row.upcast()
-            }
+                    move |v: &str| page.apply_config(&key, v)
+                ),
+            )
+            .upcast(),
             "int" => {
-                // Same shape as the watch-prefs number row: bounded adjustment, unit in the title,
-                // and a debounced commit (the spin fires per step and each apply rebuilds this row).
-                let step = (((f.max - f.min).max(1)) as f64 / 100.0).round().max(1.0);
-                let val = cur.parse::<f64>().unwrap_or(f.min as f64);
-                let adj = gtk::Adjustment::new(
-                    val.clamp(f.min as f64, f.max as f64),
-                    f.min as f64,
-                    f.max as f64,
-                    step,
-                    step * 10.0,
-                    0.0,
-                );
-                let row = adw::SpinRow::new(Some(&adj), step, 0);
+                // AdwSpinRow has no unit slot, so the unit rides in the title.
                 let title = if f.unit.is_empty() {
                     f.label.clone()
                 } else {
                     format!("{} ({})", f.label, f.unit)
                 };
-                row.set_title(&esc(&title));
-                if !subtitle.is_empty() {
-                    row.set_subtitle(&esc(&subtitle));
-                }
-                adj.connect_value_changed(glib::clone!(
-                    #[weak(rename_to = page)]
-                    self,
-                    move |a| {
-                        let v = a.value().round() as i64;
-                        if let Some(t) = page.imp().general_debounce.borrow_mut().take() {
-                            t.remove();
+                spin_row(
+                    &esc(&title),
+                    &esc(&subtitle),
+                    f.min,
+                    f.max,
+                    cur.parse::<f64>().unwrap_or(f.min as f64),
+                    glib::clone!(
+                        #[weak(rename_to = page)]
+                        self,
+                        move |v: i64| {
+                            let key = key.clone();
+                            let src = debounce(
+                                &page.imp().general_debounce,
+                                glib::clone!(
+                                    #[weak]
+                                    page,
+                                    move || {
+                                        page.imp().general_debounce.borrow_mut().take();
+                                        page.apply_config(&key, &v.to_string());
+                                    }
+                                ),
+                            );
+                            page.imp().general_debounce.borrow_mut().replace(src);
                         }
-                        let key = key.clone();
-                        let src = glib::timeout_add_local_once(
-                            std::time::Duration::from_millis(500),
-                            glib::clone!(
-                                #[weak]
-                                page,
-                                move || {
-                                    page.imp().general_debounce.borrow_mut().take();
-                                    page.apply_config(&key, &v.to_string());
-                                }
-                            ),
-                        );
-                        page.imp().general_debounce.borrow_mut().replace(src);
-                    }
-                ));
-                row.upcast()
+                    ),
+                )
+                .upcast()
             }
             // text | list | unknown. AdwEntryRow has no subtitle, so the description and the
             // placeholder (which documents the expected shape, e.g. Name:lat:lon) go on an ActionRow
@@ -1163,39 +1143,33 @@ impl StoandlSettingsPage {
     fn wp_row(&self, p: &WatchPref) -> gtk::Widget {
         match p.pref_type.as_str() {
             "bool" => {
-                let row = adw::SwitchRow::builder()
-                    .title(&esc(&p.name))
-                    .subtitle(&esc(&p.description))
-                    .active(p.current_bool)
-                    .build();
                 let id = p.id.clone();
-                row.connect_active_notify(glib::clone!(
-                    #[weak(rename_to = page)]
-                    self,
-                    move |r| page.apply_pref(&id, if r.is_active() { "true" } else { "false" })
-                ));
-                row.upcast()
+                switch_row(
+                    &esc(&p.name),
+                    &esc(&p.description),
+                    p.current_bool,
+                    glib::clone!(
+                        #[weak(rename_to = page)]
+                        self,
+                        move |on: bool| page.apply_pref(&id, if on { "true" } else { "false" })
+                    ),
+                )
+                .upcast()
             }
             "enum" => {
-                let model =
-                    gtk::StringList::new(&p.allowed.iter().map(String::as_str).collect::<Vec<_>>());
-                let row = adw::ComboRow::builder()
-                    .title(&esc(&p.name))
-                    .subtitle(&esc(&p.description))
-                    .model(&model)
-                    .build();
-                row.set_selected(p.allowed.iter().position(|o| *o == p.current).unwrap_or(0) as u32);
-                let (id, opts) = (p.id.clone(), p.allowed.clone());
-                row.connect_selected_notify(glib::clone!(
-                    #[weak(rename_to = page)]
-                    self,
-                    move |r| {
-                        if let Some(v) = opts.get(r.selected() as usize) {
-                            page.apply_pref(&id, v);
-                        }
-                    }
-                ));
-                row.upcast()
+                let id = p.id.clone();
+                combo_row(
+                    &esc(&p.name),
+                    &esc(&p.description),
+                    &p.allowed,
+                    &p.current,
+                    glib::clone!(
+                        #[weak(rename_to = page)]
+                        self,
+                        move |v: &str| page.apply_pref(&id, v)
+                    ),
+                )
+                .upcast()
             }
             "quicklaunch" => {
                 // The combo is built from ListApps titles + "Off" (the allowed field
@@ -1230,50 +1204,39 @@ impl StoandlSettingsPage {
                 row.upcast()
             }
             "number" => {
-                let step = (((p.max - p.min).max(1)) as f64 / 100.0).round().max(1.0);
-                let val = if p.current_int >= 0 { p.current_int } else { p.min } as f64;
-                let adj =
-                    gtk::Adjustment::new(val, p.min as f64, p.max as f64, step, step * 10.0, 0.0);
-                let row = adw::SpinRow::new(Some(&adj), step, 0);
                 let title = if p.unit.is_empty() {
                     p.name.clone()
                 } else {
                     format!("{} ({})", p.name, p.unit)
                 };
-                row.set_title(&esc(&title));
-                if !p.description.is_empty() {
-                    row.set_subtitle(&esc(&p.description));
-                }
-                // Debounce: commit ~500 ms after the user stops (the spin fires on
-                // every step, and each apply re-fetches + rebuilds this control).
-                // Single shared pending-write slot (one number is adjusted at a
-                // time); cancelled in reload_watch_prefs so a rebuild that destroys
-                // this SpinRow can't leave a stale timer to re-apply.
                 let id = p.id.clone();
-                adj.connect_value_changed(glib::clone!(
-                    #[weak(rename_to = page)]
-                    self,
-                    move |a| {
-                        let v = a.value().round() as i64;
-                        if let Some(t) = page.imp().wp_debounce.borrow_mut().take() {
-                            t.remove();
+                spin_row(
+                    &esc(&title),
+                    &esc(&p.description),
+                    p.min as i64,
+                    p.max as i64,
+                    if p.current_int >= 0 { p.current_int } else { p.min } as f64,
+                    glib::clone!(
+                        #[weak(rename_to = page)]
+                        self,
+                        move |v: i64| {
+                            let id = id.clone();
+                            let src = debounce(
+                                &page.imp().wp_debounce,
+                                glib::clone!(
+                                    #[weak]
+                                    page,
+                                    move || {
+                                        page.imp().wp_debounce.borrow_mut().take();
+                                        page.apply_pref(&id, &v.to_string());
+                                    }
+                                ),
+                            );
+                            page.imp().wp_debounce.borrow_mut().replace(src);
                         }
-                        let id = id.clone();
-                        let src = glib::timeout_add_local_once(
-                            std::time::Duration::from_millis(500),
-                            glib::clone!(
-                                #[weak]
-                                page,
-                                move || {
-                                    page.imp().wp_debounce.borrow_mut().take();
-                                    page.apply_pref(&id, &v.to_string());
-                                }
-                            ),
-                        );
-                        page.imp().wp_debounce.borrow_mut().replace(src);
-                    }
-                ));
-                row.upcast()
+                    ),
+                )
+                .upcast()
             }
             "color" => {
                 let row = adw::ActionRow::builder().title(&esc(&p.name)).build();

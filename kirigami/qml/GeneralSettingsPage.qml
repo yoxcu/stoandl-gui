@@ -150,64 +150,18 @@ Kirigami.ScrollablePage {
                                 }
                             }
 
-                            // Number: a spin box bounded by the schema's min/max, with the unit rendered
-                            // into the display text. FormSpinBoxDelegate has no `description`, so the
-                            // label/description column is built by hand (as WatchSettingsPage's colour
-                            // row does) to keep the density identical to the switch/combo rows.
+                            // Number: the shared FormSpinRow (bounded, unit in the display text, and a
+                            // debounced commit — applyConfig rebuilds this very control).
                             Component {
                                 id: cfgInt
-                                FormCard.AbstractFormDelegate {
-                                    background: null
-                                    contentItem: RowLayout {
-                                        spacing: Kirigami.Units.largeSpacing
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 0
-                                            QQC2.Label {
-                                                Layout.fillWidth: true
-                                                text: cfgLoader.modelData.label
-                                                elide: Text.ElideRight
-                                            }
-                                            QQC2.Label {
-                                                Layout.fillWidth: true
-                                                visible: text !== ""
-                                                text: cfgLoader.modelData.description
-                                                wrapMode: Text.WordWrap
-                                                font: Kirigami.Theme.smallFont
-                                                color: Kirigami.Theme.disabledTextColor
-                                            }
-                                        }
-                                        QQC2.SpinBox {
-                                            id: sb
-                                            // The spin box fires valueChanged on the programmatic initial
-                                            // set too; only commit once the user has moved it.
-                                            property bool ready: false
-                                            Layout.alignment: Qt.AlignVCenter
-                                            from: cfgLoader.modelData.min
-                                            to: cfgLoader.modelData.max
-                                            editable: true
-                                            // ~100 steps across the range so a wide one stays navigable.
-                                            stepSize: Math.max(1, Math.round((cfgLoader.modelData.max - cfgLoader.modelData.min) / 100))
-                                            textFromValue: function (v, locale) {
-                                                return v + (cfgLoader.modelData.unit ? " " + cfgLoader.modelData.unit : "");
-                                            }
-                                            valueFromText: function (text, locale) { return parseInt(text, 10) || 0; }
-                                            Component.onCompleted: {
-                                                sb.value = cfgLoader.modelData.valueInt;
-                                                sb.ready = true;
-                                            }
-                                            // valueChanged fires on every step/auto-repeat, and applyConfig
-                                            // re-fetches and rebuilds this very control — so commit once
-                                            // ~500 ms after the user stops, not per tick.
-                                            onValueChanged: if (sb.ready) commitTimer.restart()
-                                            Timer {
-                                                id: commitTimer
-                                                interval: 500
-                                                repeat: false
-                                                onTriggered: page.applyConfig(cfgLoader.modelData.key, String(sb.value))
-                                            }
-                                        }
-                                    }
+                                FormSpinRow {
+                                    label: cfgLoader.modelData.label
+                                    description: cfgLoader.modelData.description
+                                    from: cfgLoader.modelData.min
+                                    to: cfgLoader.modelData.max
+                                    unit: cfgLoader.modelData.unit
+                                    value: cfgLoader.modelData.valueInt
+                                    onCommit: (newValue) => page.applyConfig(cfgLoader.modelData.key, String(newValue))
                                 }
                             }
 

@@ -204,34 +204,15 @@ Kirigami.ScrollablePage {
 
                             Component {
                                 id: numberPref
-                                FormCard.FormSpinBoxDelegate {
-                                    id: sb
-                                    // Guard: the spinbox fires onValueChanged on the programmatic initial
-                                    // set too — only commit once the user moves it (ready flips in
-                                    // Component.onCompleted, after the initial value is applied).
-                                    property bool ready: false
+                                FormSpinRow {
                                     label: prefLoader.modelData.name
+                                    description: prefLoader.modelData.description
                                     from: prefLoader.modelData.min
                                     to: prefLoader.modelData.max
-                                    // ~100 steps across the range so wide ms ranges stay navigable.
-                                    stepSize: Math.max(1, Math.round((prefLoader.modelData.max - prefLoader.modelData.min) / 100))
-                                    textFromValue: function (v, locale) { return v + (prefLoader.modelData.unit ? " " + prefLoader.modelData.unit : ""); }
-                                    valueFromText: function (text, locale) { return parseInt(text, 10) || 0; }
-                                    Component.onCompleted: {
-                                        sb.value = prefLoader.modelData.currentInt >= 0 ? prefLoader.modelData.currentInt : prefLoader.modelData.min;
-                                        sb.ready = true;
-                                    }
-                                    // onValueChanged fires on EVERY step/auto-repeat; applyPref re-fetches and
-                                    // rebuilds the whole list (recreating this very control). So debounce: commit
-                                    // once ~500 ms after the user stops, not per tick (avoids a write storm /
-                                    // BlobDB sync per step, and recreating the focused control mid-interaction).
-                                    onValueChanged: if (sb.ready) commitTimer.restart()
-                                    Timer {
-                                        id: commitTimer
-                                        interval: 500
-                                        repeat: false
-                                        onTriggered: page.applyPref(prefLoader.modelData.id, String(sb.value))
-                                    }
+                                    unit: prefLoader.modelData.unit
+                                    value: prefLoader.modelData.currentInt >= 0 ? prefLoader.modelData.currentInt
+                                                                                : prefLoader.modelData.min
+                                    onCommit: (newValue) => page.applyPref(prefLoader.modelData.id, String(newValue))
                                 }
                             }
 
