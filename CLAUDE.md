@@ -39,7 +39,15 @@ surface): **`SyncSettingsPage`** (service master toggles + force-sync), **`Calen
 under it with per-calendar enable toggles, plus an add/edit/delete dialog; the CalDAV **password field
 is write-only**, blank on edit = keep), **`WatchSettingsPage`** (the ~46 WatchPrefs, grouped into
 FormHeader sections and rendered one delegate *per type* — see below), **`GeneralSettingsPage`** (the
-curated `stoandl.conf` keys), **`BackupSettingsPage`** (backup/restore/support CLI). `Main.qml`'s
+`stoandl.conf` keys — schema-driven like WatchSettingsPage: the daemon's `GetConfigSchema` declares
+`key type label options desc group apply min max unit placeholder`, so a new daemon key appears here with
+the right widget and no QML change. Five kinds: `toggle`→FormSwitchDelegate, `combo`→FormComboBoxDelegate,
+`int`/`text`/`list`→hand-built `AbstractFormDelegate` rows, because FormSpinBoxDelegate and
+FormTextFieldDelegate have no `description` property — and FormTextFieldDelegate additionally calls
+`i18ndc()`, which throws here for the same reason FormColorDelegate is avoided. Rows are grouped into one
+FormHeader+FormCard per `group`, and a row whose `apply` is `restart` says so in its description. Columns
+6–11 were **appended** to the original 5-column contract, so parse them with a per-column fallback —
+never a hard read), **`BackupSettingsPage`** (backup/restore/support CLI). `Main.qml`'s
 `showTab()` pops pushed sub-pages on tab-switch and on re-tapping the active tab. (Calendars used to be
 a flat list nested in SyncSettingsPage; they moved to their own page when account grouping + CRUD landed.)
 
@@ -68,6 +76,18 @@ calls `i18ndc()` and we deliberately link no KF6 C++ / `KLocalizedContext`).
 call a page method (it resolves to a `QQmlComponent`); **handlers can**. So precompute per-row display
 data (quick-launch options, color presets) in a page-scope getter and have the delegates read only
 `modelData.*`.
+
+## Headless smoke harness
+
+`STOANDL_SMOKE_MS=<ms>` makes the app step through every tab one per tick, call `smokeExercise()` on any
+page that defines one, and quit — so `QT_QPA_PLATFORM=offscreen tools/run-with-mock.sh` proves
+QML → `StoandlClient` → D-Bus → mock → render end-to-end and self-terminates. (The GTK front-end has the
+same hook in `gtk/src/window.rs::maybe_start_smoke`.) The env var is read via `StoandlClient.smokeMs`.
+
+**Add a `smokeExercise()` to any page whose interesting state is only reachable by navigation or by a
+button press** — otherwise it is not covered. `SettingsPage` pushes all seven sub-pages;
+`NotificationsPage` fires the send-test. This harness is how the delegate-binding scope trap below was
+caught, so it is worth keeping honest.
 
 ## Hard rules
 - **The interface has SEVEN signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
