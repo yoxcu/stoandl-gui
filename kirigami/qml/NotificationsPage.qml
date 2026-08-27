@@ -79,7 +79,10 @@ Kirigami.ScrollablePage {
     // Headless smoke harness (STOANDL_SMOKE_MS) — see Main.qml. Covers the send-test path, the only
     // control on this page that goes through SendTestNotification.
     function smokeExercise() {
-        page.sendTest();
+        // Guarded like the action itself: with the daemon down the button is disabled, so firing it
+        // here would exercise a path a user cannot reach and log a misleading D-Bus error.
+        if (StoandlClient.daemonUp)
+            page.sendTest();
         console.log("stoandl-smoke: exercised notifications page");
     }
 

@@ -799,8 +799,11 @@ impl StoandlNotificationsPage {
             return;
         }
         // Exercise the send-test path too — it is the only control here that goes through
-        // SendTestNotification, so nothing else would cover it.
-        self.send_test();
+        // SendTestNotification, so nothing else would cover it. Skipped when the daemon is down: the
+        // button is insensitive then, so firing it would exercise a path a user cannot reach.
+        if self.client().daemon_up() {
+            self.send_test();
+        }
         dbg_smoke("exercised notifications page");
     }
 }
