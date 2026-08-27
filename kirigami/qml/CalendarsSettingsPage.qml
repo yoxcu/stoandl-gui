@@ -101,8 +101,8 @@ Kirigami.ScrollablePage {
     // Save the add/edit dialog. Reads the dialog's field ids (file-scoped) directly.
     function saveSource(dlg) {
         var r = (dlg.mode === "add")
-            ? StoandlClient.addCalendarSource(dlg.type, urlField.text, userField.text, passField.text)
-            : StoandlClient.updateCalendarSource(dlg.editId, urlField.text, userField.text, passField.text);
+            ? StoandlClient.addCalendarSource(dlg.type, urlField.value, userField.value, passField.value)
+            : StoandlClient.updateCalendarSource(dlg.editId, urlField.value, userField.value, passField.value);
         if (r.kind === "ok") {
             var backend = (r.fields && r.fields.length > 1) ? r.fields[1] : "";
             var where = backend === "keyring" ? " (saved to system keyring)"
@@ -278,13 +278,13 @@ Kirigami.ScrollablePage {
         function openAdd() {
             mode = "add"; editId = ""; type = "caldav";
             typeCombo.currentIndex = 0;
-            urlField.text = ""; userField.text = ""; passField.text = "";
+            urlField.value = ""; userField.value = ""; passField.value = "";
             title = "Add calendar";
             open();
         }
         function openEdit(src) {
             mode = "edit"; editId = src.id; type = src.type;
-            urlField.text = src.url || ""; userField.text = src.username || ""; passField.text = "";
+            urlField.value = src.url || ""; userField.value = src.username || ""; passField.value = "";
             title = "Edit " + page.sourceTypeLabel(src.type);
             open();
         }
@@ -300,18 +300,18 @@ Kirigami.ScrollablePage {
                 currentIndex: 0
                 onCurrentIndexChanged: sourceDialog.type = ["caldav", "ical", "ics"][currentIndex]
             }
-            FormCard.FormTextFieldDelegate {
+            FormTextRow {
                 id: urlField
                 label: sourceDialog.type === "ics"  ? "File or folder path"
                      : sourceDialog.type === "ical" ? "Feed URL (https://…/calendar.ics)"
                      : "Account URL (https://dav.example.com/…)"
             }
-            FormCard.FormTextFieldDelegate {
+            FormTextRow {
                 id: userField
                 visible: sourceDialog.type === "caldav"
                 label: "Username"
             }
-            FormCard.FormTextFieldDelegate {
+            FormTextRow {
                 id: passField
                 visible: sourceDialog.type === "caldav"
                 label: "Password"

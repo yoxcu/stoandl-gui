@@ -211,39 +211,22 @@ Kirigami.ScrollablePage {
                                 }
                             }
 
-                            // Text and list (comma-separated). Same hand-built label/description column;
-                            // the schema's placeholder documents the expected shape (e.g. Name:lat:lon).
+                            // Text and list (comma-separated), via the shared FormTextRow (which exists
+                            // because FormTextFieldDelegate has no `description` and calls i18ndc()).
+                            // The schema's placeholder documents the expected shape (e.g. Name:lat:lon).
                             Component {
                                 id: cfgText
-                                FormCard.AbstractFormDelegate {
-                                    background: null
-                                    contentItem: ColumnLayout {
-                                        spacing: Kirigami.Units.smallSpacing
-                                        QQC2.Label {
-                                            Layout.fillWidth: true
-                                            text: cfgLoader.modelData.label
-                                            elide: Text.ElideRight
-                                        }
-                                        QQC2.Label {
-                                            Layout.fillWidth: true
-                                            visible: text !== ""
-                                            text: cfgLoader.modelData.description
-                                            wrapMode: Text.WordWrap
-                                            font: Kirigami.Theme.smallFont
-                                            color: Kirigami.Theme.disabledTextColor
-                                        }
-                                        QQC2.TextField {
-                                            id: tf
-                                            Layout.fillWidth: true
-                                            text: cfgLoader.modelData.value
-                                            placeholderText: cfgLoader.modelData.placeholder
-                                            // Commit on focus-out / Enter only: applyConfig rebuilds this
-                                            // control, so committing per keystroke would fight the user.
-                                            onEditingFinished: {
-                                                if (tf.text !== cfgLoader.modelData.value)
-                                                    page.applyConfig(cfgLoader.modelData.key, tf.text);
-                                            }
-                                        }
+                                FormTextRow {
+                                    id: tf
+                                    label: cfgLoader.modelData.label
+                                    description: cfgLoader.modelData.description
+                                    value: cfgLoader.modelData.value
+                                    placeholderText: cfgLoader.modelData.placeholder
+                                    // Commit on focus-out / Enter only: applyConfig rebuilds this
+                                    // control, so committing per keystroke would fight the user.
+                                    onEditingFinished: {
+                                        if (tf.value !== cfgLoader.modelData.value)
+                                            page.applyConfig(cfgLoader.modelData.key, tf.value);
                                     }
                                 }
                             }

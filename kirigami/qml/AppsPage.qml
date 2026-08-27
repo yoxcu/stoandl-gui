@@ -608,13 +608,13 @@ Kirigami.ScrollablePage {
                         }
 
                         // string -> text field (password echo when secret)
-                        FormCard.FormTextFieldDelegate {
+                        FormTextRow {
                             visible: fieldRow.modelData.type === "string"
                             Layout.fillWidth: true
                             label: fieldRow.modelData.label
-                            text: fieldRow.fieldValue !== undefined ? "" + fieldRow.fieldValue : ""
+                            value: fieldRow.fieldValue !== undefined ? "" + fieldRow.fieldValue : ""
                             echoMode: fieldRow.modelData.secret ? TextInput.Password : TextInput.Normal
-                            onTextChanged: fieldRow.fieldValue = text
+                            onValueChanged: fieldRow.fieldValue = value
                         }
 
                         // int -> spin box

@@ -107,55 +107,55 @@ Kirigami.ScrollablePage {
             // Height — metric: one cm field; imperial: feet + inches. Both representations stay present
             // (visibility-toggled) so each keeps its own text binding: switching units re-reads the
             // now-visible field from the reloaded (still-metric) profile instead of a broken binding.
-            FormCard.FormTextFieldDelegate {
+            FormTextRow {
                 id: heightCmField
                 visible: !page.imperial
                 label: "Height (cm)"
-                text: page.val("height_cm")
+                value: page.val("height_cm")
                 inputMethodHints: Qt.ImhDigitsOnly
-                onEditingFinished: if (visible && text !== page.val("height_cm")) page.apply("height_cm", text)
+                onEditingFinished: if (visible && value !== page.val("height_cm")) page.apply("height_cm", value)
             }
-            FormCard.FormTextFieldDelegate {
+            FormTextRow {
                 id: heightFtField
                 visible: page.imperial
                 label: "Height (ft)"
-                text: page.heightFeet()
+                value: page.heightFeet()
                 inputMethodHints: Qt.ImhDigitsOnly
-                onEditingFinished: if (visible && text !== page.heightFeet()) page.applyHeightImperial(text, heightInField.text)
+                onEditingFinished: if (visible && value !== page.heightFeet()) page.applyHeightImperial(value, heightInField.value)
             }
             FormCard.FormDelegateSeparator { visible: page.imperial }
-            FormCard.FormTextFieldDelegate {
+            FormTextRow {
                 id: heightInField
                 visible: page.imperial
                 label: "Height (in)"
-                text: page.heightInches()
+                value: page.heightInches()
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
-                onEditingFinished: if (visible && text !== page.heightInches()) page.applyHeightImperial(heightFtField.text, text)
+                onEditingFinished: if (visible && value !== page.heightInches()) page.applyHeightImperial(heightFtField.value, value)
             }
             FormCard.FormDelegateSeparator {}
-            FormCard.FormTextFieldDelegate {
+            FormTextRow {
                 id: weightKgField
                 visible: !page.imperial
                 label: "Weight (kg)"
-                text: page.val("weight_kg")
+                value: page.val("weight_kg")
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
-                onEditingFinished: if (visible && text !== page.val("weight_kg")) page.apply("weight_kg", text)
+                onEditingFinished: if (visible && value !== page.val("weight_kg")) page.apply("weight_kg", value)
             }
-            FormCard.FormTextFieldDelegate {
+            FormTextRow {
                 id: weightLbField
                 visible: page.imperial
                 label: "Weight (lb)"
-                text: page.weightLb()
+                value: page.weightLb()
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
-                onEditingFinished: if (visible && text !== page.weightLb()) page.applyWeightImperial(text)
+                onEditingFinished: if (visible && value !== page.weightLb()) page.applyWeightImperial(value)
             }
             FormCard.FormDelegateSeparator {}
-            FormCard.FormTextFieldDelegate {
+            FormTextRow {
                 id: ageField
                 label: "Age (years)"
-                text: page.val("age")
+                value: page.val("age")
                 inputMethodHints: Qt.ImhDigitsOnly
-                onEditingFinished: if (text !== page.val("age")) page.apply("age", text)
+                onEditingFinished: if (value !== page.val("age")) page.apply("age", value)
             }
             FormCard.FormDelegateSeparator {}
             FormCard.FormComboBoxDelegate {
@@ -226,18 +226,18 @@ Kirigami.ScrollablePage {
                 onActivated: page.apply("hrm_interval", currentValue)
             }
             FormCard.FormDelegateSeparator {}
-            FormCard.FormTextFieldDelegate {
+            FormTextRow {
                 label: "Resting HR (bpm)"
-                text: page.val("resting_hr")
+                value: page.val("resting_hr")
                 inputMethodHints: Qt.ImhDigitsOnly
-                onEditingFinished: if (text !== page.val("resting_hr")) page.apply("resting_hr", text)
+                onEditingFinished: if (value !== page.val("resting_hr")) page.apply("resting_hr", value)
             }
             FormCard.FormDelegateSeparator {}
-            FormCard.FormTextFieldDelegate {
+            FormTextRow {
                 label: "Max HR (bpm)"
-                text: page.val("max_hr")
+                value: page.val("max_hr")
                 inputMethodHints: Qt.ImhDigitsOnly
-                onEditingFinished: if (text !== page.val("max_hr")) page.apply("max_hr", text)
+                onEditingFinished: if (value !== page.val("max_hr")) page.apply("max_hr", value)
             }
         }
 
