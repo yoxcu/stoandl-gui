@@ -57,7 +57,10 @@ fn group_label(prefix: &str) -> String {
         "ppog" => return "PPoG".into(),
         "spi" => return "SPI".into(),
         "utc" => return "UTC".into(),
+        "i2c" => return "I²C".into(),
         "fw" => return "Firmware".into(),
+        "drv" => return "Drivers".into(),
+        "unexpected" => return "Unexpected reboots".into(),
         "other" => return "Other".into(),
         _ => {}
     }

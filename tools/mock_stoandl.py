@@ -541,6 +541,17 @@ class MockStoandl(dbus.service.Object):
                 return name
         return None
 
+    def _resolve_connected(self, query):
+        """The daemon's resolveWatch() for the battery/heartbeat methods: a blank query is the connected
+        watch; otherwise a CONNECTED watch matching by exact-then-substring name. None when no connected
+        watch matches — the daemon then has no serial, so no heartbeat data and at most a GATT series."""
+        name = self._connected_name()
+        if name is None:
+            return None
+        if not query or query.lower() == name.lower() or query.lower() in name.lower():
+            return name
+        return None
+
     def _set_connected(self, name):
         for n, w in self.watches.items():
             w["state"] = "connected" if n == name else "disconnected"
@@ -683,10 +694,11 @@ class MockStoandl(dbus.service.Object):
         return str(int(d)) if d == int(d) else f"{d:.2f}"
 
     def _heartbeat_metrics(self):
-        # A representative slice of the 92-metric record: every kind the GUI must render —
-        # scale-divided floats, plain counters, and the three string metrics. Built the way
-        # HeartbeatMetrics() formats them: `value` = raw / scale through fmtNum (so 3719/1000 is
-        # "3.72", not "3.719"), `raw` the undivided wire integer, `text` only for strings.
+        # The whole record of a fw >= 4.33 watch (567 B / v3, unchanged through 4.38.2): its 101 metrics
+        # in wire order (analytics.def declaration order, the daemon's HeartbeatLayouts.METRICS), so
+        # every group the Heartbeat page can meet appears — including v3's unexpected_/i2c_/drv_.
+        # Built the way HeartbeatMetrics() formats them: `value` = raw / scale through fmtNum (so
+        # 3919/1000 is "3.92", not "3.919"), `raw` the undivided wire integer, `text` only for strings.
         def num(name, raw, scale=1):
             return (name, self._fmt_num(raw / scale), "", str(raw))
 
@@ -694,84 +706,76 @@ class MockStoandl(dbus.service.Object):
             return (name, "", text, "")
 
         return [
-            num("memory_pct_max", 62),
-            num("memory_largest_free_pct", 31),
-            num("stack_free_kernel_main_bytes", 1840),
-            num("utc_offset_s", 7200),
-            txt("fw_version", "4.30.0"),
-            num("last_reboot_reason", 0),
-            num("uptime_s", 268400),
-            num("battery_soc_pct", 1505, 100),
-            num("battery_soc_pct_drop", 120, 100),
-            num("battery_voltage", 3719, 1000),
-            num("battery_voltage_delta", -12, 1000),
-            num("battery_tte_s", 828000),
-            num("battery_charge_time_ms", 0),
-            num("battery_discharge_duration_ms", 3600000),
-            num("backlight_on_time_ms", 42000),
-            num("backlight_avg_intensity_pct", 60),
-            num("vibrator_on_time_ms", 1200),
-            num("speaker_on_time_ms", 0),
-            num("hrm_on_time_ms", 90000),
-            num("button_pressed_count", 37),
-            num("touch_event_count", 112),
-            num("touch_driver_wake_cnt", 9),
-            num("cpu_running_pct", 1240, 100),
-            num("cpu_sleep0_pct", 6120, 100),
-            num("cpu_sleep1_pct", 2410, 100),
-            num("cpu_sleep2_pct", 230, 100),
-            num("task_cpu_kernel_main_pct", 310, 100),
-            num("task_cpu_app_pct", 240, 100),
-            num("task_cpu_bt_host_pct", 190, 100),
-            num("task_cpu_idle_pct", 8420, 100),
-            num("accel_sample_count", 180000),
-            num("accel_shake_count", 4),
-            num("notification_received_count", 12),
-            num("notification_received_dnd_count", 3),
-            num("phone_call_incoming_count", 1),
-            num("phone_call_time_ms", 154000),
-            num("low_power_time_ms", 0),
-            num("stationary_time_ms", 2400000),
-            num("watchface_time_ms", 3210000),
-            txt("watchface_name", "Tezel"),
-            txt("watchface_uuid", "c91b77a0-1e2f-4c3d-9a5b-6d7e8f901234"),
-            num("watchface_crash_count", 0),
-            num("pfs_space_free_kb", 1284),
-            num("flash_spi_write_bytes", 98304),
-            num("ble_conn_itvl_min_time_ms", 1800000),
-            num("ble_disconnect_conn_spvn_tmo_count", 3),
-            num("ble_disconnect_rem_user_term_count", 1),
-            num("ble_disconnect_conn_term_local_count", 0),
-            num("ble_disconnect_other_count", 0),
-            num("ppog_reversed", 0),
-            num("settings_health_tracking_enabled", 1),
-            num("settings_health_hrm_enabled", 1),
-            num("settings_backlight_timeout_s", 5),
-            num("app_message_sent_count", 204),
-            num("app_message_received_count", 198),
-            num("connectivity_connected_time_ms", 3400000),
-            num("connectivity_expected_time_ms", 3600000),
+            num("memory_pct_max", 62), num("memory_largest_free_pct", 31),
+            num("stack_free_kernel_main_bytes", 1840), num("stack_free_kernel_background_bytes", 1112),
+            num("stack_free_newtimers_bytes", 604), num("stack_free_app_syscall_bytes", 1432),
+            num("stack_free_worker_syscall_bytes", 1500), num("utc_offset_s", 7200),
+            txt("fw_version", "v4.38.2"), num("last_reboot_reason", 0), num("uptime_s", 268400),
+            num("battery_soc_pct", 7250, 100), num("battery_soc_pct_drop", 120, 100),
+            num("battery_voltage", 3919, 1000), num("battery_voltage_delta", -12, 1000),
+            num("battery_tte_s", 828000), num("battery_charge_time_ms", 0),
+            num("battery_discharge_duration_ms", 3600000), num("backlight_on_time_ms", 42000),
+            num("backlight_avg_intensity_pct", 60), num("vibrator_on_time_ms", 1200),
+            num("vibrator_avg_strength_pct", 80), num("speaker_on_time_ms", 0), num("speaker_play_count", 0),
+            num("speaker_avg_volume_pct", 0), num("speaker_preempted_count", 0),
+            num("speaker_stream_underrun_count", 0), num("hrm_on_time_ms", 90000),
+            num("button_pressed_count", 37), num("touch_event_count", 112), num("gesture_tap_count", 3),
+            num("gesture_double_tap_count", 1), num("touch_driver_wake_cnt", 9),
+            num("cpu_running_pct", 1240, 100), num("cpu_sleep0_pct", 6120, 100),
+            num("cpu_sleep1_pct", 2410, 100), num("cpu_sleep2_pct", 230, 100),
+            num("sifli_ipc_not_idle_count", 0), num("task_cpu_kernel_main_pct", 310, 100),
+            num("task_cpu_kernel_background_pct", 45, 100), num("task_cpu_worker_pct", 0, 100),
+            num("task_cpu_app_pct", 240, 100), num("task_cpu_bt_host_pct", 190, 100),
+            num("task_cpu_bt_controller_pct", 120, 100), num("task_cpu_bt_hci_pct", 30, 100),
+            num("task_cpu_new_timers_pct", 20, 100), num("task_cpu_pulse_pct", 5, 100),
+            num("task_cpu_idle_pct", 9040, 100), num("accel_sample_count", 180000), num("accel_shake_count", 4),
+            num("accel_double_tap_count", 0), num("accel_peek_count", 2),
+            num("notification_received_count", 12), num("notification_received_dnd_count", 3),
+            num("phone_call_incoming_count", 1), num("phone_call_time_ms", 154000), num("low_power_time_ms", 0),
+            num("stationary_time_ms", 2400000), num("watchface_time_ms", 3210000),
+            txt("watchface_name", "Tezel"), txt("watchface_uuid", "c91b77a0-1e2f-4c3d-9a5b-6d7e8f901234"),
+            num("watchface_crash_count", 0), num("watchface_crash_revert_count", 0),
+            num("pfs_space_free_kb", 1284), num("flash_spi_write_bytes", 98304),
+            num("flash_spi_erase_bytes", 65536), num("ble_adv_short_intvl_time_ms", 0),
+            num("ble_adv_long_intvl_time_ms", 0), num("ble_conn_itvl_min_time_ms", 60000),
+            num("ble_conn_itvl_mid_time_ms", 240000), num("ble_conn_itvl_max_time_ms", 3100000),
+            num("ble_disconnect_conn_spvn_tmo_count", 3), num("ble_disconnect_rem_user_term_count", 1),
+            num("ble_disconnect_conn_term_local_count", 0), num("ble_disconnect_lmp_ll_rsp_tmo_count", 0),
+            num("ble_disconnect_conn_establishment_count", 0), num("ble_disconnect_other_count", 0),
+            num("ppog_reversed", 0), num("settings_health_tracking_enabled", 1),
+            num("settings_health_hrm_enabled", 1), num("settings_health_hrm_measurement_interval", 10),
+            num("settings_health_hrm_activity_tracking_enabled", 1), num("settings_motion_sensitivity", 50),
+            num("settings_backlight_intensity_pct", 50), num("settings_backlight_timeout_s", 5),
+            num("settings_touch_enabled", 1), num("app_message_sent_count", 204),
+            num("app_message_received_count", 198), num("app_tick_timer_second_subscribed", 0),
+            num("connectivity_connected_time_ms", 3400000), num("connectivity_expected_time_ms", 3600000),
+            num("ble_conn_slave_lat0_time_ms", 180000), num("ble_conn_param_update_count", 4),
+            num("accel_stream_recovery_count", 0), num("unexpected_reboot_count", 0),
+            num("battery_temp_c", 27500, 1000), num("i2c_transfer_error_count", 0),
+            num("ble_conn_itvl_other_time_ms", 200000), num("drv_init_fail_flags", 0),
+            num("battery_soc_pct_min", 7150, 100), num("touch_gated_touchdown_count", 6),
         ]
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def HeartbeatInfo(self, watch):
         # ok:watchTs\trx\tsize\tversion\tbuildId\tfw\tknown\tmetricCount
         # Like the daemon, this reads the stored record of a CONNECTED watch only (its
-        # resolveWatch() matches connected devices): with none connected it answers
+        # resolveWatch() matches connected devices): with none matching it answers
         # unknown:<the query, or "watch">, whatever is on disk.
-        if self._connected_name() is None:
+        if self._resolve_connected(watch) is None:
             return f"unknown:{watch or 'watch'}"
         now = int(time.time())
         ts = now - (now % 3600)
         build = "1a1f6be63bcc7823adfc00ea9d05012478e6ad44"
         if os.environ.get("MOCK_HB_UNKNOWN") == "1":
-            return "ok:" + rec(ts, ts + 60, 531, 3, build, "5.10.0", 0, 0)
+            # A layout stoandl hasn't verified yet (a firmware newer than its table).
+            return "ok:" + rec(ts, ts + 60, 575, 4, build, "v4.39.0", 0, 0)
         m = self._heartbeat_metrics()
-        return "ok:" + rec(ts, ts + 60, 527, 1, build, "4.30.0", 1, len(m))
+        return "ok:" + rec(ts, ts + 60, 567, 3, build, "v4.38.2", 1, len(m))
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="as")
     def HeartbeatMetrics(self, watch):
-        if self._connected_name() is None or os.environ.get("MOCK_HB_UNKNOWN") == "1":
+        if self._resolve_connected(watch) is None or os.environ.get("MOCK_HB_UNKNOWN") == "1":
             return []
         return [rec(*row) for row in self._heartbeat_metrics()]
 
