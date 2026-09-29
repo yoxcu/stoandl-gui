@@ -167,6 +167,8 @@ Kirigami.ScrollablePage {
             FormCard.FormDelegateSeparator {}
             FormCard.FormComboBoxDelegate {
                 text: "Units"
+                // The daemon sends weather in this unit too (there is no separate weather setting).
+                description: "Distances on the watch, and the temperature unit weather is sent in"
                 model: page.unitOptions
                 currentIndex: page.comboIndex(page.unitOptions, "units")
                 onActivated: page.apply("units", currentValue)

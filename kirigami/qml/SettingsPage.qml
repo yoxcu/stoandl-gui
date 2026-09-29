@@ -80,7 +80,7 @@ Kirigami.ScrollablePage {
             FormCard.FormDelegateSeparator {}
             FormCard.FormButtonDelegate {
                 text: "Daemon configuration"
-                description: "Units, sync providers and other stoandl options"
+                description: "Alerts, connection, deep sleep and other stoandl options"
                 icon.name: "settings-configure-symbolic"
                 onClicked: page.open(generalPage)
             }

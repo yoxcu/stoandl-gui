@@ -855,7 +855,9 @@ impl StoandlSettingsPage {
                 }
                 hp_spin(&you, &page, "age", "Age", 0.0, 120.0, hp_num(&get("age")), |v| v.to_string());
                 hp_combo(&you, &page, "gender", "Sex", &["female", "male", "other"], &get("gender"));
-                hp_combo(&you, &page, "units", "Units", &["metric", "imperial"], &get("units"));
+                // The daemon sends weather in this unit too (there is no separate weather setting).
+                hp_combo(&you, &page, "units", "Units", &["metric", "imperial"], &get("units"))
+                    .set_subtitle("Distances on the watch, and the temperature unit weather is sent in");
                 page_widget.add(&you);
 
                 let tracking = adw::PreferencesGroup::builder()
