@@ -64,8 +64,15 @@ FormCard.AbstractFormDelegate {
             from: root.from
             to: root.to
             editable: true
-            // ~100 steps across the range so a wide one stays navigable.
-            stepSize: Math.max(1, Math.round((root.to - root.from) / 100))
+            // ~100 steps across the range so a wide one stays navigable, snapped to 1, 2 or 5 × 10ⁿ so
+            // a step lands on round numbers (0..1440 min steps by 10, not 14). GTK's spin_row matches.
+            stepSize: {
+                var raw = (root.to - root.from) / 100;
+                if (raw <= 1) return 1;
+                var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+                var f = raw / mag;
+                return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * mag;
+            }
             textFromValue: function (v, locale) { return v + (root.unit ? " " + root.unit : ""); }
             valueFromText: function (text, locale) { return parseInt(text, 10) || 0; }
             Component.onCompleted: {

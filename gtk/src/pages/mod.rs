@@ -109,6 +109,27 @@ pub(crate) fn combo_row<F: Fn(&str) + 'static>(
     row
 }
 
+/// ~100 steps across the range so a wide one stays navigable, snapped to 1, 2 or 5 × 10ⁿ so a step
+/// lands on round numbers (0..1440 min steps by 10, not 14). Kirigami's FormSpinRow matches.
+fn spin_step(min: i64, max: i64) -> f64 {
+    let raw = (max - min) as f64 / 100.0;
+    if raw <= 1.0 {
+        return 1.0;
+    }
+    let mag = 10f64.powf(raw.log10().floor());
+    let f = raw / mag;
+    let nice = if f < 1.5 {
+        1.0
+    } else if f < 3.5 {
+        2.0
+    } else if f < 7.5 {
+        5.0
+    } else {
+        10.0
+    };
+    nice * mag
+}
+
 /// A bounded integer row (stepper + clamp — the HIG widget for numeric-with-range).
 /// `unit` is appended to the title when non-empty, since AdwSpinRow has no unit slot.
 /// `apply` is called on every step; the caller is expected to debounce it (see
@@ -121,8 +142,7 @@ pub(crate) fn spin_row<F: Fn(i64) + 'static>(
     cur: f64,
     apply: F,
 ) -> adw::SpinRow {
-    // ~100 steps across the range so a wide one stays navigable.
-    let step = (((max - min).max(1)) as f64 / 100.0).round().max(1.0);
+    let step = spin_step(min, max);
     let adj = gtk::Adjustment::new(
         cur.clamp(min as f64, max as f64),
         min as f64,
@@ -212,4 +232,21 @@ fn add_placeholder(
         .description("Port in progress.")
         .build();
     view_stack.add_titled_with_icon(&status, Some(name), tab_title, icon);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spin_step;
+
+    #[test]
+    fn spin_steps_land_on_round_numbers() {
+        assert_eq!(spin_step(0, 1440), 10.0); // notification.catch_up_minutes
+        assert_eq!(spin_step(5, 1440), 10.0); // weather.interval
+        assert_eq!(spin_step(0, 4500), 50.0); // power.sleep_guard_max_ms
+        assert_eq!(spin_step(1, 365), 5.0); // health.export_days
+        assert_eq!(spin_step(15000, 600000), 5000.0); // notifWindowTimeout
+        assert_eq!(spin_step(100, 250), 2.0); // height (cm)
+        assert_eq!(spin_step(0, 120), 1.0); // age
+        assert_eq!(spin_step(0, 0), 1.0);
+    }
 }
