@@ -10,7 +10,7 @@ use adw::subclass::prelude::*;
 use gtk::{gio, glib, CompositeTemplate};
 
 use super::{action_row, combo_row, debounce, esc, spin_row, switch_row, temp_path};
-use crate::dbus::parse::ConfigField;
+use crate::dbus::parse::{normalize_schedule, ConfigField};
 use crate::dbus::{Calendar, CalendarSource, MusicStatus, StoandlClient, WatchPref};
 use crate::window::StoandlWindow;
 
@@ -47,11 +47,7 @@ const WP_SECTIONS: [&str; 9] = [
 fn wp_section(id: &str) -> usize {
     if id.starts_with("ql") {
         0
-    } else if id.starts_with("light")
-        || id == "textStyle"
-        || id == "displayOrientationLeftHanded"
-        || id == "dynBacklightMinThreshold"
-    {
+    } else if id.starts_with("light") || id == "textStyle" || id == "displayOrientationLeftHanded" {
         1
     } else if id.starts_with("notif") || id == "mask" || id.starts_with("timelineQuickView") {
         2
@@ -63,11 +59,30 @@ fn wp_section(id: &str) -> usize {
         5
     } else if id == "motionSensitivity" || id == "stationaryMode" || id.starts_with("menuScroll") {
         6
-    } else if id == "clock24h" || id == "timezoneSource" || id == "langEnglish" {
+    } else if id == "clock24h" || id == "timezoneSource" || id == "language" {
         7
     } else {
         8
     }
+}
+
+/// A Quiet Time schedule's hours do nothing until its `<id>Enabled` switch is on
+/// (`dndWeekdaySchedule` ↔ `dndWeekdayScheduleEnabled`), and the daemon lists the
+/// schedules last. Move each schedule right under its switch; one without a switch
+/// in the same section keeps its place at the end.
+fn pair_schedules(rows: &[WatchPref]) -> Vec<WatchPref> {
+    let mut out: Vec<WatchPref> =
+        rows.iter().filter(|p| p.pref_type != "schedule").cloned().collect();
+    let mut loose = Vec::new();
+    for p in rows.iter().filter(|p| p.pref_type == "schedule") {
+        let switch = format!("{}Enabled", p.id);
+        match out.iter().position(|o| o.id == switch) {
+            Some(i) => out.insert(i + 1, p.clone()),
+            None => loose.push(p.clone()),
+        }
+    }
+    out.extend(loose);
+    out
 }
 
 /// Parse a watch color (`0xRRGGBB` / `#RRGGBB`) to normalised RGB for the swatch.
@@ -276,6 +291,8 @@ mod imp {
         pub wp_page: RefCell<Option<adw::PreferencesPage>>,
         pub wp_groups: RefCell<Vec<adw::PreferencesGroup>>,
         pub app_titles: RefCell<Vec<String>>,
+        // (id, name) of every pref in the current list — a schedule row names its Enabled switch.
+        pub wp_names: RefCell<Vec<(String, String)>>,
         pub wp_debounce: RefCell<Option<glib::SourceId>>, // single pending number-write timer
         // Calendars sub-page rebuild state.
         pub cal_page: RefCell<Option<adw::PreferencesPage>>,
@@ -1561,6 +1578,9 @@ impl StoandlSettingsPage {
                     dbg_smoke("settings: watch prefs empty");
                     return;
                 }
+                page.imp()
+                    .wp_names
+                    .replace(list.iter().map(|p| (p.id.clone(), p.name.clone())).collect());
                 let mut buckets: [Vec<WatchPref>; 9] = Default::default();
                 for p in list {
                     buckets[wp_section(&p.id)].push(p);
@@ -1571,7 +1591,7 @@ impl StoandlSettingsPage {
                         continue;
                     }
                     let g = adw::PreferencesGroup::builder().title(&esc(WP_SECTIONS[i])).build();
-                    for p in bucket {
+                    for p in &pair_schedules(bucket) {
                         let row = page.wp_row(p);
                         g.add(&row);
                         total += 1;
@@ -1741,6 +1761,80 @@ impl StoandlSettingsPage {
                     }
                 ));
                 row.add_suffix(&dd);
+                row.upcast()
+            }
+            // Quiet Time hours: a 24 h "HH:MM-HH:MM" window, checked as typed with the
+            // daemon's own parse rules and sent zero-padded on Enter / focus-out only
+            // (apply_pref rebuilds this row, so a per-keystroke commit would fight the
+            // user) — never while invalid. Same ActionRow + suffix entry as the daemon
+            // config's text rows, so the description stays visible.
+            "schedule" => {
+                let switch = self
+                    .imp()
+                    .wp_names
+                    .borrow()
+                    .iter()
+                    .find(|(id, _)| *id == format!("{}Enabled", p.id))
+                    .map(|(_, name)| name.clone());
+                let mut hint = String::new();
+                if !p.description.is_empty() {
+                    hint.push_str(&p.description);
+                    hint.push(' ');
+                }
+                hint.push_str(
+                    "Daily, 24-hour clock; an end before the start runs overnight (e.g. 22:00-07:00).",
+                );
+                if let Some(name) = switch {
+                    hint.push_str(&format!(" Applies while “{name}” is on."));
+                }
+                let row = adw::ActionRow::builder()
+                    .title(&esc(&p.name))
+                    .subtitle(&esc(&hint))
+                    .build();
+                let entry = gtk::Entry::builder()
+                    .text(&p.current)
+                    .placeholder_text("HH:MM-HH:MM")
+                    .valign(gtk::Align::Center)
+                    .width_chars(11)
+                    .input_hints(gtk::InputHints::NO_SPELLCHECK)
+                    .tooltip_text("HH:MM-HH:MM, e.g. 22:00-07:00")
+                    .build();
+                entry.connect_changed(|e| {
+                    if normalize_schedule(&e.text()).is_some() {
+                        e.remove_css_class("error");
+                    } else {
+                        e.add_css_class("error");
+                    }
+                });
+                let commit = {
+                    let (id, prev) = (p.id.clone(), p.current.clone());
+                    move |page: &Self, e: &gtk::Entry, announce: bool| match normalize_schedule(&e.text()) {
+                        Some(v) if v != prev => page.apply_pref(&id, &v),
+                        Some(_) => {}
+                        // Enter on a bad value says why; leaving the field just keeps the red mark.
+                        None if announce => {
+                            page.toast("Enter the hours as HH:MM-HH:MM, e.g. 22:00-07:00")
+                        }
+                        None => {}
+                    }
+                };
+                let commit2 = commit.clone();
+                entry.connect_activate(glib::clone!(
+                    #[weak(rename_to = page)]
+                    self,
+                    move |e| commit(&page, e, true)
+                ));
+                let focus = gtk::EventControllerFocus::new();
+                focus.connect_leave(glib::clone!(
+                    #[weak(rename_to = page)]
+                    self,
+                    #[weak]
+                    entry,
+                    move |_| commit2(&page, &entry, false)
+                ));
+                entry.add_controller(focus);
+                row.add_suffix(&entry);
+                row.set_activatable_widget(Some(&entry));
                 row.upcast()
             }
             _ => adw::ActionRow::builder()
@@ -2202,6 +2296,10 @@ impl StoandlSettingsPage {
         self.push_health_profile();
         self.push_backup();
         self.push_watch_prefs();
+        // Round-trip a Quiet Time window: validator both ways, then SetWatchPref + rebuild.
+        let (bad, good) = (normalize_schedule("25:00-07:00"), normalize_schedule(" 7:5-22:30 "));
+        dbg_smoke(&format!("schedule validator bad={bad:?} good={good:?}"));
+        self.apply_pref("dndWeekdaySchedule", good.as_deref().unwrap_or_default());
         self.push_calendars();
         self.push_debug();
         self.push_heartbeat();

@@ -23,6 +23,7 @@ import datetime
 import json
 import math
 import os
+import re
 import time
 
 import dbus
@@ -168,11 +169,15 @@ class MockStoandl(dbus.service.Object):
         # Watch advanced settings (ListWatchPrefs / SetWatchPref). This MIRRORS the real daemon's
         # WatchPrefsControl.list() record EXACTLY so the GUI is exercised against the true contract:
         #   id \t type \t current \t default \t allowed \t flags \t name \t description
-        # type ∈ {bool, number, enum, quicklaunch, color}; `allowed` is PIPE-separated (the real
-        # daemon joins option/range lists with '|', NOT ','); enum current/allowed use DISPLAY names;
-        # number current/default carry the unit ("3000 ms"); quicklaunch current is an app name / "off"
-        # / a raw uuid; color is "0xRRGGBB"; flags carries "debug" for advanced/debug-only prefs. The
-        # ids match libpebble3's WatchPref ids so the GUI's category grouping (keyed on id) applies.
+        # type ∈ {bool, number, enum, quicklaunch, color, schedule}; `allowed` is PIPE-separated (the
+        # real daemon joins option/range lists with '|', NOT ','); enum current/allowed use DISPLAY
+        # names; number current/default carry the unit ("3000 ms"); quicklaunch current is an app name
+        # / "off" / a raw uuid; color is "0xRRGGBB"; schedule is a 24 h "HH:MM-HH:MM" window (allowed is
+        # that literal); flags carries "debug" for advanced/debug-only prefs. The ids match libpebble3's
+        # WatchPref ids so the GUI's category grouping (keyed on id) applies. The daemon lists prefs in
+        # libpebble3's enumeratePrefs() order (bools first, the schedules LAST), not by section — the
+        # schedules are at the end here too, so the GUIs' "hours follow their Enabled switch" ordering
+        # is exercised.
         self.prefs = [
             # --- Quick Launch (quicklaunch: app name or "off") ---
             {"id": "qlUp", "type": "quicklaunch", "current": "Music", "default": "off",
@@ -194,13 +199,20 @@ class MockStoandl(dbus.service.Object):
             {"id": "lightMotion", "type": "bool", "current": "true", "default": "true",
              "allowed": "true|false", "flags": "", "name": "Backlight Motion",
              "description": "Turn on backlight by flicking wrist"},
+            {"id": "lightPreset", "type": "enum", "current": "Standard", "default": "Standard",
+             "allowed": "Max Brightness|Standard|Battery Saver|Advanced", "flags": "",
+             "name": "Backlight Preset",
+             "description": "Bundles the ambient sensor, dynamic backlight, brightness and timeout into one mode. Choose Advanced to configure them individually."},
+            {"id": "lightDynamicMode", "type": "enum", "current": "Standard", "default": "Standard",
+             "allowed": "Off|Bright|Standard|Dim", "flags": "", "name": "Dynamic Backlight",
+             "description": "Automatically adjust backlight brightness to match your environment (using light sensor). Dimmer modes stay dimmer in bright light."},
             {"id": "lightIntensity", "type": "enum", "current": "Medium", "default": "Medium",
              "allowed": "Low|Medium|High|Blinding", "flags": "", "name": "Backlight Intensity",
              "description": "Maximum backlight brightness when on"},
             {"id": "lightTimeoutMs", "type": "number", "current": "3000 ms", "default": "3000 ms",
              "allowed": "1..10000 ms", "flags": "", "name": "Backlight Timeout",
              "description": "How long the backlight stays on"},
-            {"id": "lightColor", "type": "color", "current": "0xF0D0B0", "default": "0xF0D0B0",
+            {"id": "lightColor", "type": "color", "current": "0xFFBFA2", "default": "0xFFBFA2",
              "allowed": "RRGGBB|Red|Orange|Yellow|Lime|Green|Cyan|Blue|Purple|Magenta|Pink|Warm White|Cool White",
              "flags": "", "name": "Backlight Color",
              "description": "LED color used when the backlight is on (color watches only)"},
@@ -218,7 +230,7 @@ class MockStoandl(dbus.service.Object):
              "allowed": "All On|Phone Calls|All Off", "flags": "", "name": "Notification Filter",
              "description": ""},
             {"id": "notifWindowTimeout", "type": "number", "current": "180000 ms", "default": "180000 ms",
-             "allowed": "0..600000 ms", "flags": "", "name": "Notification Timeout",
+             "allowed": "15000..600000 ms", "flags": "", "name": "Notification Timeout",
              "description": "Notifications time out after this period (unless in Quiet Time)"},
             {"id": "timelineQuickViewEnabled", "type": "bool", "current": "true", "default": "true",
              "allowed": "true|false", "flags": "", "name": "Timeline Quick View",
@@ -227,6 +239,12 @@ class MockStoandl(dbus.service.Object):
             {"id": "dndManuallyEnabled", "type": "bool", "current": "false", "default": "false",
              "allowed": "true|false", "flags": "", "name": "Quiet Time - Manual",
              "description": "Mute notifications and keep them on-screen without a timeout"},
+            {"id": "dndWeekdayScheduleEnabled", "type": "bool", "current": "false", "default": "false",
+             "allowed": "true|false", "flags": "", "name": "Quiet Time - Weekday Schedule",
+             "description": "Automatically enable Quiet Time during the scheduled hours, Monday to Friday"},
+            {"id": "dndWeekendScheduleEnabled", "type": "bool", "current": "false", "default": "false",
+             "allowed": "true|false", "flags": "", "name": "Quiet Time - Weekend Schedule",
+             "description": "Automatically enable Quiet Time during the scheduled hours, Saturday and Sunday"},
             {"id": "dndShowNotifications", "type": "enum", "current": "Show", "default": "Show",
              "allowed": "Hide|Show", "flags": "", "name": "Quiet Time - Show Notifications",
              "description": ""},
@@ -251,11 +269,25 @@ class MockStoandl(dbus.service.Object):
             # --- Clock & Language ---
             {"id": "clock24h", "type": "bool", "current": "false", "default": "false",
              "allowed": "true|false", "flags": "", "name": "24h clock", "description": ""},
-            {"id": "langEnglish", "type": "bool", "current": "false", "default": "false",
-             "allowed": "true|false", "flags": "", "name": "Language: English", "description": ""},
+            {"id": "language", "type": "enum", "current": "Custom (Language Pack)",
+             "default": "Custom (Language Pack)",
+             "allowed": "Custom (Language Pack)|English|Català|Deutsch|Español|Français|Italiano|Nederlands|Português|Polski",
+             "flags": "", "name": "Language",
+             "description": "Built-in firmware language. Choose Custom to use an uploaded language pack."},
+            # --- no section of its own (lands in "Other") ---
+            {"id": "unitsWind", "type": "enum", "current": "Automatic", "default": "Automatic",
+             "allowed": "Automatic|km/h|mph", "flags": "", "name": "Wind Speed",
+             "description": "Automatic follows the Imperial Units setting."},
+            # --- Quiet Time hours (schedule), last like the daemon's enumeratePrefs() order ---
+            {"id": "dndWeekdaySchedule", "type": "schedule", "current": "00:00-06:00",
+             "default": "00:00-06:00", "allowed": "HH:MM-HH:MM", "flags": "",
+             "name": "Quiet Time - Weekday Hours", "description": ""},
+            {"id": "dndWeekendSchedule", "type": "schedule", "current": "00:00-06:00",
+             "default": "00:00-06:00", "allowed": "HH:MM-HH:MM", "flags": "",
+             "name": "Quiet Time - Weekend Hours", "description": ""},
         ]
         # System screen: firmware + language op state, language catalog.
-        self.fw = None    # None when idle, else {"polls": n}
+        self.fw = None    # None when idle, else the walk (see _fw_steps / _start_fw_push)
         self.lang = None  # None when idle, else {"polls": n, "name": ...}
         self.languages = [
             {"id": "en_US", "iso": "English (US)", "name": "English (US)", "installed": True,  "source": "github"},
@@ -1188,32 +1220,76 @@ class MockStoandl(dbus.service.Object):
     COLOR_PRESETS = {
         "red": "0xFF0000", "orange": "0xFF7F00", "yellow": "0xFFFF00", "lime": "0x7FFF00",
         "green": "0x00FF00", "cyan": "0x00FFFF", "blue": "0x0000FF", "purple": "0x7F00FF",
-        "magenta": "0xFF00FF", "pink": "0xFF66CC", "warm white": "0xF0D0B0", "cool white": "0xFFFFFF",
+        "magenta": "0xFF00FF", "pink": "0xFF66CC", "warm white": "0xFFBFA2", "cool white": "0xFFFFFF",
     }
+
+    @staticmethod
+    def _parse_schedule(raw):
+        """libpebble3's QuietTimeSchedule.parse(): exactly one '-' between two H:MM/HH:MM times,
+        hours 0-23, minutes 0-59 (each side may carry spaces). Returns the zero-padded
+        "HH:MM-HH:MM" the daemon stores and lists back, or None."""
+        times = raw.split("-")
+        if len(times) != 2:
+            return None
+        out = []
+        for t in times:
+            parts = t.strip().split(":")
+            if len(parts) != 2 or not all(re.fullmatch(r"\+?\d+", x) for x in parts):
+                return None
+            h, m = int(parts[0]), int(parts[1])
+            if not (0 <= h <= 23 and 0 <= m <= 59):
+                return None
+            out.append(f"{h:02d}:{m:02d}")
+        return "-".join(out)
 
     @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
     def SetWatchPref(self, pref_id, value):
-        for p in self.prefs:
-            if p["id"] == pref_id:
-                # Mirror the daemon's parse* + format() round-trip on read-back: a color resolves a
-                # preset NAME (or a hex) to 0xRRGGBB; a number re-appends its unit; an "off"
-                # quicklaunch collapses to "off". Everything else stores the value verbatim.
-                if p["type"] == "color":
-                    preset = self.COLOR_PRESETS.get(value.strip().lower())
-                    if preset is not None:
-                        p["current"] = preset
-                    else:
-                        hexv = value.lstrip("#").removeprefix("0x").removeprefix("0X")[-6:].upper()
-                        p["current"] = "0x" + hexv.rjust(6, "0")
-                elif p["type"] == "number":
-                    unit = p["allowed"].split(" ", 1)[1] if " " in p["allowed"] else ""
-                    p["current"] = (value.strip() + (" " + unit if unit else "")).strip()
-                elif p["type"] == "quicklaunch" and value.strip().lower() in ("", "off", "none", "disabled"):
-                    p["current"] = "off"
-                else:
-                    p["current"] = value
-                return f"ok:{p['name']} set to {p['current']}"
-        return f"notfound:no setting '{pref_id}'"
+        # Mirrors WatchPrefsControl.setOne(): parse per type (same error texts), store what the
+        # daemon's format() would list back, and answer "ok:Set <id> = <value> (…)".
+        p = next((x for x in self.prefs if x["id"] == pref_id), None)
+        if p is None:
+            return f"error:Unknown watch pref '{pref_id}' (see 'stoandl settings')"
+        raw, t = value, value.strip()
+        if p["type"] == "bool":
+            if t.lower() in ("1", "true", "yes", "on"):
+                cur = "true"
+            elif t.lower() in ("0", "false", "no", "off"):
+                cur = "false"
+            else:
+                return f"error:'{raw}' is not a boolean (use true/false)"
+        elif p["type"] == "number":
+            lo, _, hi = p["allowed"].split(" ", 1)[0].partition("..")
+            unit = p["allowed"].split(" ", 1)[1] if " " in p["allowed"] else ""
+            suffix = f" {unit}" if unit else ""
+            if not re.fullmatch(r"[+-]?\d+", t):
+                return f"error:'{raw}' is not a number for {pref_id}"
+            n = int(t)
+            if n < int(lo) or n > int(hi):
+                return f"error:{pref_id} must be {lo}..{hi}{suffix} (got {n})"
+            cur = f"{n}{suffix}"
+        elif p["type"] == "enum":
+            opts = p["allowed"].split("|")
+            cur = next((o for o in opts if o.lower() == t.lower()), None)
+            if cur is None:
+                return f"error:'{raw}' is not valid for {pref_id}; allowed: {', '.join(opts)}"
+        elif p["type"] == "color":
+            # A preset NAME (or a hex) resolves to 0xRRGGBB, like parseColor().
+            cur = self.COLOR_PRESETS.get(t.lower())
+            if cur is None:
+                hexv = t.removeprefix("#").removeprefix("0x").removeprefix("0X")
+                if not re.fullmatch(r"[0-9A-Fa-f]+", hexv):
+                    return f"error:'{raw}' is not a color (hex RRGGBB or a preset name) for {pref_id}"
+                cur = "0x" + hexv[-6:].upper().rjust(6, "0")
+        elif p["type"] == "quicklaunch":
+            cur = "off" if t.lower() in ("", "off", "none", "disabled") else t
+        elif p["type"] == "schedule":
+            cur = self._parse_schedule(raw)
+            if cur is None:
+                return f"error:'{raw}' is not a time window (HH:MM-HH:MM, 24 h) for {pref_id}"
+        else:
+            cur = t
+        p["current"] = cur
+        return f"ok:Set {pref_id} = {cur} (syncs to the watch on next connect)"
 
     # --- Notifications -----------------------------------------------------
     def _resolve_notif(self, query):

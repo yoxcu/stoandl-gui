@@ -74,8 +74,10 @@ the fallback beneath the 7 signals — see the "Hard rules" in `../../CLAUDE.md`
     **pipe(`|`)-separated** for enum/quicklaunch/color/number-range (everything else
     is comma); number `current` like `"3000 ms"` → take leading digits; enum
     options are display names; quicklaunch is an **app picker** (`Off` + app titles),
-    never a slider/uuid; calendar password is write-only; firmware success =
-    `reboot` **or** a `notready` seen *after* activity; extension run-state override;
+    never a slider/uuid; schedule is a validated `HH:MM-HH:MM` entry
+    (`parse::normalize_schedule` mirrors the daemon's parse); calendar password is
+    write-only; firmware success = `reboot` **or** a `notready` seen *after*
+    activity; extension run-state override;
     `NotifSetMuteAll` has no getter (derive "all muted" from per-app list).
 
 Return types on the wire are only `s`, `b`, `as`, void → trivial `glib::Variant`

@@ -72,7 +72,7 @@ heartSamples/heartBars(pt,off)`. **No step goal** (dropped); "typical" comes fro
 state otherwise (a real past month can be HRM-capable but have no readings).
 
 **WatchPrefs widgets (the gotchas).** `ListWatchPrefs` types are `{bool, number, enum, quicklaunch,
-color}` and the `allowed` field is **pipe-(`|`)-separated** for the option types (NOT comma — the daemon's
+color, schedule}` and the `allowed` field is **pipe-(`|`)-separated** for the option types (NOT comma — the daemon's
 `WatchPrefsControl.allowed()`). `StoandlClient::listWatchPrefs()` splits on `|`, pre-derives number
 `min/max/unit` (a `"3000 ms"` current is not a plain int — use the leading digits), and a `debug` flag.
 Per type: bool→`FormSwitchDelegate`, enum→`FormComboBoxDelegate` (options = `allowed`, **display names**,
@@ -80,7 +80,13 @@ not Kotlin constant names — fixed daemon-side), quicklaunch→`FormComboBoxDel
 (from `ListApps`) + "Off" (NEVER a slider/uuid), number→`FormSpinBoxDelegate` (unit via `textFromValue`,
 **debounce the write** — `onValueChanged` fires every step and `applyPref` rebuilds the list), color→a
 swatch + preset combo (the daemon takes a preset *name* back; `FormColorDelegate` is **avoided** — it
-calls `i18ndc()` and we deliberately link no KF6 C++ / `KLocalizedContext`).
+calls `i18ndc()` and we deliberately link no KF6 C++ / `KLocalizedContext`), schedule (the Quiet Time
+weekday/weekend hours, a 24 h `HH:MM-HH:MM` window; an end before the start runs overnight)→`FormTextRow`
+checked as typed by `StoandlClient.normalizeSchedule()` (libpebble3's parse rules, so a bad value is
+flagged before the daemon refuses it) and sent zero-padded on Enter/focus-out only. The hours do nothing
+until the matching `<id>Enabled` bool is on, and the daemon lists schedules last, so each schedule row is
+moved under its switch and names it. Removed/renamed ids stay out of the section rules (`langEnglish` is
+now the `language` enum; `dynBacklightMinThreshold`/`lightDynamicIntensity` are gone).
 
 **QML scope gotcha:** a property *binding* inside a nested inline `Component` (a Loader delegate) can't
 call a page method (it resolves to a `QQmlComponent`); **handlers can**. So precompute per-row display

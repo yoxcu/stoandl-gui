@@ -136,6 +136,11 @@ public:
     // --- typed wrappers: Watch settings (Settings screen) ------------------
     Q_INVOKABLE QVariantList listWatchPrefs();           // -> [{id,type,current,default,allowed[],flags[],name,description}]
     Q_INVOKABLE QVariantMap  setWatchPref(const QString &id, const QString &value); // SetWatchPref(s,s)
+    // A `schedule` pref value as the daemon would store it ("7:5-22:30" -> "07:05-22:30"), or ""
+    // when SetWatchPref would reject it (libpebble3's QuietTimeSchedule.parse rules: H:MM or HH:MM
+    // on both sides of one '-', hours 0-23, minutes 0-59). Lets the editor flag a bad value before
+    // sending; the daemon's own error is still shown if it disagrees.
+    Q_INVOKABLE QString      normalizeSchedule(const QString &raw) const;
 
     // --- typed wrappers: Daemon config (Settings -> Advanced) — HOOK #10 ---
     Q_INVOKABLE QVariantList configSchema();             // GetConfigSchema() -> [{key,type,label,options[],desc}]

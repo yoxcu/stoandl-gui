@@ -25,6 +25,8 @@ FormCard.AbstractFormDelegate {
     property string label: ""
     /** Optional smaller explanatory line under the label. */
     property string description: ""
+    /** Validation message under the entry, in the negative colour; empty = valid (hidden). */
+    property string error: ""
     /** The edited text. Named `value` to avoid ItemDelegate's own `text`. */
     property alias value: field.text
     property alias placeholderText: field.placeholderText
@@ -61,6 +63,15 @@ FormCard.AbstractFormDelegate {
             id: field
             Layout.fillWidth: true
             onEditingFinished: root.editingFinished()
+        }
+
+        QQC2.Label {
+            Layout.fillWidth: true
+            visible: root.error !== ""
+            text: root.error
+            wrapMode: Text.WordWrap
+            font: Kirigami.Theme.smallFont
+            color: Kirigami.Theme.negativeTextColor
         }
     }
 }

@@ -7,9 +7,10 @@ import org.stoandl.gui
 
 // Watch "advanced settings" (the WatchPrefs BlobDB the official app exposes). The daemon's
 // ListWatchPrefs sends one record per pref: id/type/current/default/allowed/flags/name/description,
-// where type ∈ {bool, number, enum, quicklaunch, color}. We render ONE delegate per type — crucially,
-// quicklaunch is an APP PICKER (not a slider setting a uuid) and enum/color get real combos/pickers —
-// and group the ~46 prefs into labelled sections instead of one undifferentiated list.
+// where type ∈ {bool, number, enum, quicklaunch, color, schedule}. We render ONE delegate per type —
+// crucially, quicklaunch is an APP PICKER (not a slider setting a uuid), enum/color get real
+// combos/pickers and schedule (Quiet Time hours) a validated HH:MM-HH:MM field — and group the ~50
+// prefs into labelled sections instead of one undifferentiated list.
 Kirigami.ScrollablePage {
     id: page
     objectName: "watchSettings"
@@ -32,6 +33,15 @@ Kirigami.ScrollablePage {
             if (apps[i].type !== "watchface")
                 titles.push(apps[i].title);
         page.appTitles = titles;
+    }
+
+    // Headless smoke (STOANDL_SMOKE_MS): run the schedule validator both ways and round-trip a
+    // window through SetWatchPref, so the re-fetched value re-renders the schedule delegate.
+    function smokeExercise() {
+        var bad = StoandlClient.normalizeSchedule("25:00-07:00");
+        var good = StoandlClient.normalizeSchedule(" 7:5-22:30 ");
+        page.applyPref("dndWeekdaySchedule", good);
+        console.log("stoandl-smoke: schedule validator bad='" + bad + "' good='" + good + "'");
     }
 
     function applyPref(id, value) {
@@ -67,18 +77,48 @@ Kirigami.ScrollablePage {
         return (allowed || []).filter(function (a) { return a !== "RRGGBB"; });
     }
 
+    // --- schedule helpers ---------------------------------------------------
+    // A Quiet Time schedule's hours do nothing until its "<id>Enabled" switch is on
+    // (dndWeekdaySchedule ↔ dndWeekdayScheduleEnabled), and the daemon lists the schedules last. So
+    // each schedule row moves right under its switch and says what it depends on.
+    function prefById(id) {
+        for (var i = 0; i < page.watchPrefs.length; ++i)
+            if (page.watchPrefs[i].id === id)
+                return page.watchPrefs[i];
+        return null;
+    }
+    function scheduleHint(p) {
+        var sw = page.prefById(p.id + "Enabled");
+        return (p.description ? p.description + " " : "")
+             + "Daily, 24-hour clock; an end before the start runs overnight (e.g. 22:00-07:00)."
+             + (sw ? " Applies while “" + sw.name + "” is on." : "");
+    }
+    function pairSchedules(rows) {
+        var out = rows.filter(function (p) { return p.type !== "schedule"; });
+        var loose = [];
+        rows.forEach(function (p) {
+            if (p.type !== "schedule")
+                return;
+            for (var i = 0; i < out.length; ++i) {
+                if (out[i].id === p.id + "Enabled") { out.splice(i + 1, 0, p); return; }
+            }
+            loose.push(p);
+        });
+        return out.concat(loose);
+    }
+
     // --- grouping ----------------------------------------------------------
     // Ordered section rules, matched on the stable libpebble pref id. First match wins; anything
     // unmatched (a future libpebble pref) lands in "Other" so nothing is ever dropped.
     readonly property var sectionDefs: [
         { key: "quicklaunch", title: "Quick launch",        match: function (id) { return id.indexOf("ql") === 0; } },
-        { key: "display",     title: "Display & backlight", match: function (id) { return id.indexOf("light") === 0 || id === "textStyle" || id === "displayOrientationLeftHanded" || id === "dynBacklightMinThreshold"; } },
+        { key: "display",     title: "Display & backlight", match: function (id) { return id.indexOf("light") === 0 || id === "textStyle" || id === "displayOrientationLeftHanded"; } },
         { key: "notif",       title: "Notifications",       match: function (id) { return id.indexOf("notif") === 0 || id === "mask" || id.indexOf("timelineQuickView") === 0; } },
         { key: "quiet",       title: "Quiet Time",          match: function (id) { return id.indexOf("dnd") === 0; } },
         { key: "vibe",        title: "Vibration",           match: function (id) { return id.indexOf("vibe") >= 0; } },
         { key: "music",       title: "Music",               match: function (id) { return id.indexOf("music") === 0; } },
         { key: "motion",      title: "Motion & menus",      match: function (id) { return id === "motionSensitivity" || id === "stationaryMode" || id.indexOf("menuScroll") === 0; } },
-        { key: "clock",       title: "Clock & language",    match: function (id) { return id === "clock24h" || id === "timezoneSource" || id === "langEnglish"; } },
+        { key: "clock",       title: "Clock & language",    match: function (id) { return id === "clock24h" || id === "timezoneSource" || id === "language"; } },
         { key: "other",       title: "Other",               match: function (id) { return true; } },
     ]
 
@@ -96,6 +136,8 @@ Kirigami.ScrollablePage {
             } else if (p.type === "color") {
                 p.colorPresetList = page.colorPresets(p.allowed);
                 p.colorCss = page.colorHexCss(p.current);
+            } else if (p.type === "schedule") {
+                p.scheduleHint = page.scheduleHint(p);
             }
             for (var s = 0; s < page.sectionDefs.length; ++s) {
                 if (page.sectionDefs[s].match(p.id)) {
@@ -108,7 +150,7 @@ Kirigami.ScrollablePage {
         var out = [];
         for (var d = 0; d < page.sectionDefs.length; ++d) {
             var rows = buckets[page.sectionDefs[d].key];
-            if (rows && rows.length) out.push({ title: page.sectionDefs[d].title, prefs: rows });
+            if (rows && rows.length) out.push({ title: page.sectionDefs[d].title, prefs: page.pairSchedules(rows) });
         }
         return out;
     }
@@ -166,6 +208,7 @@ Kirigami.ScrollablePage {
                                            : modelData.type === "quicklaunch" ? quickPref
                                            : modelData.type === "number" ? numberPref
                                            : modelData.type === "color" ? colorPref
+                                           : modelData.type === "schedule" ? schedulePref
                                            : fallbackPref
 
                             Component {
@@ -260,6 +303,29 @@ Kirigami.ScrollablePage {
                                             displayText: currentIndex < 0 ? "Choose…" : currentText
                                             onActivated: page.applyPref(prefLoader.modelData.id, currentText)
                                         }
+                                    }
+                                }
+                            }
+
+                            // Schedule (Quiet Time hours): a 24 h "HH:MM-HH:MM" window. Checked as typed
+                            // with the daemon's own parse rules (StoandlClient.normalizeSchedule), sent
+                            // zero-padded on Enter / focus-out only — applyPref rebuilds this row, so a
+                            // per-keystroke commit would fight the user — and never while invalid.
+                            Component {
+                                id: schedulePref
+                                FormTextRow {
+                                    id: srow
+                                    // What SetWatchPref would store for the text as typed; "" = it would refuse it.
+                                    readonly property string normalized: StoandlClient.normalizeSchedule(srow.value)
+                                    label: prefLoader.modelData.name
+                                    description: prefLoader.modelData.scheduleHint
+                                    value: prefLoader.modelData.current
+                                    placeholderText: "HH:MM-HH:MM"
+                                    inputMethodHints: Qt.ImhPreferNumbers | Qt.ImhNoPredictiveText
+                                    error: srow.normalized === "" ? "Enter a window as HH:MM-HH:MM, e.g. 22:00-07:00" : ""
+                                    onEditingFinished: {
+                                        if (srow.normalized !== "" && srow.normalized !== prefLoader.modelData.current)
+                                            page.applyPref(prefLoader.modelData.id, srow.normalized);
                                     }
                                 }
                             }

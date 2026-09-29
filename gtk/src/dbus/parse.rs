@@ -619,9 +619,11 @@ pub fn parse_sync_status(rows: &[String]) -> Vec<SyncStatus> {
 // --- Settings-tab typed builders -------------------------------------------
 
 /// A `ListWatchPrefs` record: `id \t type \t current \t default \t allowed \t
-/// flags \t name \t description`. type ∈ {bool,number,enum,quicklaunch,color}.
-/// `allowed` is **pipe**-separated (options for enum/quicklaunch/color, a
-/// "true|false" for bool, and "min..max[ unit]" for number). Number min/max/unit
+/// flags \t name \t description`. type ∈ {bool,number,enum,quicklaunch,color,
+/// schedule}. `allowed` is **pipe**-separated (options for enum/quicklaunch/color,
+/// a "true|false" for bool, "min..max[ unit]" for number, the literal
+/// "HH:MM-HH:MM" for schedule, whose current/default are a 24 h window such as
+/// "22:00-07:00" — an end before the start runs overnight). Number min/max/unit
 /// are pre-derived. `current_int` takes the leading digits ("3000 ms" → 3000).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WatchPref {
@@ -677,6 +679,39 @@ pub fn parse_watch_prefs(rows: &[String]) -> Vec<WatchPref> {
             }
         })
         .collect()
+}
+
+/// A `schedule` pref value as the daemon would store it (`"7:5-22:30"` →
+/// `"07:05-22:30"`), or `None` when `SetWatchPref` would refuse it. Mirrors
+/// libpebble3's `QuietTimeSchedule.parse()`: exactly one `-` between two times,
+/// each (trimmed) exactly one `:` between an hour 0–23 and a minute 0–59, digits
+/// only (plus the optional `+` Kotlin's `toIntOrNull` also takes). Lets the editor
+/// flag a bad value before sending; the daemon's own error still wins.
+pub fn normalize_schedule(raw: &str) -> Option<String> {
+    let num = |s: &str| -> Option<u32> {
+        let d = s.strip_prefix('+').unwrap_or(s);
+        if d.is_empty() || !d.chars().all(|c| c.is_ascii_digit()) {
+            return None;
+        }
+        d.parse().ok()
+    };
+    let times: Vec<&str> = raw.split('-').collect();
+    if times.len() != 2 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(2);
+    for t in times {
+        let hm: Vec<&str> = t.trim().split(':').collect();
+        if hm.len() != 2 {
+            return None;
+        }
+        let (h, m) = (num(hm[0])?, num(hm[1])?);
+        if h > 23 || m > 59 {
+            return None;
+        }
+        out.push(format!("{h:02}:{m:02}"));
+    }
+    Some(out.join("-"))
 }
 
 /// A `GetConfigSchema` record: `key \t type \t label \t options(comma) \t desc \t group \t apply
@@ -1341,6 +1376,20 @@ mod tests {
         assert!((pw[0].share - 34.0).abs() < 1e-9);
         assert!((pw[0].est_drain_pct - 2.38).abs() < 1e-9);
         assert!((pw[1].est_drain_pct - 1.26).abs() < 1e-9);
+    }
+
+    #[test]
+    fn schedule_normalised_like_the_daemon() {
+        assert_eq!(normalize_schedule("7:5-22:30").as_deref(), Some("07:05-22:30"));
+        assert_eq!(normalize_schedule(" 22:00 - 07:00 ").as_deref(), Some("22:00-07:00"));
+        assert_eq!(normalize_schedule("00:00-06:00").as_deref(), Some("00:00-06:00"));
+        assert_eq!(normalize_schedule("+7:00-8:00").as_deref(), Some("07:00-08:00"));
+        for bad in [
+            "", "06:00", "24:00-06:00", "12:60-13:00", "0600-0700", "06:00-07:00-08:00",
+            "a:b-c:d", "6 :00-7:00", "06:-07:00", "-6:00-7:00", "06:00:00-07:00",
+        ] {
+            assert_eq!(normalize_schedule(bad), None, "{bad:?} must be refused");
+        }
     }
 
     #[test]

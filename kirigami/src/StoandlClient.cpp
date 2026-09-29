@@ -17,6 +17,7 @@
 #include <QJsonValue>
 #include <QLoggingCategory>
 #include <QSet>
+#include <QRegularExpression>
 
 #include <algorithm>
 
@@ -1108,10 +1109,12 @@ QVariantList StoandlClient::listWatchPrefs()
 {
     // Record: id \t type \t current \t default \t allowed \t flags \t name \t description
     //
-    // type ∈ {bool, number, enum, quicklaunch, color} (the daemon's WatchPrefsControl.typeName()).
-    // `allowed` is built by WatchPrefsControl.allowed() and is **pipe-separated** for the option
-    // types — enum ("Standard - Low|Standard - High|…"), quicklaunch ("off|<app name or uuid>"),
-    // color ("RRGGBB|<preset>|…") — and a "min..max[ unit]" range for number, "true|false" for bool.
+    // type ∈ {bool, number, enum, quicklaunch, color, schedule} (the daemon's
+    // WatchPrefsControl.typeName()). `allowed` is built by WatchPrefsControl.allowed() and is
+    // **pipe-separated** for the option types — enum ("Standard - Low|Standard - High|…"),
+    // quicklaunch ("off|<app name or uuid>"), color ("RRGGBB|<preset>|…") — and a "min..max[ unit]"
+    // range for number, "true|false" for bool, the literal "HH:MM-HH:MM" for schedule (whose
+    // current/default are a 24 h window such as "22:00-07:00"; an end before the start is overnight).
     // The QML renders one delegate per type, so split on '|' (NOT ','), and pre-derive the number
     // range + unit and the leading-int current value (a "3000 ms" current is not a plain int).
     QVariantList rows;
@@ -1163,6 +1166,31 @@ QVariantList StoandlClient::listWatchPrefs()
 QVariantMap StoandlClient::setWatchPref(const QString &id, const QString &value)
 {
     return statusMap(callStatus(QStringLiteral("SetWatchPref"), {id, value}));
+}
+
+QString StoandlClient::normalizeSchedule(const QString &raw) const
+{
+    // libpebble3's QuietTimeSchedule.parse(), which SetWatchPref applies: exactly one '-' between two
+    // times, each (trimmed) exactly one ':' between an hour 0-23 and a minute 0-59, digits only (an
+    // optional '+' is what Kotlin's toIntOrNull also takes). Returned zero-padded, as the daemon
+    // stores it and lists it back.
+    static const QRegularExpression number(QStringLiteral("^\\+?\\d+$"));
+    const QStringList times = raw.split(QLatin1Char('-'));
+    if (times.size() != 2)
+        return {};
+    QStringList out;
+    for (const QString &t : times) {
+        const QStringList hm = t.trimmed().split(QLatin1Char(':'));
+        if (hm.size() != 2 || !number.match(hm.at(0)).hasMatch() || !number.match(hm.at(1)).hasMatch())
+            return {};
+        bool okH = false, okM = false;
+        const int h = hm.at(0).toInt(&okH);
+        const int m = hm.at(1).toInt(&okM);
+        if (!okH || !okM || h > 23 || m > 59)
+            return {};
+        out << QStringLiteral("%1:%2").arg(h, 2, 10, QLatin1Char('0')).arg(m, 2, 10, QLatin1Char('0'));
+    }
+    return out.join(QLatin1Char('-'));
 }
 
 // --- Daemon config, schema-driven (HOOK #10) -------------------------------
