@@ -101,9 +101,14 @@ QML → `StoandlClient` → D-Bus → mock → render end-to-end and self-termin
 same hook in `gtk/src/window.rs::maybe_start_smoke`.) The env var is read via `StoandlClient.smokeMs`.
 
 **Add a `smokeExercise()` to any page whose interesting state is only reachable by navigation or by a
-button press** — otherwise it is not covered. `SettingsPage` pushes all seven sub-pages;
-`NotificationsPage` fires the send-test. This harness is how the delegate-binding scope trap below was
-caught, so it is worth keeping honest.
+button press** — otherwise it is not covered. `SettingsPage` pushes all seven sub-pages and runs their
+own `smokeExercise()` (`WatchSettingsPage` round-trips a Quiet Time window, `DebugSettingsPage` pushes
+`HeartbeatPage`, which filters); `NotificationsPage` fires the send-test; with the daemon down the tick
+presses "Start daemon". This harness is how the delegate-binding scope trap below was caught, so it is
+worth keeping honest. Mock switches for the states a healthy mock never reaches: `MOCK_NO_WATCH=1`
+(paired, nothing connected), `MOCK_HB_UNKNOWN=1` (unverified heartbeat layout), `MOCK_FW_DOWNGRADE=1`
+(every sideload is a downgrade through recovery) and `MOCK_FW_AUTOSTART=<s>` (a flash the GUI didn't
+start, seen only through `FirmwareProgress`).
 
 ## Hard rules
 - **The interface has SEVEN signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
