@@ -33,7 +33,7 @@ fn dbg_smoke(msg: &str) {
     }
 }
 
-fn fw_phase_label(phase: &str, percent: i32) -> String {
+fn fw_phase_label(phase: &str, percent: i32, detail: &str) -> String {
     match phase {
         "downloading" => "Downloading firmware…".into(),
         "waiting" => "Preparing…".into(),
@@ -45,6 +45,10 @@ fn fw_phase_label(phase: &str, percent: i32) -> String {
             }
         }
         "notready" => "Waiting for the watch…".into(),
+        // A downgrade reboots into recovery first and is flashed from there (the
+        // client keeps this phase across the disconnect until that flash starts).
+        "prf" if !detail.is_empty() => format!("Rebooting into recovery to downgrade to {detail}…"),
+        "prf" => "Rebooting into recovery to downgrade…".into(),
         _ => "Working…".into(),
     }
 }
@@ -116,6 +120,7 @@ mod imp {
         pub fw_info: RefCell<Option<FirmwareInfo>>,
         pub fw_phase: RefCell<String>, // "" = idle
         pub fw_percent: Cell<i32>,
+        pub fw_detail: RefCell<String>, // prf: the version the watch is being downgraded to
 
         // Dynamically added rows (removed on rebuild).
         pub hero_rows: RefCell<Vec<gtk::Widget>>,
@@ -585,6 +590,7 @@ impl StoandlWatchPage {
     }
 
     fn handle_firmware_status(&self, kind: &str, percent: i32, detail: &str) {
+        dbg_smoke(&format!("fw status: {kind} {percent} {detail}"));
         match kind {
             "success" => {
                 self.toast("Firmware flashed — watch is rebooting");
@@ -612,6 +618,7 @@ impl StoandlWatchPage {
             _ => {
                 self.imp().fw_phase.replace(kind.to_string());
                 self.imp().fw_percent.set(percent);
+                self.imp().fw_detail.replace(detail.to_string());
             }
         }
         self.update_fw_ui();
@@ -625,7 +632,8 @@ impl StoandlWatchPage {
         if busy {
             let phase = imp.fw_phase.borrow().clone();
             let pct = imp.fw_percent.get();
-            imp.fw_phase_label.set_label(&fw_phase_label(&phase, pct));
+            let detail = imp.fw_detail.borrow().clone();
+            imp.fw_phase_label.set_label(&fw_phase_label(&phase, pct, &detail));
             if pct < 0 {
                 imp.fw_progressbar.pulse();
             } else {

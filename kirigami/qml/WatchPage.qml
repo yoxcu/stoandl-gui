@@ -18,8 +18,9 @@ Kirigami.ScrollablePage {
     // flash poll (UpdateFirmware -> FirmwareStatus) lives here now — no detour
     // to a separate screen (handoff §4d).
     property var fwInfo: null
-    property string fwPhase: ""     // "" = idle; else downloading/waiting/inprogress/notready
+    property string fwPhase: ""     // "" = idle; else downloading/waiting/inprogress/notready/prf
     property int fwPercent: -1
+    property string fwDetail: ""    // prf: the version the watch is being downgraded to
     readonly property bool fwBusy: fwPhase !== ""
     readonly property bool updateAvailable: fwInfo && fwInfo.kind === "ok" && fwInfo.updateAvailable === true
 
@@ -63,6 +64,9 @@ Kirigami.ScrollablePage {
         if (fwPhase === "waiting")     return "Preparing…";
         if (fwPhase === "inprogress")  return "Flashing… " + (fwPercent >= 0 ? fwPercent + "%" : "");
         if (fwPhase === "notready")    return "Waiting for the watch…";
+        // A downgrade reboots into recovery first and is flashed from there (StoandlClient keeps
+        // this phase until the recovery flash starts, across the watch's disconnect).
+        if (fwPhase === "prf")         return "Rebooting into recovery to downgrade" + (fwDetail ? " to " + fwDetail : "") + "…";
         return "Working…";
     }
 
@@ -78,7 +82,7 @@ Kirigami.ScrollablePage {
             else if (kind === "failed") { page.toast("Flash failed: " + detail); page.fwPhase = ""; page.fwPercent = -1; }
             else if (kind === "timeout") { page.toast("Flash timed out"); page.fwPhase = ""; page.fwPercent = -1; }
             else if (kind === "idle") { page.fwPhase = ""; page.fwPercent = -1; } // terminal: no flash in flight → hide the banner
-            else { page.fwPhase = kind; page.fwPercent = percent; }
+            else { page.fwPhase = kind; page.fwPercent = percent; page.fwDetail = detail; }
         }
         function onDaemonUpChanged() {
             if (StoandlClient.daemonUp) {
@@ -175,7 +179,7 @@ Kirigami.ScrollablePage {
                     QQC2.Label {
                         Layout.fillWidth: true
                         text: page.fwPhaseLabel()
-                        elide: Text.ElideRight
+                        wrapMode: Text.WordWrap   // the recovery-downgrade line is long on a phone
                     }
                     QQC2.ProgressBar {
                         Layout.fillWidth: true

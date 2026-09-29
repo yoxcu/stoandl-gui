@@ -78,6 +78,10 @@ StoandlClient::StoandlClient(QObject *parent)
     m_fwTimer = new QTimer(this);
     m_fwTimer->setInterval(FW_INTERVAL_MS);
     connect(m_fwTimer, &QTimer::timeout, this, &StoandlClient::firmwarePollOnce);
+    // What the Watch page is told, after normalisation (QT_LOGGING_RULES="stoandl.debug=true").
+    connect(this, &StoandlClient::firmwareStatus, this, [](const QString &kind, int percent, const QString &detail) {
+        qCDebug(lcStoandl).noquote().nospace() << "firmwareStatus → " << kind << " " << percent << " " << detail;
+    });
 
     m_langTimer = new QTimer(this);
     m_langTimer->setInterval(LANG_INTERVAL_MS);
@@ -657,17 +661,30 @@ void StoandlClient::startFirmwarePoll()
 {
     m_fwElapsedMs = 0;
     m_fwSeenActivity = false;
+    m_fwViaRecovery = false;
+    m_fwPrfVersion.clear();
     if (!m_fwTimer->isActive())
         m_fwTimer->start();
 }
 
 void StoandlClient::stopFirmwarePoll() { m_fwTimer->stop(); }
 
+void StoandlClient::endFirmwareOp()
+{
+    stopFirmwarePoll();
+    // Clear the activity/recovery state so a trailing idle/notready frame (the daemon resetting its
+    // firmware state once the watch reconnects) hits the no-flicker guard in emitFirmwareStatus
+    // instead of re-opening the "Updating firmware" banner.
+    m_fwSeenActivity = false;
+    m_fwViaRecovery = false;
+    m_fwPrfVersion.clear();
+}
+
 void StoandlClient::firmwarePollOnce()
 {
     m_fwElapsedMs += FW_INTERVAL_MS;
     if (m_fwElapsedMs > FW_TIMEOUT_MS) {
-        stopFirmwarePoll();
+        endFirmwareOp();
         Q_EMIT firmwareStatus(QStringLiteral("timeout"), -1, QStringLiteral("Flash timed out"));
         return;
     }
@@ -678,6 +695,24 @@ void StoandlClient::firmwarePollOnce()
 
 void StoandlClient::emitFirmwareStatus(const QString &phase, int percent, const QString &detail)
 {
+    // A downgrade on a dual-slot watch (`prf:<version>`): libpebble3 reboots the watch into recovery
+    // with nothing flashed yet, and the daemon flashes the same .pbz once it reconnects there. So the
+    // disconnect that follows is the reboot into PRF, not the end of the flash: the first prf restarts
+    // the activity tracking and the timeout (the CLI's pollFirmwareStatus does the same), and arms the
+    // poll even when the downgrade was started elsewhere (CLI) and only reached us as a signal.
+    if (phase == QStringLiteral("prf")) {
+        if (!m_fwViaRecovery) {
+            m_fwViaRecovery = true;
+            m_fwPrfVersion = detail;
+            m_fwSeenActivity = false;
+            m_fwElapsedMs = 0;
+            if (!m_fwTimer->isActive())
+                m_fwTimer->start();
+        }
+        Q_EMIT firmwareStatus(QStringLiteral("prf"), -1, m_fwPrfVersion);
+        return;
+    }
+
     // Track activity so a `notready` (link dropping on reboot) counts as success only *after*
     // we've seen real progress — same rule whether it arrived via the poll or the signal.
     if (phase == QStringLiteral("downloading") || phase == QStringLiteral("waiting")
@@ -697,19 +732,24 @@ void StoandlClient::emitFirmwareStatus(const QString &phase, int percent, const 
         }
     }
 
+    // Between the reboot into recovery and the flash starting there, the watch is off the air
+    // (`notready`) and then back in PRF but not yet flashing (`idle`): still the downgrade, so keep
+    // reporting it rather than "waiting for the watch" or, worse, no flash at all.
+    if (m_fwViaRecovery && !m_fwSeenActivity
+        && (phase == QStringLiteral("idle") || phase == QStringLiteral("notready"))) {
+        Q_EMIT firmwareStatus(QStringLiteral("prf"), -1, m_fwPrfVersion);
+        return;
+    }
+
     // Success = a `reboot` OR a `notready` seen after activity (the watch reboots → link drops).
     if (phase == QStringLiteral("reboot")
         || (phase == QStringLiteral("notready") && m_fwSeenActivity)) {
-        stopFirmwarePoll();
-        // Clear the activity flag so a trailing idle/notready frame (the daemon resetting its firmware
-        // state once the watch reconnects) hits the no-flicker guard below instead of re-opening the
-        // "Updating firmware" banner.
-        m_fwSeenActivity = false;
+        endFirmwareOp();
         Q_EMIT firmwareStatus(QStringLiteral("success"), 100, QStringLiteral("Watch is rebooting"));
         return;
     }
     if (phase == QStringLiteral("failed")) {
-        stopFirmwarePoll();
+        endFirmwareOp();
         Q_EMIT firmwareStatus(QStringLiteral("failed"), -1, detail);
         return;
     }

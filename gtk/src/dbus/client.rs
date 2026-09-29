@@ -80,6 +80,11 @@ mod imp {
         pub pair_elapsed: Cell<i32>,
         pub fw_elapsed: Cell<i32>,
         pub fw_seen_activity: Cell<bool>,
+        // A downgrade going through recovery (`prf:<version>`): the reboot into PRF
+        // drops the link before anything is flashed, so that disconnect is NOT
+        // success. Set on the first prf phase, cleared at the terminal state.
+        pub fw_via_recovery: Cell<bool>,
+        pub fw_prf_version: RefCell<String>,
         pub lang_elapsed: Cell<i32>,
         pub lang_seen_activity: Cell<bool>,
         pub lang_first_poll: Cell<bool>,
@@ -715,8 +720,11 @@ impl StoandlClient {
     }
 
     pub fn start_firmware_poll(&self) {
-        self.imp().fw_elapsed.set(0);
-        self.imp().fw_seen_activity.set(false);
+        let imp = self.imp();
+        imp.fw_elapsed.set(0);
+        imp.fw_seen_activity.set(false);
+        imp.fw_via_recovery.set(false);
+        imp.fw_prf_version.borrow_mut().clear();
         self.arm_firmware_timer();
     }
 
@@ -726,11 +734,22 @@ impl StoandlClient {
         }
     }
 
+    /// Stop the poll and clear its activity/recovery state (every terminal
+    /// outcome), so a trailing idle/notready frame hits the no-flicker guard in
+    /// `firmware_normalize` instead of re-showing the banner.
+    fn end_firmware_op(&self) {
+        self.stop_firmware_poll();
+        let imp = self.imp();
+        imp.fw_seen_activity.set(false);
+        imp.fw_via_recovery.set(false);
+        imp.fw_prf_version.borrow_mut().clear();
+    }
+
     fn firmware_poll_tick(&self) {
         let elapsed = self.imp().fw_elapsed.get() + FW_INTERVAL_MS as i32;
         self.imp().fw_elapsed.set(elapsed);
         if elapsed > FW_TIMEOUT_MS {
-            self.stop_firmware_poll();
+            self.end_firmware_op();
             self.signal_firmware_status("timeout", -1, "Flash timed out");
             return;
         }
@@ -756,6 +775,23 @@ impl StoandlClient {
     /// activity notready poke when nothing is in flight.
     fn firmware_normalize(&self, phase: &str, percent: i32, detail: &str) {
         let imp = self.imp();
+        // A downgrade on a dual-slot watch (`prf:<version>`): libpebble3 reboots the
+        // watch into recovery with nothing flashed yet, and the daemon flashes the
+        // same .pbz once it reconnects there. The disconnect that follows is that
+        // reboot, not the end of the flash: the first prf restarts the activity
+        // tracking and the timeout (as the CLI does), and arms the poll even for a
+        // downgrade started elsewhere that only reached us as a signal.
+        if phase == "prf" {
+            if !imp.fw_via_recovery.replace(true) {
+                imp.fw_prf_version.replace(detail.to_string());
+                imp.fw_seen_activity.set(false);
+                imp.fw_elapsed.set(0);
+                self.arm_firmware_timer();
+            }
+            let v = imp.fw_prf_version.borrow().clone();
+            self.signal_firmware_status("prf", -1, &v);
+            return;
+        }
         if matches!(phase, "downloading" | "waiting" | "inprogress") {
             imp.fw_seen_activity.set(true);
             // Arm the watchdog even for a watch-triggered flash (GUI never called
@@ -765,17 +801,24 @@ impl StoandlClient {
                 self.arm_firmware_timer();
             }
         }
+        // Between the reboot into recovery and the flash starting there, the watch
+        // is off the air (notready) and then back in PRF but idle: still the
+        // downgrade, so keep reporting it rather than clearing the banner.
+        if imp.fw_via_recovery.get()
+            && !imp.fw_seen_activity.get()
+            && matches!(phase, "idle" | "notready")
+        {
+            let v = imp.fw_prf_version.borrow().clone();
+            self.signal_firmware_status("prf", -1, &v);
+            return;
+        }
         if phase == "reboot" || (phase == "notready" && imp.fw_seen_activity.get()) {
-            self.stop_firmware_poll();
-            // Terminal: disarm the activity flag so a trailing idle/notready frame
-            // hits the no-flicker guard below instead of re-showing the banner.
-            imp.fw_seen_activity.set(false);
+            self.end_firmware_op();
             self.signal_firmware_status("success", 100, "Watch is rebooting");
             return;
         }
         if phase == "failed" {
-            self.stop_firmware_poll();
-            imp.fw_seen_activity.set(false);
+            self.end_firmware_op();
             self.signal_firmware_status("failed", -1, detail);
             return;
         }

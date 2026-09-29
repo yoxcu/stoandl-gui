@@ -144,7 +144,11 @@ caught, so it is worth keeping honest.
 ## Status kinds
 ok · error · notready · notfound · ambiguous · pending · timeout · inprogress · reboot · failed ·
 done · uptodate · disabled · busy · idle · none · confirm (PairStatus `confirm:<code>` — numeric
-comparison awaiting ConfirmPairing(bool))
+comparison awaiting ConfirmPairing(bool)) · prf (FirmwareStatus `prf:<version>` — a downgrade on a
+dual-slot watch rebooting into recovery with nothing flashed yet; the daemon flashes the same `.pbz`
+once the watch reconnects there. The disconnect that follows is NOT success: `StoandlClient` restarts
+the activity tracking and timeout at the first `prf`, holds the phase across `notready`/`idle`, and only
+the flash from recovery ends the op — like the CLI's `pollFirmwareStatus`)
 
 ## Daemon hooks (added this milestone)
 Seven reactive **signals** — `WatchesChanged()` (re-call ListWatches), `FirmwareProgress(s phase,

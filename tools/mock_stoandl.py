@@ -38,6 +38,9 @@ IFACE = "de.yoxcu.stoandl.Control"
 # The numeric-comparison code surfaced as confirm:<code> until ConfirmPairing answers.
 PAIR_CODE = "481516"
 
+# The older firmware MOCK_FW_DOWNGRADE=1 pretends every sideloaded .pbz carries.
+DOWNGRADE_VERSION = "4.4.1"
+
 # PebbleOS changelog (HOOK: appended to CheckFirmware so the GUI's "What's new" works).
 CHANGELOG_URL = "https://ndocs.repebble.com/PebbleOS-Changelog-25efbb55ea84801da04bfcf73c9346e1"
 
@@ -1614,6 +1617,8 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def UpdateFirmware(self):
+        if self.fw is not None and self.fw["prf_pending"]:
+            return f"busy:A downgrade to {DOWNGRADE_VERSION} is pending: stoandl flashes it once the watch is in recovery"
         self._start_fw_push()   # walk + push FirmwareProgress on a GLib tick
         return rec("ok:snowy_s3", "4.4.2", "4.4.3", "core-fw.pbz")
 
@@ -1621,8 +1626,9 @@ class MockStoandl(dbus.service.Object):
     def SideloadFirmware(self, path):
         if not path:
             return "error:empty path"
-        self._start_fw_push()
-        return f"ok:flashing {path.rsplit('/', 1)[-1]}"
+        # MOCK_FW_DOWNGRADE=1: every sideload is an older .pbz on a dual-slot watch.
+        self._start_fw_push(downgrade=os.environ.get("MOCK_FW_DOWNGRADE") == "1")
+        return f"ok:Flashing {path.rsplit('/', 1)[-1]}"
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def FirmwareStatus(self):
@@ -1631,14 +1637,7 @@ class MockStoandl(dbus.service.Object):
         # reports the current phase (so polling and the signal never double-advance the walk).
         if self.fw is None:
             return "idle:"
-        p = self.fw["polls"]
-        if p <= 1:
-            return "downloading:core-fw.pbz"
-        if p == 2:
-            return "waiting:"
-        if 3 <= p <= 7:
-            return f"inprogress:{(p - 2) * 20}"   # 20,40,60,80,100
-        return "reboot:"                           # success -> watch reboots
+        return self.fw["steps"][max(self.fw["step"], 0)][0]
 
     # --- Language packs ----------------------------------------------------
     def _resolve_lang(self, query):
@@ -1800,32 +1799,66 @@ class MockStoandl(dbus.service.Object):
         pass
 
     # --- firmware progress walker (pushes FirmwareProgress on a GLib tick) --
-    def _fw_tick(self):
+    @staticmethod
+    def _fw_steps(downgrade):
+        """The FirmwareStatus strings one flash walks through, each with an optional side effect.
+
+        A normal flash: download, transfer, `reboot:`. A downgrade on a dual-slot watch (the
+        daemon's FirmwareControl since "finish downgrades that go through recovery"): libpebble3
+        reboots the watch into recovery WITHOUT transferring, reported as `prf:<version>`; the link
+        drops (`notready:`), the watch comes back in PRF (`idle:` until the daemon re-flashes the
+        remembered .pbz), then the real transfer runs and ends in `reboot:`. So a client that
+        declares success at the first disconnect is wrong by one whole flash.
+        """
+        flash = [("waiting:", None)] + [(f"inprogress:{p}", None) for p in (20, 40, 60, 80, 100)]
+        if not downgrade:
+            return [("downloading:core-fw.pbz", None)] * 2 + flash + [("reboot:", "end")]
+        nowatch = "notready:No watch connected"
+        return ([("waiting:", None)] + [(f"prf:{DOWNGRADE_VERSION}", None)] * 2
+                + [(nowatch, "drop")] + [(nowatch, None)] * 3
+                + [("idle:", "back")] + flash + [("reboot:", "end")])
+
+    def _fw_tick(self, op):
         """Drive a firmware op forward one step and PUSH the phase via FirmwareProgress.
 
-        Mirrors FirmwareStatus()'s walk so the polled path still works as a fallback;
-        returns True to keep the GLib timer running, False to stop it once terminal.
+        FirmwareStatus() reads the same step, so the polled path still works as a fallback;
+        returns True to keep the GLib timer running, False to stop it once terminal — or once a
+        newer flash replaced `op` (its own timer drives that one).
         """
-        if self.fw is None:
+        if self.fw is not op:
             return False
-        p = self.fw["polls"]
-        self.fw["polls"] += 1
-        if p <= 1:
-            self.FirmwareProgress("downloading", -1, "core-fw.pbz")
-        elif p == 2:
-            self.FirmwareProgress("waiting", -1, "")
-        elif 3 <= p <= 7:
-            self.FirmwareProgress("inprogress", (p - 2) * 20, "")  # 20,40,60,80,100
+        self.fw["step"] += 1
+        status, effect = self.fw["steps"][self.fw["step"]]
+        if status.startswith("prf:"):
+            self.fw["prf_pending"] = True             # UpdateFirmware answers busy: from here
+        if effect == "drop":
+            # The reboot into recovery takes the watch off the air.
+            self.fw["watch"] = self._connected_name()
+            if self.fw["watch"]:
+                self.watches[self.fw["watch"]]["state"] = "disconnected"
+            self.WatchesChanged()
+        elif effect == "back":
+            # Reconnected in recovery; the daemon flashes the pending .pbz from here.
+            self.fw["prf_pending"] = False
+            if self.fw["watch"]:
+                self.watches[self.fw["watch"]]["state"] = "connected"
+            self.WatchesChanged()
+        # Same (phase, percent, detail) split as the daemon's startSignalEmitters() parse(); its
+        # status flow says a bare "notready:" when the watch is gone.
+        phase, _, rest = status.partition(":")
+        if phase == "inprogress":
+            self.FirmwareProgress(phase, int(rest), "")
         else:
+            self.FirmwareProgress(phase, -1, "" if phase == "notready" else rest)
+        if effect == "end":
             self.fw = None
-            self.FirmwareProgress("reboot", -1, "")  # success → watch reboots
             self.WatchesChanged()                     # link drops → list state changes
             return False
         return True
 
-    def _start_fw_push(self):
-        self.fw = {"polls": 0}
-        GLib.timeout_add(700, self._fw_tick)  # ~match the CLI/GUI firmware poll cadence
+    def _start_fw_push(self, downgrade=False):
+        self.fw = {"steps": self._fw_steps(downgrade), "step": -1, "prf_pending": False, "watch": None}
+        GLib.timeout_add(700, self._fw_tick, self.fw)  # ~match the CLI/GUI firmware poll cadence
 
     # --- language progress walker (pushes LanguageProgress on a GLib tick) --
     def _lang_tick(self):
@@ -1860,8 +1893,15 @@ def main():
     DBusGMainLoop(set_as_default=True)
     bus = dbus.SessionBus()
     name = dbus.service.BusName(BUS_NAME, bus)  # claim the well-known name
-    MockStoandl(bus, OBJ_PATH)
+    mock = MockStoandl(bus, OBJ_PATH)
     print(f"[mock] {BUS_NAME} owning {OBJ_PATH} ({IFACE}) — ready", flush=True)
+    # MOCK_FW_AUTOSTART=<seconds>: start a flash that long after startup, as if the CLI had kicked
+    # it off — the GUI then only sees FirmwareProgress signals, never its own Update/Sideload call.
+    # With MOCK_FW_DOWNGRADE=1 it is a downgrade through recovery (see _fw_steps).
+    delay = os.environ.get("MOCK_FW_AUTOSTART")
+    if delay:
+        GLib.timeout_add(int(float(delay) * 1000), lambda: mock._start_fw_push(
+            downgrade=os.environ.get("MOCK_FW_DOWNGRADE") == "1") and False)
     GLib.MainLoop().run()
 
 

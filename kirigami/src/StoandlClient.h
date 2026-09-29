@@ -227,9 +227,10 @@ Q_SIGNALS:
     void appsChanged(const QVariantList &rows);      // ListApps refresh (Apps screen)
     void extensionsChanged(const QVariantList &rows); // ExtList refresh (Plugins screen)
     void calendarsChanged(const QVariantList &rows);  // ListCalendars refresh (Sync screen)
-    // System screen. Normalised kinds: progress = idle/downloading/waiting/inprogress
-    // (firmware) or idle/downloading/installing (language); terminal = success/failed/
-    // timeout (firmware) or success/failed/disconnected/timeout (language).
+    // System screen. Normalised kinds: progress = idle/downloading/waiting/inprogress/prf
+    // (firmware; `prf` = a downgrade rebooting into recovery, detail = the target version, held
+    // until the flash resumes from recovery) or idle/downloading/installing (language); terminal =
+    // success/failed/timeout (firmware) or success/failed/disconnected/timeout (language).
     void firmwareStatus(const QString &kind, int percent, const QString &detail);
     void languageStatus(const QString &kind, int percent, const QString &detail);
     void cliResult(const QString &op, bool ok, const QString &message);
@@ -259,6 +260,8 @@ private:
     static QVariantMap statusMap(const Status &s);
     static int   parsePercent(const QString &s);
     void         startFirmwarePoll();
+    // Stop the firmware poll and clear its activity/recovery state (every terminal outcome).
+    void         endFirmwareOp();
     void         startLanguagePoll();
     // Normalise a raw firmware phase (FirmwareStatus kind OR FirmwareProgress phase) to the
     // terminal/progress `kind` the QML expects and Q_EMIT firmwareStatus. Shared by the poll
@@ -284,6 +287,11 @@ private:
     QTimer *m_fwTimer = nullptr;
     int     m_fwElapsedMs = 0;
     bool    m_fwSeenActivity = false;
+    // A downgrade going through recovery (`prf:<version>`): the reboot into PRF drops the link
+    // before anything is flashed, so that disconnect is NOT success. Set on the first prf phase
+    // (activity + timeout restart there), cleared at the terminal state.
+    bool    m_fwViaRecovery = false;
+    QString m_fwPrfVersion;
 
     QTimer *m_langTimer = nullptr;
     int     m_langElapsedMs = 0;
