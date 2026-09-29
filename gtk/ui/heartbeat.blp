@@ -1,0 +1,90 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Debug → Heartbeat: the watch's newest hourly analytics record (the raw
+// native_heartbeat_record), decoded metric by metric. Pushed from Settings →
+// Debug, so it is a NavigationPage (its header keeps the window controls + a
+// back button). Developer-facing: the summary facts and the grouped metric list
+// are built in Rust (pages/heartbeat.rs) into summary_group / prefs_page. The
+// record only changes hourly, so there is no poll — just the refresh action.
+template $StoandlHeartbeatPage: Adw.NavigationPage {
+  title: _("Heartbeat");
+  tag: "heartbeat";
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [end]
+      Gtk.Button refresh_button {
+        icon-name: "view-refresh-symbolic";
+        tooltip-text: _("Refresh");
+      }
+
+      [end]
+      Gtk.ToggleButton search_button {
+        icon-name: "system-search-symbolic";
+        tooltip-text: _("Filter metrics");
+      }
+    }
+
+    // Revealed by the header toggle (bound in Rust); filters the metric list by
+    // name. 92 metrics is a lot to eyeball.
+    [top]
+    Gtk.SearchBar search_bar {
+      child: Adw.Clamp {
+        maximum-size: 500;
+
+        child: Gtk.SearchEntry search_entry {
+          placeholder-text: _("Filter metrics");
+          hexpand: true;
+        };
+      };
+    }
+
+    content: Gtk.Stack heartbeat_stack {
+      transition-type: crossfade;
+
+      Gtk.StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage empty_status {
+          icon-name: "dialog-information-symbolic";
+          title: _("No heartbeat captured yet");
+          description: _("The watch emits one analytics record about once an hour while connected.");
+        };
+      }
+
+      Gtk.StackPage {
+        name: "content";
+
+        child: Adw.PreferencesPage prefs_page {
+          // Shown only when the firmware's record layout is not one stoandl has
+          // verified: the record is captured raw, but no metrics are decoded.
+          // The description (which names the size + version) is set in Rust.
+          Adw.PreferencesGroup warn_group {
+            visible: false;
+            title: _("Unverified record layout");
+
+            Adw.ActionRow {
+              title: _("No metrics shown");
+              subtitle: _("stoandl never displays guessed values.");
+
+              [prefix]
+              Gtk.Image {
+                icon-name: "dialog-warning-symbolic";
+
+                styles [
+                  "warning",
+                ]
+              }
+            }
+          }
+
+          Adw.PreferencesGroup summary_group {
+            title: _("Record");
+          }
+        };
+      }
+    };
+  };
+}

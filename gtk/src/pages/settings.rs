@@ -326,6 +326,7 @@ impl StoandlSettingsPage {
     pub fn bind_switcher(&self, stack: &adw::ViewStack) {
         self.imp().view_switcher.set_stack(Some(stack));
         self.imp().switcher_bar.set_stack(Some(stack));
+        self.imp().shell_stack.set(stack.clone()).ok();
     }
 
     fn client(&self) -> StoandlClient {
@@ -373,6 +374,11 @@ impl StoandlSettingsPage {
             #[weak(rename_to = page)]
             self,
             move |_| page.push_backup()
+        ));
+        self.imp().debug_row.connect_activated(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| page.push_debug()
         ));
 
         // Drop cached sub-page handles when their page is popped, so a background
@@ -1044,6 +1050,463 @@ impl StoandlSettingsPage {
             }
             Err(_) => self.toast(&format!("{fail_prefix}: stoandl CLI not found on PATH")),
         }
+    }
+
+    // --- Debug sub-page -------------------------------------------------------
+
+    /// The low-level diagnostic, recovery and testing tools (they used to hang off
+    /// the watch-details page, which hid them behind the connected-watch card).
+    /// Deliberately its own settings category so the landing stays end-user shaped.
+    ///
+    /// Every tool but the analytics heartbeat acts on "the connected watch" — those
+    /// daemon methods take no watch argument — so those rows are gated on a
+    /// connected watch (with an inline explanation), live via `watches-changed`.
+    fn push_debug(&self) {
+        let prefs = adw::PreferencesPage::builder()
+            .description("Low-level tools for diagnostics and recovery. Use with care.")
+            .build();
+
+        // Why the watch-scoped rows below are dead when nothing is connected.
+        let hint = adw::PreferencesGroup::new();
+        let hint_row = adw::ActionRow::builder()
+            .title("No watch connected")
+            .subtitle(
+                "These tools act on the connected watch. Only the analytics heartbeat \
+                 (read from stored records) works without one.",
+            )
+            .build();
+        hint_row.add_prefix(&gtk::Image::from_icon_name("dialog-information-symbolic"));
+        hint.add(&hint_row);
+        prefs.add(&hint);
+        self.imp().debug_hint.replace(Some(hint));
+
+        let diagnostics = adw::PreferencesGroup::builder().title("Diagnostics").build();
+        let core_row = action_row(
+            "Core dump",
+            "Save the watch’s last crash dump to a file",
+            "documentinfo-symbolic",
+            false,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move || page.pull_core_dump()
+            ),
+        );
+        diagnostics.add(&core_row);
+        let logs_row = action_row(
+            "Pull watch logs",
+            "Fetch the watch’s on-device log to a file",
+            "text-x-generic-symbolic",
+            false,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move || page.pull_logs()
+            ),
+        );
+        diagnostics.add(&logs_row);
+        // Reads the record the daemon already stored — no connected watch required.
+        let hb_row = adw::ActionRow::builder()
+            .title("Analytics heartbeat")
+            .subtitle("The watch’s hourly analytics record, decoded metric by metric")
+            .activatable(true)
+            .build();
+        hb_row.add_prefix(&gtk::Image::from_icon_name("stoandl-heart-symbolic"));
+        hb_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
+        hb_row.connect_activated(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |_| page.push_heartbeat()
+        ));
+        diagnostics.add(&hb_row);
+        prefs.add(&diagnostics);
+
+        let recovery = adw::PreferencesGroup::builder().title("Recovery").build();
+        let recovery_row = action_row(
+            "Reboot to recovery (PRF)",
+            "Restart the watch into its recovery firmware",
+            "system-reboot-symbolic",
+            false,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move || page.confirm_reboot_recovery()
+            ),
+        );
+        recovery.add(&recovery_row);
+        let flash_row = action_row(
+            "Flash firmware from file…",
+            "Install a local .pbz firmware bundle",
+            "system-software-update-symbolic",
+            false,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move || page.pick_firmware_file()
+            ),
+        );
+        recovery.add(&flash_row);
+        prefs.add(&recovery);
+
+        let testing = adw::PreferencesGroup::builder().title("Testing").build();
+        let notif_row = action_row(
+            "Write notification…",
+            "Send a test notification through the normal mute, style and filter path",
+            "mail-unread-symbolic",
+            false,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move || page.open_test_notification_dialog()
+            ),
+        );
+        testing.add(&notif_row);
+        prefs.add(&testing);
+
+        // The one destructive action, last and plainly marked.
+        let danger = adw::PreferencesGroup::builder().title("Danger zone").build();
+        let reset_row = action_row(
+            "Factory reset",
+            "Wipe the watch to its out-of-box state",
+            "dialog-warning-symbolic",
+            true,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move || page.confirm_factory_reset()
+            ),
+        );
+        danger.add(&reset_row);
+        prefs.add(&danger);
+
+        self.imp().debug_watch_rows.replace(vec![
+            core_row,
+            logs_row,
+            recovery_row,
+            flash_row,
+            notif_row,
+            reset_row,
+        ]);
+        // Connect/disconnect while the page is open must re-gate the rows. Bound
+        // once (the page can be pushed again after a pop).
+        if !self.imp().debug_bound.replace(true) {
+            self.client().connect_watches_changed(glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |_| page.update_debug_gate()
+            ));
+        }
+        self.update_debug_gate();
+
+        let np = Self::nav_page("Debug", "debug", &prefs, None);
+        self.nav().push(&np);
+    }
+
+    /// Enable the watch-scoped Debug rows only with a connected watch, and show
+    /// the inline explanation when there is none. A no-op once the page is popped
+    /// (its handles are dropped in the `popped` handler).
+    fn update_debug_gate(&self) {
+        let imp = self.imp();
+        let connected = self.client().connected_watch().is_some();
+        for row in imp.debug_watch_rows.borrow().iter() {
+            row.set_sensitive(connected);
+        }
+        if let Some(hint) = imp.debug_hint.borrow().as_ref() {
+            hint.set_visible(!connected);
+        }
+        dbg_smoke(&format!("settings: debug watch tools enabled={connected}"));
+    }
+
+    /// Bring the Watch tab forward — its flash-progress card is the live readout
+    /// for a firmware flash started from here.
+    fn show_watch_tab(&self) {
+        if let Some(stack) = self.imp().shell_stack.get() {
+            stack.set_visible_child_name("watch");
+        }
+    }
+
+    fn pull_core_dump(&self) {
+        let client = self.client();
+        let path = temp_path("stoandl-coredump", "bin");
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            client,
+            async move {
+                let s = client.get_core_dump(&path).await;
+                let msg = match s.kind.as_str() {
+                    "ok" => format!("Core dump saved: {}", s.field(0)),
+                    "none" => "No core dump available".to_string(),
+                    _ => format!("Core dump: {}", if s.tail.is_empty() { &s.kind } else { &s.tail }),
+                };
+                page.toast(&msg);
+            }
+        ));
+    }
+
+    fn pull_logs(&self) {
+        let client = self.client();
+        let path = temp_path("stoandl-logs", "txt");
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            client,
+            async move {
+                let s = client.gather_logs(&path).await;
+                if s.ok() {
+                    page.toast(&format!("Logs saved: {}", s.field(0)));
+                } else {
+                    let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
+                    page.toast(&format!("Logs: {m}"));
+                }
+            }
+        ));
+    }
+
+    fn confirm_reboot_recovery(&self) {
+        let dialog = adw::AlertDialog::new(
+            Some("Reboot to recovery"),
+            Some("Reboot the watch into recovery (PRF) firmware?"),
+        );
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("reboot", "Reboot");
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |_, resp| {
+                    if resp != "reboot" {
+                        return;
+                    }
+                    let client = page.client();
+                    glib::spawn_future_local(glib::clone!(
+                        #[weak]
+                        page,
+                        #[strong]
+                        client,
+                        async move {
+                            let s = client.reset_into_recovery().await;
+                            let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
+                            let msg = if s.ok() { "Recovery reboot queued".to_string() } else { format!("Failed: {m}") };
+                            page.toast(&msg);
+                        }
+                    ));
+                }
+            ),
+        );
+        dialog.present(Some(self));
+    }
+
+    fn confirm_factory_reset(&self) {
+        let dialog = adw::AlertDialog::new(
+            Some("Factory reset"),
+            Some("This wipes the watch to its out-of-box state and reboots it. This cannot be undone."),
+        );
+        let entry = adw::EntryRow::builder().title("Type yes to confirm").build();
+        let group = adw::PreferencesGroup::new();
+        group.add(&entry);
+        dialog.set_extra_child(Some(&group));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("reset", "Factory reset");
+        dialog.set_response_appearance("reset", adw::ResponseAppearance::Destructive);
+        dialog.set_response_enabled("reset", false);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+
+        entry.connect_changed(glib::clone!(
+            #[weak]
+            dialog,
+            move |e| {
+                let ok = e.text().trim().eq_ignore_ascii_case("yes");
+                dialog.set_response_enabled("reset", ok);
+            }
+        ));
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |_, resp| {
+                    if resp != "reset" {
+                        return;
+                    }
+                    let client = page.client();
+                    glib::spawn_future_local(glib::clone!(
+                        #[weak]
+                        page,
+                        #[strong]
+                        client,
+                        async move {
+                            let s = client.factory_reset().await;
+                            let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
+                            let msg = if s.ok() { "Factory reset queued".to_string() } else { format!("Failed: {m}") };
+                            page.toast(&msg);
+                        }
+                    ));
+                }
+            ),
+        );
+        dialog.present(Some(self));
+    }
+
+    /// Compose + send a test notification (Title + optional Body) through the
+    /// daemon's normal mute/style/filter path. Send is enabled only with a title.
+    fn open_test_notification_dialog(&self) {
+        let dialog = adw::AlertDialog::new(
+            Some("Write notification"),
+            Some("Send a test notification to the watch through the normal mute, style and filter path."),
+        );
+        let group = adw::PreferencesGroup::new();
+        let title_row = adw::EntryRow::builder().title("Title").build();
+        let body_row = adw::EntryRow::builder().title("Body (optional)").build();
+        group.add(&title_row);
+        group.add(&body_row);
+        dialog.set_extra_child(Some(&group));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("send", "Send");
+        dialog.set_response_appearance("send", adw::ResponseAppearance::Suggested);
+        dialog.set_response_enabled("send", false);
+        dialog.set_default_response(Some("send"));
+        dialog.set_close_response("cancel");
+
+        title_row.connect_changed(glib::clone!(
+            #[weak]
+            dialog,
+            move |e| dialog.set_response_enabled("send", !e.text().trim().is_empty())
+        ));
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                #[weak]
+                title_row,
+                #[weak]
+                body_row,
+                move |_, resp| {
+                    if resp != "send" {
+                        return;
+                    }
+                    let title = title_row.text().to_string();
+                    let body = body_row.text().to_string();
+                    let client = page.client();
+                    glib::spawn_future_local(glib::clone!(
+                        #[weak]
+                        page,
+                        #[strong]
+                        client,
+                        async move {
+                            let s = client.send_test_notification(&title, &body).await;
+                            let msg = if s.ok() {
+                                "Test notification sent".to_string()
+                            } else {
+                                let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
+                                format!("Notification: {m}")
+                            };
+                            page.toast(&msg);
+                        }
+                    ));
+                }
+            ),
+        );
+        dialog.present(Some(self));
+        title_row.grab_focus(); // a compose dialog focuses its first entry (HIG)
+    }
+
+    fn pick_firmware_file(&self) {
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some("Pebble firmware (*.pbz)"));
+        filter.add_suffix("pbz");
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+
+        let dialog = gtk::FileDialog::builder()
+            .title("Flash firmware (.pbz)")
+            .filters(&filters)
+            .build();
+        let parent = self.root().and_downcast::<gtk::Window>();
+        dialog.open(
+            parent.as_ref(),
+            gio::Cancellable::NONE,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |res| {
+                    if let Ok(file) = res {
+                        if let Some(path) = file.path() {
+                            page.confirm_flash_file(&path.to_string_lossy());
+                        }
+                    }
+                }
+            ),
+        );
+    }
+
+    fn confirm_flash_file(&self, path: &str) {
+        let basename = std::path::Path::new(path)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string());
+        let body = format!(
+            "Flash “{basename}” onto the watch? Keep it on charge and in range; don’t power it off during the flash."
+        );
+        let dialog = adw::AlertDialog::new(Some("Flash firmware"), Some(&body));
+        dialog.add_response("cancel", "Cancel");
+        dialog.add_response("flash", "Flash");
+        dialog.set_response_appearance("flash", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+
+        let path = path.to_string();
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = page)]
+                self,
+                move |_, resp| {
+                    if resp != "flash" {
+                        return;
+                    }
+                    let client = page.client();
+                    let path = path.clone();
+                    glib::spawn_future_local(glib::clone!(
+                        #[weak]
+                        page,
+                        #[strong]
+                        client,
+                        async move {
+                            let s = client.sideload_firmware(&path).await;
+                            if s.ok() {
+                                page.toast("Flashing firmware…");
+                                // Switch to the Watch tab so its flash-progress card shows.
+                                page.show_watch_tab();
+                            } else {
+                                let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
+                                page.toast(&format!("Flash failed: {m}"));
+                            }
+                        }
+                    ));
+                }
+            ),
+        );
+        dialog.present(Some(self));
+    }
+
+    /// Push the Heartbeat page (its own NavigationPage subclass — it fetches its
+    /// own data on `bind_client`). Guarded against a double push, like the Watch
+    /// tab's battery page.
+    fn push_heartbeat(&self) {
+        if self.imp().nav_view.find_page("heartbeat").is_some() {
+            return;
+        }
+        let hb = super::heartbeat::StoandlHeartbeatPage::new();
+        hb.bind_client(&self.client());
+        self.nav().push(&hb);
     }
 
     // --- Watch prefs / Calendars (Step B) ------------------------------------
@@ -1728,7 +2191,8 @@ impl StoandlSettingsPage {
         dialog.present(Some(self));
     }
 
-    /// Headless smoke hook: push each sub-page so it builds/loads.
+    /// Headless smoke hook: push each sub-page so it builds/loads — including
+    /// Debug, which now carries the watch-scoped diagnostic/recovery tools.
     pub fn smoke_exercise(&self) {
         if std::env::var_os("STOANDL_SMOKE_MS").is_none() {
             return;
@@ -1739,6 +2203,16 @@ impl StoandlSettingsPage {
         self.push_backup();
         self.push_watch_prefs();
         self.push_calendars();
+        self.push_debug();
+        self.push_heartbeat();
+        if let Some(hb) = self
+            .imp()
+            .nav_view
+            .find_page("heartbeat")
+            .and_downcast::<super::heartbeat::StoandlHeartbeatPage>()
+        {
+            hb.smoke_exercise(); // also hit the search/filter path
+        }
         dbg_smoke("exercised settings sub-pages");
     }
 }

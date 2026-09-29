@@ -145,6 +145,22 @@ template $StoandlSettingsPage: Adw.BreakpointBin {
                   icon-name: "go-next-symbolic";
                 }
               }
+
+              Adw.ActionRow debug_row {
+                title: _("Debug");
+                subtitle: _("Diagnostics, recovery and other low-level tools");
+                activatable: true;
+
+                [prefix]
+                Gtk.Image {
+                  icon-name: "applications-utilities-symbolic";
+                }
+
+                [suffix]
+                Gtk.Image {
+                  icon-name: "go-next-symbolic";
+                }
+              }
             }
           };
         };

@@ -5,28 +5,14 @@
 //! an `Adw.Dialog`; forget is an `Adw.AlertDialog`. All parsing is in the client.
 
 use std::cell::{Cell, OnceCell, RefCell};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gio, glib, CompositeTemplate};
 
-use super::esc;
+use super::{action_row, esc, temp_path};
 use crate::dbus::{FirmwareInfo, LanguageRow, StoandlClient, WatchDetails, WatchRow};
 use crate::window::StoandlWindow;
-
-/// A daemon-side temp path for a diagnostics artefact (screenshot / logs / core
-/// dump). The GUI is co-located with the daemon, so a local tmp path is valid.
-fn temp_path(prefix: &str, ext: &str) -> String {
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    glib::tmp_dir()
-        .join(format!("{prefix}-{ts}.{ext}"))
-        .to_string_lossy()
-        .into_owned()
-}
 
 /// `classic`/`ble` token (ListWatches) → human label. NOT applied to the
 /// WatchDetails transport, which is already a human label from the daemon.
@@ -881,7 +867,7 @@ impl StoandlWatchPage {
         dialog.present(Some(self));
     }
 
-    /// Headless smoke hook: render the details / debug / language pages so any
+    /// Headless smoke hook: render the details / language / battery pages so any
     /// runtime GTK issue in them surfaces (the harness only cycles top-level
     /// tabs and never taps the hero). No-op outside the smoke test.
     pub fn smoke_exercise(&self) {
@@ -889,7 +875,6 @@ impl StoandlWatchPage {
             return;
         }
         self.open_details();
-        self.open_debug_page();
         self.open_language_page();
         self.open_battery();
         if let Some(bp) = self
@@ -900,7 +885,7 @@ impl StoandlWatchPage {
         {
             bp.smoke_exercise(); // also hit the multi-day draw path
         }
-        dbg_smoke("exercised details/debug/language/battery pages");
+        dbg_smoke("exercised details/language/battery pages");
     }
 
     // --- battery insights (pushed navigation page) ----------------------------
@@ -1011,32 +996,25 @@ impl StoandlWatchPage {
         // Main actions.
         let actions = adw::PreferencesGroup::new();
         let name = d.name.clone();
-        actions.add(&action_row("Rename watch…", "document-edit-symbolic", false, glib::clone!(
+        actions.add(&action_row("Rename watch…", "", "document-edit-symbolic", false, glib::clone!(
             #[weak(rename_to = page)]
             self,
             #[strong]
             name,
             move || page.open_rename_dialog(&name)
         )));
-        actions.add(&action_row("Capture screenshot", "camera-photo-symbolic", false, glib::clone!(
+        actions.add(&action_row("Capture screenshot", "", "camera-photo-symbolic", false, glib::clone!(
             #[weak(rename_to = page)]
             self,
             move || page.capture_screenshot()
         )));
-        actions.add(&action_row("Check for updates", "view-refresh-symbolic", false, glib::clone!(
+        actions.add(&action_row("Check for updates", "", "view-refresh-symbolic", false, glib::clone!(
             #[weak(rename_to = page)]
             self,
             move || page.check_for_updates_toast()
         )));
-        let debug_row = action_row("Debug…", "applications-utilities-symbolic", false, glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move || page.open_debug_page()
-        ));
-        debug_row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
-        actions.add(&debug_row);
         let name2 = d.name.clone();
-        actions.add(&action_row("Forget watch", "user-trash-symbolic", true, glib::clone!(
+        actions.add(&action_row("Forget watch", "", "user-trash-symbolic", true, glib::clone!(
             #[weak(rename_to = page)]
             self,
             #[strong]
@@ -1158,362 +1136,6 @@ impl StoandlWatchPage {
                 }
             }
         ));
-    }
-
-    // --- debug page -----------------------------------------------------------
-
-    fn open_debug_page(&self) {
-        let prefs = adw::PreferencesPage::new();
-
-        let intro = adw::PreferencesGroup::builder()
-            .description("Low-level tools for diagnostics and recovery. Use with care.")
-            .build();
-        intro.add(&action_row("Core dump", "documentinfo-symbolic", false, glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move || page.pull_core_dump()
-        )));
-        intro.add(&action_row("Pull watch logs", "text-x-generic-symbolic", false, glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move || page.pull_logs()
-        )));
-        intro.add(&action_row("Support bundle", "help-about-symbolic", false, glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move || page.build_support_bundle()
-        )));
-        intro.add(&action_row("Reboot to recovery (PRF)", "system-reboot-symbolic", false, glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move || page.confirm_reboot_recovery()
-        )));
-        intro.add(&action_row("Flash firmware from file…", "system-software-update-symbolic", false, glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move || page.pick_firmware_file()
-        )));
-        intro.add(&action_row("Write notification…", "mail-unread-symbolic", false, glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move || page.open_test_notification_dialog()
-        )));
-        intro.add(&action_row("Factory reset", "dialog-warning-symbolic", true, glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            move || page.confirm_factory_reset()
-        )));
-        prefs.add(&intro);
-
-        let dp = wrap_page("Debug", "debug", &prefs);
-        self.imp().nav_view.push(&dp);
-    }
-
-    fn pull_core_dump(&self) {
-        let client = self.client();
-        let path = temp_path("stoandl-coredump", "bin");
-        glib::spawn_future_local(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            #[strong]
-            client,
-            async move {
-                let s = client.get_core_dump(&path).await;
-                let msg = match s.kind.as_str() {
-                    "ok" => format!("Core dump saved: {}", s.field(0)),
-                    "none" => "No core dump available".to_string(),
-                    _ => format!("Core dump: {}", if s.tail.is_empty() { &s.kind } else { &s.tail }),
-                };
-                page.toast(&msg);
-            }
-        ));
-    }
-
-    fn pull_logs(&self) {
-        let client = self.client();
-        let path = temp_path("stoandl-logs", "txt");
-        glib::spawn_future_local(glib::clone!(
-            #[weak(rename_to = page)]
-            self,
-            #[strong]
-            client,
-            async move {
-                let s = client.gather_logs(&path).await;
-                if s.ok() {
-                    page.toast(&format!("Logs saved: {}", s.field(0)));
-                } else {
-                    let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
-                    page.toast(&format!("Logs: {m}"));
-                }
-            }
-        ));
-    }
-
-    fn build_support_bundle(&self) {
-        // CLI shell-out (co-located `stoandl` binary), not on D-Bus.
-        self.toast("Building support bundle…");
-        let argv: &[&std::ffi::OsStr] = &[
-            std::ffi::OsStr::new("stoandl"),
-            std::ffi::OsStr::new("support"),
-        ];
-        match gio::Subprocess::newv(
-            argv,
-            gio::SubprocessFlags::STDOUT_PIPE | gio::SubprocessFlags::STDERR_MERGE,
-        ) {
-            Ok(proc) => {
-                glib::spawn_future_local(glib::clone!(
-                    #[weak(rename_to = page)]
-                    self,
-                    async move {
-                        match proc.communicate_utf8_future(None).await {
-                            Ok((out, _)) => {
-                                let ok = proc.is_successful();
-                                let text = out.map(|s| s.trim().to_string()).unwrap_or_default();
-                                if ok {
-                                    page.toast("Support bundle created");
-                                } else {
-                                    page.toast(&format!("Support bundle failed: {text}"));
-                                }
-                            }
-                            Err(e) => page.toast(&format!("Support bundle failed: {e}")),
-                        }
-                    }
-                ));
-            }
-            Err(_) => self.toast("Support bundle failed: stoandl CLI not found on PATH"),
-        }
-    }
-
-    fn confirm_reboot_recovery(&self) {
-        let dialog = adw::AlertDialog::new(
-            Some("Reboot to recovery"),
-            Some("Reboot the watch into recovery (PRF) firmware?"),
-        );
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("reboot", "Reboot");
-        dialog.set_default_response(Some("cancel"));
-        dialog.set_close_response("cancel");
-        dialog.connect_response(
-            None,
-            glib::clone!(
-                #[weak(rename_to = page)]
-                self,
-                move |_, resp| {
-                    if resp != "reboot" {
-                        return;
-                    }
-                    let client = page.client();
-                    glib::spawn_future_local(glib::clone!(
-                        #[weak]
-                        page,
-                        #[strong]
-                        client,
-                        async move {
-                            let s = client.reset_into_recovery().await;
-                            let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
-                            let msg = if s.ok() { "Recovery reboot queued".to_string() } else { format!("Failed: {m}") };
-                            page.toast(&msg);
-                        }
-                    ));
-                }
-            ),
-        );
-        dialog.present(Some(self));
-    }
-
-    fn confirm_factory_reset(&self) {
-        let dialog = adw::AlertDialog::new(
-            Some("Factory reset"),
-            Some("This wipes the watch to its out-of-box state and reboots it. This cannot be undone."),
-        );
-        let entry = adw::EntryRow::builder().title("Type yes to confirm").build();
-        let group = adw::PreferencesGroup::new();
-        group.add(&entry);
-        dialog.set_extra_child(Some(&group));
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("reset", "Factory reset");
-        dialog.set_response_appearance("reset", adw::ResponseAppearance::Destructive);
-        dialog.set_response_enabled("reset", false);
-        dialog.set_default_response(Some("cancel"));
-        dialog.set_close_response("cancel");
-
-        entry.connect_changed(glib::clone!(
-            #[weak]
-            dialog,
-            move |e| {
-                let ok = e.text().trim().eq_ignore_ascii_case("yes");
-                dialog.set_response_enabled("reset", ok);
-            }
-        ));
-        dialog.connect_response(
-            None,
-            glib::clone!(
-                #[weak(rename_to = page)]
-                self,
-                move |_, resp| {
-                    if resp != "reset" {
-                        return;
-                    }
-                    let client = page.client();
-                    glib::spawn_future_local(glib::clone!(
-                        #[weak]
-                        page,
-                        #[strong]
-                        client,
-                        async move {
-                            let s = client.factory_reset().await;
-                            let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
-                            let msg = if s.ok() { "Factory reset queued".to_string() } else { format!("Failed: {m}") };
-                            page.toast(&msg);
-                        }
-                    ));
-                }
-            ),
-        );
-        dialog.present(Some(self));
-    }
-
-    /// Compose + send a test notification (Title + optional Body) through the
-    /// daemon's normal mute/style/filter path. Send is enabled only with a title.
-    fn open_test_notification_dialog(&self) {
-        let dialog = adw::AlertDialog::new(
-            Some("Write notification"),
-            Some("Send a test notification to the watch through the normal mute, style and filter path."),
-        );
-        let group = adw::PreferencesGroup::new();
-        let title_row = adw::EntryRow::builder().title("Title").build();
-        let body_row = adw::EntryRow::builder().title("Body (optional)").build();
-        group.add(&title_row);
-        group.add(&body_row);
-        dialog.set_extra_child(Some(&group));
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("send", "Send");
-        dialog.set_response_appearance("send", adw::ResponseAppearance::Suggested);
-        dialog.set_response_enabled("send", false);
-        dialog.set_default_response(Some("send"));
-        dialog.set_close_response("cancel");
-
-        title_row.connect_changed(glib::clone!(
-            #[weak]
-            dialog,
-            move |e| dialog.set_response_enabled("send", !e.text().trim().is_empty())
-        ));
-        dialog.connect_response(
-            None,
-            glib::clone!(
-                #[weak(rename_to = page)]
-                self,
-                #[weak]
-                title_row,
-                #[weak]
-                body_row,
-                move |_, resp| {
-                    if resp != "send" {
-                        return;
-                    }
-                    let title = title_row.text().to_string();
-                    let body = body_row.text().to_string();
-                    let client = page.client();
-                    glib::spawn_future_local(glib::clone!(
-                        #[weak]
-                        page,
-                        #[strong]
-                        client,
-                        async move {
-                            let s = client.send_test_notification(&title, &body).await;
-                            let msg = if s.ok() {
-                                "Test notification sent".to_string()
-                            } else {
-                                let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
-                                format!("Notification: {m}")
-                            };
-                            page.toast(&msg);
-                        }
-                    ));
-                }
-            ),
-        );
-        dialog.present(Some(self));
-        title_row.grab_focus(); // a compose dialog focuses its first entry (HIG)
-    }
-
-    fn pick_firmware_file(&self) {
-        let filter = gtk::FileFilter::new();
-        filter.set_name(Some("Pebble firmware (*.pbz)"));
-        filter.add_suffix("pbz");
-        let filters = gio::ListStore::new::<gtk::FileFilter>();
-        filters.append(&filter);
-
-        let dialog = gtk::FileDialog::builder()
-            .title("Flash firmware (.pbz)")
-            .filters(&filters)
-            .build();
-        let parent = self.root().and_downcast::<gtk::Window>();
-        dialog.open(
-            parent.as_ref(),
-            gio::Cancellable::NONE,
-            glib::clone!(
-                #[weak(rename_to = page)]
-                self,
-                move |res| {
-                    if let Ok(file) = res {
-                        if let Some(path) = file.path() {
-                            page.confirm_flash_file(&path.to_string_lossy());
-                        }
-                    }
-                }
-            ),
-        );
-    }
-
-    fn confirm_flash_file(&self, path: &str) {
-        let basename = std::path::Path::new(path)
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.to_string());
-        let body = format!(
-            "Flash “{basename}” onto the watch? Keep it on charge and in range; don’t power it off during the flash."
-        );
-        let dialog = adw::AlertDialog::new(Some("Flash firmware"), Some(&body));
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("flash", "Flash");
-        dialog.set_response_appearance("flash", adw::ResponseAppearance::Destructive);
-        dialog.set_default_response(Some("cancel"));
-        dialog.set_close_response("cancel");
-
-        let path = path.to_string();
-        dialog.connect_response(
-            None,
-            glib::clone!(
-                #[weak(rename_to = page)]
-                self,
-                move |_, resp| {
-                    if resp != "flash" {
-                        return;
-                    }
-                    let client = page.client();
-                    let path = path.clone();
-                    glib::spawn_future_local(glib::clone!(
-                        #[weak]
-                        page,
-                        #[strong]
-                        client,
-                        async move {
-                            let s = client.sideload_firmware(&path).await;
-                            if s.ok() {
-                                page.toast("Flashing firmware…");
-                                // Pop to the Watch root so its flash-progress card shows.
-                                page.imp().nav_view.pop_to_tag("watch");
-                            } else {
-                                let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
-                                page.toast(&format!("Flash failed: {m}"));
-                            }
-                        }
-                    ));
-                }
-            ),
-        );
-        dialog.present(Some(self));
     }
 
     // --- rename ---------------------------------------------------------------
@@ -1786,23 +1408,6 @@ fn fact_row(label: &str, value: &str, mono: bool) -> adw::ActionRow {
         vl.add_css_class("dim-label");
     }
     row.add_suffix(&vl);
-    row
-}
-
-/// An activatable action row (leading icon, optional destructive styling).
-fn action_row<F: Fn() + 'static>(
-    label: &str,
-    icon: &str,
-    danger: bool,
-    on_activate: F,
-) -> adw::ActionRow {
-    let row = adw::ActionRow::builder().title(label).activatable(true).build();
-    let img = gtk::Image::from_icon_name(icon);
-    row.add_prefix(&img);
-    if danger {
-        row.add_css_class("error");
-    }
-    row.connect_activated(move |_| on_activate());
     row
 }
 

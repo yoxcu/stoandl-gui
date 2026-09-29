@@ -47,7 +47,15 @@ FormTextFieldDelegate have no `description` property — and FormTextFieldDelega
 `i18ndc()`, which throws here for the same reason FormColorDelegate is avoided. Rows are grouped into one
 FormHeader+FormCard per `group`, and a row whose `apply` is `restart` says so in its description. Columns
 6–11 were **appended** to the original 5-column contract, so parse them with a per-column fallback —
-never a hard read), **`BackupSettingsPage`** (backup/restore/support CLI). `Main.qml`'s
+never a hard read), **`BackupSettingsPage`** (backup/restore/support CLI), and
+**`DebugSettingsPage`** (the low-level tools, grouped Diagnostics / Recovery / Testing + a danger-zone
+factory reset — core dump, watch logs, reboot-to-recovery, flash a local `.pbz`, write a test
+notification; they moved here out of the watch-details dialog, and since they all act on *the connected
+watch* — the daemon methods take no watch argument — those rows disable with an inline explanation when
+none is connected. Its Diagnostics group also pushes **`HeartbeatPage`**:
+the watch's hourly analytics record via `HeartbeatInfo`/`HeartbeatMetrics`, header facts + every metric
+grouped by name prefix; when the daemon reports `known=0` it shows *why* nothing is decoded instead of
+guessed values — read from stored records, so it works with no watch connected). `Main.qml`'s
 `showTab()` pops pushed sub-pages on tab-switch and on re-tapping the active tab. (Calendars used to be
 a flat list nested in SyncSettingsPage; they moved to their own page when account grouping + CRUD landed.)
 

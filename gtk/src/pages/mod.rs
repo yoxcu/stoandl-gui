@@ -5,6 +5,7 @@
 mod apps;
 mod battery;
 mod health;
+mod heartbeat;
 mod notifications;
 mod settings;
 mod watch;

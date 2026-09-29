@@ -87,6 +87,13 @@ Kirigami.ScrollablePage {
                 icon.name: "document-save-symbolic"
                 onClicked: page.open(backupPage)
             }
+            FormCard.FormDelegateSeparator {}
+            FormCard.FormButtonDelegate {
+                text: "Debug"
+                description: "Diagnostics, recovery and other low-level tools"
+                icon.name: "tools-report-bug-symbolic"
+                onClicked: page.open(debugPage)
+            }
         }
     }
 }

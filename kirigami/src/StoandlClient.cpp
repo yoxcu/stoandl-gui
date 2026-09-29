@@ -1219,6 +1219,139 @@ QVariantMap StoandlClient::setConfig(const QString &key, const QString &value)
     return statusMap(callStatus(QStringLiteral("SetConfig"), {key, value}));
 }
 
+// --- Debug: the hourly analytics heartbeat ---------------------------------
+
+namespace {
+// Readable header for a metric-name prefix (everything before the first '_' — the daemon's own
+// naming, e.g. battery_soc_pct / ble_disconnect_*). Unlisted prefixes fall back to the capitalised
+// prefix, so a firmware that adds a whole new subsystem still gets a sane group header.
+QString hbGroupLabel(const QString &prefix)
+{
+    static const QHash<QString, QString> LABELS = {
+        { QStringLiteral("accel"),        QStringLiteral("Accelerometer") },
+        { QStringLiteral("app"),          QStringLiteral("Apps") },
+        { QStringLiteral("backlight"),    QStringLiteral("Backlight") },
+        { QStringLiteral("battery"),      QStringLiteral("Battery") },
+        { QStringLiteral("ble"),          QStringLiteral("Bluetooth LE") },
+        { QStringLiteral("button"),       QStringLiteral("Buttons") },
+        { QStringLiteral("connectivity"), QStringLiteral("Connectivity") },
+        { QStringLiteral("cpu"),          QStringLiteral("CPU") },
+        { QStringLiteral("flash"),        QStringLiteral("Flash") },
+        { QStringLiteral("fw"),           QStringLiteral("Firmware") },
+        { QStringLiteral("gesture"),      QStringLiteral("Gestures") },
+        { QStringLiteral("hrm"),          QStringLiteral("Heart rate") },
+        { QStringLiteral("last"),         QStringLiteral("Last reboot") },
+        { QStringLiteral("low"),          QStringLiteral("Low power") },
+        { QStringLiteral("memory"),       QStringLiteral("Memory") },
+        { QStringLiteral("notification"), QStringLiteral("Notifications") },
+        { QStringLiteral("pfs"),          QStringLiteral("Filesystem") },
+        { QStringLiteral("phone"),        QStringLiteral("Phone") },
+        { QStringLiteral("ppog"),         QStringLiteral("PPoG") },
+        { QStringLiteral("settings"),     QStringLiteral("Settings") },
+        { QStringLiteral("sifli"),        QStringLiteral("SiFli") },
+        { QStringLiteral("speaker"),      QStringLiteral("Speaker") },
+        { QStringLiteral("stack"),        QStringLiteral("Stacks") },
+        { QStringLiteral("stationary"),   QStringLiteral("Stationary mode") },
+        { QStringLiteral("task"),         QStringLiteral("Tasks") },
+        { QStringLiteral("touch"),        QStringLiteral("Touch") },
+        { QStringLiteral("uptime"),       QStringLiteral("Uptime") },
+        { QStringLiteral("utc"),          QStringLiteral("Time zone") },
+        { QStringLiteral("vibrator"),     QStringLiteral("Vibration") },
+        { QStringLiteral("watchface"),    QStringLiteral("Watchface") },
+    };
+    const auto it = LABELS.constFind(prefix);
+    if (it != LABELS.constEnd())
+        return it.value();
+    if (prefix.isEmpty())
+        return QStringLiteral("Other");
+    QString s = prefix;
+    s[0] = s.at(0).toUpper();
+    return s;
+}
+} // namespace
+
+QVariantMap StoandlClient::heartbeatInfo(const QString &watch)
+{
+    // ok:<watchTs>\t<rx>\t<size>\t<version>\t<buildId>\t<fw>\t<known>\t<metricCount>
+    //   watchTs / rx are epoch seconds (watchTs may be 0 when the record carries no time),
+    //   buildId is the firmware's GNU build-id (hex — identifies the exact build, NOT a git SHA),
+    //   known = 1 when stoandl has a verified layout for this (size, version).
+    // unknown:<label>  = that watch has no captured heartbeat yet (label = the watch's name)
+    // notready:<msg>   = battery capture (the heartbeat's carrier) is disabled daemon-side
+    const Status s = callStatus(QStringLiteral("HeartbeatInfo"), { watch });
+    QVariantMap m = statusMap(s);
+    m[QStringLiteral("unknown")] = (s.kind == QStringLiteral("unknown"));
+    // For the non-ok kinds the tail is the watch label / message; keep it under one key.
+    m[QStringLiteral("label")]   = s.ok() ? QString() : s.tail;
+    if (s.ok()) {
+        const QStringList f = s.fields;
+        m[QStringLiteral("watchTs")]     = f.value(0).toLongLong();
+        m[QStringLiteral("rx")]          = f.value(1).toLongLong();
+        m[QStringLiteral("size")]        = f.value(2).toInt();
+        m[QStringLiteral("version")]     = f.value(3).toInt();
+        m[QStringLiteral("buildId")]     = f.value(4);
+        m[QStringLiteral("fw")]          = f.value(5);
+        m[QStringLiteral("known")]       = (f.value(6) == QStringLiteral("1"));
+        m[QStringLiteral("metricCount")] = f.value(7).toInt();
+    }
+    return m;
+}
+
+QVariantList StoandlClient::heartbeatMetrics(const QString &watch)
+{
+    // Record: name \t value \t text \t raw — `value` is already scale-divided (empty for the
+    // string metrics), `text` is set only for the string metrics (fw_version, watchface_name,
+    // watchface_uuid), `raw` is the undivided wire integer (empty for strings). The list is empty
+    // when there is no heartbeat OR its layout is unverified: stoandl never shows guessed values.
+    //
+    // Grouped here (not in QML) by the prefix before the first '_', first-seen order for both the
+    // groups and their rows — that keeps the daemon's record order, which is the firmware's own
+    // declaration order.
+    QVariantList groups;
+    QHash<QString, int> indexOf;   // group key -> index into `groups`
+    const QVariantList records = list(QStringLiteral("HeartbeatMetrics"), { watch });
+    for (const QVariant &v : records) {
+        const QStringList f = v.toStringList();
+        const QString name = f.value(0);
+        if (name.isEmpty())
+            continue;
+        const QString value = f.value(1);
+        const QString text  = f.value(2);
+        const QString raw   = f.value(3);
+
+        QVariantMap metric;
+        metric[QStringLiteral("name")]  = name;
+        metric[QStringLiteral("value")] = value;
+        metric[QStringLiteral("text")]  = text;
+        metric[QStringLiteral("raw")]   = raw;
+        // What the row shows: the string metrics carry `text`, everything else the scaled `value`.
+        metric[QStringLiteral("display")] = !text.isEmpty()  ? text
+                                          : !value.isEmpty() ? value
+                                                             : QStringLiteral("—");
+        // A scaled metric divides the wire integer; surface the raw one as the row's sub-label.
+        metric[QStringLiteral("rawDiffers")] = (!raw.isEmpty() && raw != value);
+
+        const int us = name.indexOf(QLatin1Char('_'));
+        const QString key = us > 0 ? name.left(us) : name;
+        int gi = indexOf.value(key, -1);
+        if (gi < 0) {
+            QVariantMap g;
+            g[QStringLiteral("group")]   = key;
+            g[QStringLiteral("label")]   = hbGroupLabel(key);
+            g[QStringLiteral("metrics")] = QVariantList();
+            gi = groups.size();
+            indexOf.insert(key, gi);
+            groups.append(g);
+        }
+        QVariantMap g = groups.at(gi).toMap();
+        QVariantList ms = g.value(QStringLiteral("metrics")).toList();
+        ms.append(metric);
+        g[QStringLiteral("metrics")] = ms;
+        groups[gi] = g;
+    }
+    return groups;
+}
+
 // --- Notifications ---------------------------------------------------------
 
 QVariantList StoandlClient::notifList()

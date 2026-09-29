@@ -142,6 +142,19 @@ public:
     Q_INVOKABLE QVariantMap  getConfig();                // GetConfig() -> {key:value, ...}
     Q_INVOKABLE QVariantMap  setConfig(const QString &key, const QString &value); // SetConfig(s,s)
 
+    // --- typed wrappers: Settings -> Debug -> Heartbeat --------------------
+    // Header of the most recent captured hourly analytics heartbeat.
+    // HeartbeatInfo(s) -> {kind,ok,notready,unknown,label,watchTs,rx,size,version,buildId,fw,
+    //                      known,metricCount}. `known` false = stoandl has no verified layout for
+    // this (size, version), so the record is captured raw but nothing is decoded from it.
+    Q_INVOKABLE QVariantMap  heartbeatInfo(const QString &watch = QString());
+    // Every metric of that record, pre-grouped by the name prefix before the first '_' (record
+    // order kept, both for the groups and within them):
+    // -> [{group,label,metrics:[{name,value,text,raw,display,rawDiffers}]}].
+    // Empty when there is no heartbeat, or when its layout is unverified — the daemon never
+    // emits guessed values, so there is nothing to show.
+    Q_INVOKABLE QVariantList heartbeatMetrics(const QString &watch = QString());
+
     // --- typed wrappers: Notifications screen ------------------------------
     Q_INVOKABLE QVariantList notifList();                // -> [{name,mute,muted,color,icon,vibe,lastNotified}]
     Q_INVOKABLE QVariantMap  notifSetMute(const QString &name, const QString &spec);   // NotifSetMute(s,s)

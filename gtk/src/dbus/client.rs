@@ -19,14 +19,14 @@ use crate::dbus::parse::{
     parse_apps, parse_battery_activity, parse_battery_history, parse_battery_insights,
     parse_battery_power, parse_calendar_sources, parse_calendars, parse_config_schema,
     parse_config_values, parse_ext_list, parse_ext_schema, parse_firmware_info,
-    parse_health_summary, parse_heart_bars, parse_heart_samples, parse_languages,
-    parse_music_status, parse_notif_filters, parse_notif_list, parse_open_config, parse_percent,
-    parse_sleep_bars, parse_sleep_timeline, parse_status, parse_step_bars, parse_sync_status,
-    parse_watch_details, parse_watch_prefs, parse_watches, AppRow, BatteryActivity, BatteryInsights,
-    BatteryPowerSlice, BatterySample, Calendar, CalendarSource, ConfigField, ExtField, ExtRow,
-    FirmwareInfo, HealthSummary, HeartBar, HeartSample, LanguageRow, MusicStatus, NotifApp,
-    NotifFilter, SleepBar, SleepSegment, Status, StepBar, SyncStatus, WatchDetails, WatchPref,
-    WatchRow,
+    parse_health_summary, parse_heart_bars, parse_heart_samples, parse_heartbeat_info,
+    parse_heartbeat_metrics, parse_languages, parse_music_status, parse_notif_filters,
+    parse_notif_list, parse_open_config, parse_percent, parse_sleep_bars, parse_sleep_timeline,
+    parse_status, parse_step_bars, parse_sync_status, parse_watch_details, parse_watch_prefs,
+    parse_watches, AppRow, BatteryActivity, BatteryInsights, BatteryPowerSlice, BatterySample,
+    Calendar, CalendarSource, ConfigField, ExtField, ExtRow, FirmwareInfo, HealthSummary, HeartBar,
+    HeartSample, HeartbeatInfo, HeartbeatMetric, LanguageRow, MusicStatus, NotifApp, NotifFilter,
+    SleepBar, SleepSegment, Status, StepBar, SyncStatus, WatchDetails, WatchPref, WatchRow,
 };
 
 const FDO_NAME: &str = "org.freedesktop.DBus";
@@ -611,6 +611,24 @@ impl StoandlClient {
         } else {
             Vec::new()
         }
+    }
+
+    // --- Debug: the raw hourly analytics heartbeat ---------------------------
+
+    /// HeartbeatInfo → the newest captured record's header (None on a non-ok
+    /// reply). The raw `Status` comes back too so the page can tell `unknown:`
+    /// (nothing captured for that watch) from `notready:` (capture disabled).
+    pub async fn heartbeat_info(&self, watch: &str) -> (Status, Option<HeartbeatInfo>) {
+        let s = self.call_status("HeartbeatInfo", Some((watch,).to_variant()), CALL_TIMEOUT_MS).await;
+        let info = parse_heartbeat_info(&s);
+        (s, info)
+    }
+
+    /// HeartbeatMetrics → every decoded metric of that record. Empty when there is
+    /// no heartbeat OR its layout is unverified (`HeartbeatInfo.known == false`) —
+    /// the daemon emits nothing rather than guessed values.
+    pub async fn heartbeat_metrics(&self, watch: &str) -> Vec<HeartbeatMetric> {
+        parse_heartbeat_metrics(&self.call_list("HeartbeatMetrics", Some((watch,).to_variant())).await)
     }
 
     // --- Watch details / rename / dev connection / diagnostics ---------------

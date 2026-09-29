@@ -70,6 +70,8 @@ qt_add_qml_module(stoandl-gui
         qml/GeneralSettingsPage.qml
         qml/HealthProfileSettingsPage.qml
         qml/BackupSettingsPage.qml
+        qml/DebugSettingsPage.qml
+        qml/HeartbeatPage.qml
     SOURCES
         src/StoandlClient.h
         src/StoandlClient.cpp

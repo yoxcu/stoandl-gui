@@ -22,6 +22,7 @@ import base64
 import datetime
 import json
 import math
+import os
 import time
 
 import dbus
@@ -381,6 +382,11 @@ class MockStoandl(dbus.service.Object):
 
     # --- helpers -----------------------------------------------------------
     def _connected_name(self):
+        # MOCK_NO_WATCH=1 forces the "paired but nothing connected" state, so the GUI's
+        # no-watch paths (e.g. the watch-scoped rows on Settings → Debug) are testable
+        # without a Disconnect method. Everything else keeps working off stored data.
+        if os.environ.get("MOCK_NO_WATCH") == "1":
+            return None
         for name, w in self.watches.items():
             if w["state"] == "connected":
                 return name
@@ -516,6 +522,93 @@ class MockStoandl(dbus.service.Object):
                    ("Heart rate", 0.11), ("Vibration", 0.06), ("Speaker", 0.04)]
         body = "\n".join(rec(cat, round(total_drop * w, 2), round(w * 100.0, 1)) for cat, w in weights)
         return "ok:" + body
+
+    # --- Debug → Heartbeat -------------------------------------------------
+    # The raw hourly analytics record (native_heartbeat_record) decoded in full. See
+    # docs/heartbeat-metrics.md in the daemon repo for the metric map. Set
+    # MOCK_HB_UNKNOWN=1 to exercise the "unverified layout" state (known=0, no metrics).
+
+    def _heartbeat_metrics(self):
+        # A representative slice of the 92-metric record: every kind the GUI must render —
+        # scale-divided floats, plain counters, and the three string metrics.
+        return [
+            ("memory_pct_max", "62", "", "62"),
+            ("memory_largest_free_pct", "31", "", "31"),
+            ("stack_free_kernel_main_bytes", "1840", "", "1840"),
+            ("utc_offset_s", "7200", "", "7200"),
+            ("fw_version", "", "4.30.0", ""),
+            ("last_reboot_reason", "0", "", "0"),
+            ("uptime_s", "268400", "", "268400"),
+            ("battery_soc_pct", "15.05", "", "1505"),
+            ("battery_soc_pct_drop", "1.2", "", "120"),
+            ("battery_voltage", "3.719", "", "3719"),
+            ("battery_voltage_delta", "-0.012", "", "-12"),
+            ("battery_tte_s", "828000", "", "828000"),
+            ("battery_charge_time_ms", "0", "", "0"),
+            ("battery_discharge_duration_ms", "3600000", "", "3600000"),
+            ("backlight_on_time_ms", "42000", "", "42000"),
+            ("backlight_avg_intensity_pct", "60", "", "60"),
+            ("vibrator_on_time_ms", "1200", "", "1200"),
+            ("speaker_on_time_ms", "0", "", "0"),
+            ("hrm_on_time_ms", "90000", "", "90000"),
+            ("button_pressed_count", "37", "", "37"),
+            ("touch_event_count", "112", "", "112"),
+            ("touch_driver_wake_cnt", "9", "", "9"),
+            ("cpu_running_pct", "12.4", "", "1240"),
+            ("cpu_sleep0_pct", "61.2", "", "6120"),
+            ("cpu_sleep1_pct", "24.1", "", "2410"),
+            ("cpu_sleep2_pct", "2.3", "", "230"),
+            ("task_cpu_kernel_main_pct", "3.1", "", "310"),
+            ("task_cpu_app_pct", "2.4", "", "240"),
+            ("task_cpu_bt_host_pct", "1.9", "", "190"),
+            ("task_cpu_idle_pct", "84.2", "", "8420"),
+            ("accel_sample_count", "180000", "", "180000"),
+            ("accel_shake_count", "4", "", "4"),
+            ("notification_received_count", "12", "", "12"),
+            ("notification_received_dnd_count", "3", "", "3"),
+            ("phone_call_incoming_count", "1", "", "1"),
+            ("phone_call_time_ms", "154000", "", "154000"),
+            ("low_power_time_ms", "0", "", "0"),
+            ("stationary_time_ms", "2400000", "", "2400000"),
+            ("watchface_time_ms", "3210000", "", "3210000"),
+            ("watchface_name", "", "Tezel", ""),
+            ("watchface_uuid", "", "c91b77a0-1e2f-4c3d-9a5b-6d7e8f901234", ""),
+            ("watchface_crash_count", "0", "", "0"),
+            ("pfs_space_free_kb", "1284", "", "1284"),
+            ("flash_spi_write_bytes", "98304", "", "98304"),
+            ("ble_conn_itvl_min_time_ms", "1800000", "", "1800000"),
+            ("ble_disconnect_conn_spvn_tmo_count", "3", "", "3"),
+            ("ble_disconnect_rem_user_term_count", "1", "", "1"),
+            ("ble_disconnect_conn_term_local_count", "0", "", "0"),
+            ("ble_disconnect_other_count", "0", "", "0"),
+            ("ppog_reversed", "0", "", "0"),
+            ("settings_health_tracking_enabled", "1", "", "1"),
+            ("settings_health_hrm_enabled", "1", "", "1"),
+            ("settings_backlight_timeout_s", "5", "", "5"),
+            ("app_message_sent_count", "204", "", "204"),
+            ("app_message_received_count", "198", "", "198"),
+            ("connectivity_connected_time_ms", "3400000", "", "3400000"),
+            ("connectivity_expected_time_ms", "3600000", "", "3600000"),
+        ]
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def HeartbeatInfo(self, watch):
+        # ok:watchTs\trx\tsize\tversion\tbuildId\tfw\tknown\tmetricCount
+        if self._connected_name() is None:
+            return "unknown:no watch"
+        now = int(time.time())
+        ts = now - (now % 3600)
+        build = "1a1f6be63bcc7823adfc00ea9d05012478e6ad44"
+        if os.environ.get("MOCK_HB_UNKNOWN") == "1":
+            return "ok:" + rec(ts, ts + 60, 531, 3, build, "5.10.0", 0, 0)
+        m = self._heartbeat_metrics()
+        return "ok:" + rec(ts, ts + 60, 527, 1, build, "4.30.0", 1, len(m))
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="as")
+    def HeartbeatMetrics(self, watch):
+        if self._connected_name() is None or os.environ.get("MOCK_HB_UNKNOWN") == "1":
+            return []
+        return [rec(*row) for row in self._heartbeat_metrics()]
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def WatchDetails(self):

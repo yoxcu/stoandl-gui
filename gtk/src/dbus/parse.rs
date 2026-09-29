@@ -912,6 +912,100 @@ pub fn parse_battery_power(tail: &str) -> Vec<BatteryPowerSlice> {
         .collect()
 }
 
+// --- Debug → Heartbeat typed builders --------------------------------------
+
+/// `HeartbeatInfo(watch)` → `ok:watchTs\trx\tsize\tversion\tbuildId\tfw\tknown\tmetricCount`.
+/// Both timestamps are epoch seconds (`watch_ts` may be 0 — the record does not
+/// always carry the watch's own clock). `size` is the record length in bytes and
+/// `version` its layout version byte; `build_id` is the firmware's GNU build-id
+/// hex (NOT a git SHA). `known` is false when stoandl has no verified layout for
+/// this `(size, version)`: the raw record is still captured, but the daemon emits
+/// NO metrics rather than guessed ones.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeartbeatInfo {
+    pub watch_ts: i64,
+    pub rx_ts: i64,
+    pub size: i32,
+    pub version: i32,
+    pub build_id: String,
+    pub firmware: String,
+    pub known: bool,
+    pub metric_count: i32,
+}
+
+pub fn parse_heartbeat_info(s: &Status) -> Option<HeartbeatInfo> {
+    if !s.ok() {
+        return None;
+    }
+    Some(HeartbeatInfo {
+        watch_ts: l(s.field(0)),
+        rx_ts: l(s.field(1)),
+        size: i(s.field(2)),
+        version: i(s.field(3)),
+        build_id: s.field(4).to_string(),
+        firmware: s.field(5).to_string(),
+        known: s.field(6) == "1",
+        metric_count: i(s.field(7)),
+    })
+}
+
+/// A `HeartbeatMetrics` record: `name \t value \t text \t raw`. `value` is already
+/// scale-divided and EMPTY for the string metrics; `text` is set only for those
+/// (`fw_version`, `watchface_name`, `watchface_uuid`); `raw` is the undivided wire
+/// integer (empty for strings). `group` is the name's prefix before the first `_`
+/// (`other` when it has none) — the page's section key — and `display` is `text`
+/// when set, else `value`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeartbeatMetric {
+    pub name: String,
+    pub value: String,
+    pub text: String,
+    pub raw: String,
+    pub group: String,
+    pub display: String,
+}
+
+pub fn parse_heartbeat_metrics(rows: &[String]) -> Vec<HeartbeatMetric> {
+    parse_records(rows)
+        .into_iter()
+        .map(|f| {
+            let g = |n: usize| f.get(n).map(String::as_str).unwrap_or("");
+            let (name, value, text, raw) = (g(0), g(1), g(2), g(3));
+            let group = match name.split_once('_') {
+                Some((prefix, _)) if !prefix.is_empty() => prefix.to_string(),
+                _ => "other".to_string(),
+            };
+            HeartbeatMetric {
+                display: if text.is_empty() { value.to_string() } else { text.to_string() },
+                name: name.to_string(),
+                value: value.to_string(),
+                text: text.to_string(),
+                raw: raw.to_string(),
+                group,
+            }
+        })
+        .collect()
+}
+
+/// Bucket metrics by `group`, keeping the daemon's record order for both the
+/// groups and the rows inside them (record order IS the layout order).
+pub fn group_heartbeat_metrics(metrics: &[HeartbeatMetric]) -> Vec<(String, Vec<HeartbeatMetric>)> {
+    let mut out: Vec<(String, Vec<HeartbeatMetric>)> = Vec::new();
+    let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for m in metrics {
+        let at = match index.get(&m.group) {
+            Some(seen) => *seen,
+            None => {
+                out.push((m.group.clone(), Vec::new()));
+                index.insert(m.group.clone(), out.len() - 1);
+                out.len() - 1
+            }
+        };
+        out[at].1.push(m.clone());
+    }
+    out
+}
+
 /// `MusicStatus()` → `ok:<playing|paused>\t<player>\t<track>`. `ok` is false when
 /// the daemon reports no active player (`idle:`/`notready:`), in which case the Sync
 /// row falls back to its "Last sync · …" subtitle.
@@ -1247,5 +1341,60 @@ mod tests {
         assert!((pw[0].share - 34.0).abs() < 1e-9);
         assert!((pw[0].est_drain_pct - 2.38).abs() < 1e-9);
         assert!((pw[1].est_drain_pct - 1.26).abs() < 1e-9);
+    }
+
+    #[test]
+    fn heartbeat_info_header() {
+        let s = parse_status("ok:1719800000\t1719800060\t527\t1\tdeadbeef00\t4.30.0\t1\t92");
+        let h = parse_heartbeat_info(&s).unwrap();
+        assert_eq!(h.watch_ts, 1719800000);
+        assert_eq!(h.rx_ts, 1719800060);
+        assert_eq!(h.size, 527);
+        assert_eq!(h.version, 1);
+        assert_eq!(h.build_id, "deadbeef00");
+        assert_eq!(h.firmware, "4.30.0");
+        assert!(h.known);
+        assert_eq!(h.metric_count, 92);
+
+        // Unverified layout: header still present, known=0, no metrics counted.
+        let u = parse_heartbeat_info(&parse_status("ok:0\t1719800060\t531\t3\tabc\t5.10.0\t0\t0"))
+            .unwrap();
+        assert!(!u.known);
+        assert_eq!(u.watch_ts, 0); // the record need not carry the watch clock
+        assert_eq!(u.metric_count, 0);
+
+        // Non-ok prefixes carry no header.
+        assert!(parse_heartbeat_info(&parse_status("unknown:Time 2")).is_none());
+        assert!(parse_heartbeat_info(&parse_status("notready:battery capture off")).is_none());
+    }
+
+    #[test]
+    fn heartbeat_metrics_and_grouping() {
+        let m = parse_heartbeat_metrics(&[
+            "battery_soc_pct\t15.05\t\t1505".into(),
+            "battery_voltage\t3.719\t\t3719".into(),
+            "fw_version\t\t4.30.0\t".into(),
+            "ble_disconnect_conn_spvn_tmo_count\t3\t\t3".into(),
+            "ppog_reversed\t0\t\t0".into(),
+            "uptime\t268400\t\t268400".into(), // no underscore → "other"
+        ]);
+        assert_eq!(m[0].group, "battery");
+        assert_eq!(m[0].display, "15.05"); // numeric → the scale-divided value
+        assert_eq!(m[0].raw, "1505"); // undivided wire integer
+        assert_eq!(m[2].group, "fw");
+        assert!(m[2].value.is_empty());
+        assert_eq!(m[2].display, "4.30.0"); // string metric → the text field
+        assert_eq!(m[3].group, "ble");
+        assert_eq!(m[5].group, "other");
+
+        let groups = group_heartbeat_metrics(&m);
+        // Record order preserved, one bucket per prefix.
+        assert_eq!(
+            groups.iter().map(|(g, _)| g.as_str()).collect::<Vec<_>>(),
+            vec!["battery", "fw", "ble", "ppog", "other"]
+        );
+        assert_eq!(groups[0].1.len(), 2);
+        assert_eq!(groups[0].1[1].name, "battery_voltage");
+        assert!(group_heartbeat_metrics(&[]).is_empty());
     }
 }
