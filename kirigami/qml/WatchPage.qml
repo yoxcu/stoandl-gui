@@ -97,6 +97,17 @@ Kirigami.ScrollablePage {
     Component.onCompleted: { StoandlClient.startWatchPoll(); page.checkFirmware(); }
     Component.onDestruction: StoandlClient.stopWatchPoll()
 
+    // Headless smoke (STOANDL_SMOKE_MS): the pairing dialog's status line is only reached through a
+    // button and a live pairing window, so hand it the daemon's two search states directly.
+    function smokeExercise() {
+        pairDialog.handleStatus("pending", "");
+        var bare = pairDialog.statusMsg;
+        pairDialog.handleStatus("pending", "Discovery paused — Bluetooth is off. Turn it on to pair.");
+        console.log("stoandl-smoke: pair status bare='" + bare + "' note='" + pairDialog.statusMsg + "'");
+        pairDialog.statusKind = "";
+        pairDialog.statusMsg = "";
+    }
+
     // Page actions: header (desktop) / footer toolbar (mobile). NOT a Material FAB.
     actions: [
         Kirigami.Action {
@@ -446,9 +457,14 @@ Kirigami.ScrollablePage {
                 statusMsg = "Does this code match the one shown on the watch?";
                 return;
             }
-            statusMsg = msg !== "" ? msg : kind;
+            // Every other message is the daemon's own words (a found watch, or why the window can't
+            // discover right now), shown as it changes. A bare `pending:` is "open, nothing found yet".
+            statusMsg = msg !== "" ? msg
+                      : kind === "pending" ? "Searching for a watch in pairing mode…"
+                      : kind;
             if (kind === "ok") {
-                page.toast("Watch paired");
+                // "Paired and connected", "Paired", or "Watch already connected" (no window opened).
+                page.toast(msg !== "" ? msg : "Watch paired");
                 StoandlClient.refreshWatches();
                 close();
             }

@@ -38,6 +38,16 @@ IFACE = "de.yoxcu.stoandl.Control"
 # The numeric-comparison code surfaced as confirm:<code> until ConfirmPairing answers.
 PAIR_CODE = "481516"
 
+# The daemon's PairStatus notes for an open window that can't discover (PebbleIntegration's
+# PAIRING_PAUSED_*): shown in place of the bare `pending:` and withdrawn again. MOCK_PAIR_PAUSE=<kind>
+# shows one for the first polls of every pairing window.
+PAIR_PAUSE_NOTES = {
+    "bt": "Discovery paused — Bluetooth is off. Turn it on to pair.",
+    "busy": "BLE scan paused — Time 2 is connecting (a scan would disturb it).",
+    "slept": "Searching again — the phone slept, which pauses discovery. Keep it awake "
+             "(e.g. the screen on) until the watch is found.",
+}
+
 # The older firmware MOCK_FW_DOWNGRADE=1 pretends every sideloaded .pbz carries.
 DOWNGRADE_VERSION = "4.4.1"
 
@@ -794,10 +804,17 @@ class MockStoandl(dbus.service.Object):
         return hits[0] if len(hits) == 1 else None
 
     # --- Pair / PairStatus / Repair / Unpair -------------------------------
+    # The daemon's walk: bare `pending:` while searching (or a pause note, see PAIR_PAUSE_NOTES) ->
+    # `pending:Found <watch> — pairing...` -> `confirm:<code>` until ConfirmPairing answers ->
+    # `pending:Completing pairing…` -> `ok:Paired and connected`. A decline ends the window with
+    # `error:Pairing declined`. Pair() with a watch already connected opens no window at all.
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def Pair(self):
-        self.pairing = {"phase": "search", "polls": 0, "newName": "Pebble (new)", "decision": None}
-        return "ok:pairing window open"
+        if self._connected_name() is not None:
+            self.pairing = {"phase": "result", "result": "ok:Watch already connected"}
+            return "ok:Pairing started"
+        self._open_pairing("Pebble (new)", None)
+        return "ok:Pairing started"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def Repair(self, name):
@@ -805,45 +822,56 @@ class MockStoandl(dbus.service.Object):
         if match is None:
             return f"notfound:no known watch matching '{name}'"
         info = self.watches.pop(match)
-        self.pairing = {"phase": "search", "polls": 0, "newName": match, "restore": info, "decision": None}
-        return "ok:re-pairing window open"
+        info["state"] = "disconnected"
+        self._open_pairing(match, info)
+        return f"ok:Re-pairing {match} — put the watch in pairing mode"
+
+    def _open_pairing(self, new_name, restore):
+        self.pairing = {"phase": "search", "polls": 0, "newName": new_name, "restore": restore,
+                        "decision": None, "pause": PAIR_PAUSE_NOTES.get(os.environ.get("MOCK_PAIR_PAUSE", ""))}
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def PairStatus(self):
-        # HOOK (numeric comparison): walk search -> confirm:<code> -> (await ConfirmPairing) -> done.
         p = self.pairing
         if p is None:
-            return "timeout:no pairing in progress"
+            return "error:No pairing in progress"
+        if p["phase"] == "result":
+            return p["result"]          # the daemon keeps reporting the outcome until the next window
         if p["phase"] == "search":
             p["polls"] += 1
-            if p["polls"] < 2:
-                return "pending:Searching for a watch in pairing mode…"
+            if p["pause"] and p["polls"] <= 3:
+                return "pending:" + p["pause"]
+            if p["polls"] <= 4:
+                return "pending:"
+            p["phase"] = "found"
+            return f"pending:Found {p['newName']} — pairing..."
+        if p["phase"] == "found":
             p["phase"] = "confirm"
             return f"confirm:{PAIR_CODE}"
         if p["phase"] == "confirm":
             if p["decision"] is None:
                 return f"confirm:{PAIR_CODE}"      # park until ConfirmPairing answers
             if not p["decision"]:
-                self.pairing = None
-                return "error:Pairing declined"
+                # Like the daemon: a re-paired watch was forgotten up front and stays forgotten.
+                self.pairing = {"phase": "result", "result": "error:Pairing declined"}
+                return self.pairing["result"]
             p["phase"] = "done"
             return "pending:Completing pairing…"
         # phase == "done": register + connect the watch.
         name = p["newName"]
-        restore = p.get("restore")
-        self.watches[name] = restore or {
+        self.watches[name] = p["restore"] or {
             "state": "disconnected", "battery": "", "transport": "ble",
             "model": "Pebble 2 HR", "platform": "DIORITE", "firmware": "4.4.2",
             "serial": "Q40NEW00000", "code": "NEW1", "lastSync": "just now",
         }
         self._set_connected(name)
-        self.pairing = None
-        return "ok:paired"
+        self.pairing = {"phase": "result", "result": "ok:Paired and connected"}
+        return self.pairing["result"]
 
     @dbus.service.method(IFACE, in_signature="b", out_signature="s")
     def ConfirmPairing(self, accept):
-        # HOOK: answer a confirm:<code> from PairStatus (numeric comparison).
-        if self.pairing is None or self.pairing.get("phase") != "confirm":
+        # Answer a confirm:<code> from PairStatus (numeric comparison).
+        if self.pairing is None or self.pairing.get("phase") != "confirm" or self.pairing["decision"] is not None:
             return "error:No pairing confirmation pending"
         self.pairing["decision"] = bool(accept)
         return "ok:accepted" if accept else "ok:declined"

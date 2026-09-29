@@ -24,6 +24,20 @@ fn transport_label(t: &str) -> String {
     }
 }
 
+/// The pairing dialog's status line for a `PairStatus` reply other than `confirm:`.
+/// The message is the daemon's own words (a found watch, or why the window can't
+/// discover right now) and is shown as it changes; a bare `pending:` means the
+/// window is open and nothing has been found yet.
+fn pair_status_text(kind: &str, msg: &str) -> String {
+    if !msg.is_empty() {
+        msg.to_string()
+    } else if kind == "pending" {
+        "Searching for a watch in pairing mode…".to_string()
+    } else {
+        kind.to_string()
+    }
+}
+
 /// Diagnostics for the headless smoke test (no-op unless run under
 /// `run-with-mock-gtk.sh --headless`, which sets `STOANDL_SMOKE_MS`). Proves the
 /// D-Bus→parse→render pipeline populated, not merely that nothing crashed.
@@ -813,7 +827,8 @@ impl StoandlWatchPage {
         }
 
         if kind == "ok" {
-            self.toast("Watch paired");
+            // "Paired and connected", "Paired", or "Watch already connected" (no window opened).
+            self.toast(if msg.is_empty() { "Watch paired" } else { msg });
             let client = self.client();
             glib::spawn_future_local(async move { client.refresh_watches().await });
             ui.dialog.close();
@@ -826,8 +841,7 @@ impl StoandlWatchPage {
         let is_error = kind == "error" || kind == "timeout";
         ui.error_icon.set_visible(is_error);
         ui.spinner.set_visible(kind.is_empty() || kind == "pending");
-        ui.status
-            .set_label(if msg.is_empty() { kind } else { msg });
+        ui.status.set_label(&pair_status_text(kind, msg));
     }
 
     // --- forget confirmation --------------------------------------------------
@@ -1431,4 +1445,19 @@ fn wrap_page(title: &str, tag: &str, prefs: &adw::PreferencesPage) -> adw::Navig
         .tag(tag)
         .child(&tv)
         .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pair_status_text;
+
+    #[test]
+    fn pair_status_follows_the_daemon() {
+        // The daemon's search state is a bare `pending:`; its notes and results carry their own text.
+        assert_eq!(pair_status_text("pending", ""), "Searching for a watch in pairing mode…");
+        let note = "Discovery paused — Bluetooth is off. Turn it on to pair.";
+        assert_eq!(pair_status_text("pending", note), note);
+        assert_eq!(pair_status_text("timeout", "Pairing timed out"), "Pairing timed out");
+        assert_eq!(pair_status_text("error", ""), "error");
+    }
 }
