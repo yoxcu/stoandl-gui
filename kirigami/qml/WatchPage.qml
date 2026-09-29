@@ -98,7 +98,9 @@ Kirigami.ScrollablePage {
     Component.onDestruction: StoandlClient.stopWatchPoll()
 
     // Headless smoke (STOANDL_SMOKE_MS): the pairing dialog's status line is only reached through a
-    // button and a live pairing window, so hand it the daemon's two search states directly.
+    // button and a live pairing window, so hand it the daemon's two search states directly. Then push
+    // the Battery page, which the card only offers with a watch connected (GTK's smoke opens it either
+    // way), so a MOCK_NO_WATCH run reaches its "No watch connected" state.
     function smokeExercise() {
         pairDialog.handleStatus("pending", "");
         var bare = pairDialog.statusMsg;
@@ -106,6 +108,9 @@ Kirigami.ScrollablePage {
         console.log("stoandl-smoke: pair status bare='" + bare + "' note='" + pairDialog.statusMsg + "'");
         pairDialog.statusKind = "";
         pairDialog.statusMsg = "";
+        var bp = applicationWindow().pageStack.push(batteryPageComponent);
+        console.log("stoandl-smoke: battery kind=" + (bp.insights ? bp.insights.kind : "none")
+                    + " watchConnected=" + bp.watchConnected + " hasInsights=" + bp.hasInsights);
     }
 
     // Page actions: header (desktop) / footer toolbar (mobile). NOT a Material FAB.

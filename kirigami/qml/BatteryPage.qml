@@ -16,6 +16,9 @@ Kirigami.ScrollablePage {
     // Chart/history window, in seconds (the header switcher). 24 h by default.
     property int rangeSeconds: 24 * 3600
     property var insights: null       // batteryInsights() map, or null
+    // Latest ListWatches verdict. The daemon resolves these methods among CONNECTED watches only, so
+    // with none connected it answers `unknown:` whatever it stored: "no watch connected", not "no data".
+    property bool watchConnected: true
     property var history: []          // [{ts, level, source, voltage}] oldest first
     property var activity: []         // [{ts, drop, notif, notifDnd}] oldest first (drop-per-interval)
     property double maxDrop: 0        // largest interval drop in the window (bar-chart y-scale)
@@ -52,6 +55,10 @@ Kirigami.ScrollablePage {
             { frac: 0.5, text: page.fmtAxis(page.rangeStart + 0.5 * span) },
             { frac: 1.0, text: "now" },
         ];
+        var rows = StoandlClient.listWatches();
+        var found = false;
+        for (var w = 0; w < rows.length; ++w) if (rows[w].connected) { found = true; break; }
+        page.watchConnected = found;
         page.insights = StoandlClient.batteryInsights("");
         page.history = StoandlClient.batteryHistory("", Math.floor(page.rangeStart));
         // Set maxDrop before activity so the bar Canvas (repaints on activityChanged) has a current scale.
@@ -144,11 +151,16 @@ Kirigami.ScrollablePage {
         width: parent.width - Kirigami.Units.gridUnit * 4
         visible: !page.hasInsights
         icon.name: page.insights && page.insights.kind === "notready" ? "battery-missing-symbolic" : "battery-symbolic"
+        // notready: only when both captures are off; unknown: with nothing connected is the other empty case.
         text: !StoandlClient.daemonUp ? "Daemon not running"
-              : (page.insights && page.insights.kind === "notready") ? "No battery data"
+              : (page.insights && page.insights.kind === "notready") ? "Battery capture is off"
+              : (page.insights && page.insights.kind === "unknown" && !page.watchConnected) ? "No watch connected"
               : "No battery data yet"
         explanation: !StoandlClient.daemonUp ? "Start it with: systemctl --user start stoandl"
-              : (page.insights && page.insights.kind === "notready") ? "Battery capture is off, or no watch is connected."
+              : (page.insights && page.insights.kind === "notready")
+                ? "stoandl records neither the analytics heartbeat nor the battery level. Turn on “Battery insights” or “Battery level history” in Settings → Daemon configuration."
+              : (page.insights && page.insights.kind === "unknown" && !page.watchConnected)
+                ? "Battery insights are for the connected watch. Connect it to see its battery."
               : "Insights build up as the watch reports. The analytics heartbeat arrives about once an hour."
     }
 

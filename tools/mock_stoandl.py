@@ -578,7 +578,7 @@ class MockStoandl(dbus.service.Object):
     def Battery(self):
         name = self._connected_name()
         if name is None:
-            return "notready:"
+            return "notready:No watch connected"
         level = self.watches[name]["battery"] or "0"
         return f"ok:{rec(name, level)}"
 
@@ -604,18 +604,20 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="sx", out_signature="s")
     def BatteryHistory(self, watch, sinceEpoch):
-        name = self._connected_name()
+        # Like the daemon, no connected watch is not an error: it falls back to the (here empty) GATT
+        # level series of the query, so `ok:` with no rows. notready: only means capture is off.
+        name = self._resolve_connected(watch)
         if name is None:
-            return "notready:no watch connected"
+            return "ok:"
         now = int(time.time())
         pts = self._battery_points(int(sinceEpoch), now)
         return "ok:" + "\n".join(rec(p[0], p[1], "heartbeat", p[3]) for p in pts)
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def BatteryInsights(self, watch):
-        name = self._connected_name()
+        name = self._resolve_connected(watch)
         if name is None:
-            return "notready:no watch connected"
+            return f"unknown:{watch or 'watch'}"
         now = int(time.time())
         pts = self._battery_points(now - 7 * 86400, now)
         if len(pts) < 2:
@@ -651,9 +653,8 @@ class MockStoandl(dbus.service.Object):
     @dbus.service.method(IFACE, in_signature="sx", out_signature="s")
     def BatteryActivity(self, watch, sinceEpoch):
         # Per-interval drop + notification counts (deterministic, hour-of-day shaped).
-        name = self._connected_name()
-        if name is None:
-            return "notready:no watch connected"
+        if self._resolve_connected(watch) is None:
+            return "ok:"
         now = int(time.time())
         pts = self._battery_points(int(sinceEpoch), now)
         rows = []
@@ -672,9 +673,8 @@ class MockStoandl(dbus.service.Object):
         # Fixed illustrative split (weights sum to 1.0). estDrainPct = total_drop × weight (slices sum
         # to the measured discharge → drain-anchored; 0 when the window never discharged); sharePct =
         # weight × 100 (the pie wedge). "System" is the always-on floor slice.
-        name = self._connected_name()
-        if name is None:
-            return "notready:no watch connected"
+        if self._resolve_connected(watch) is None:
+            return "ok:"             # the daemon's answer for a watch without heartbeat data
         now = int(time.time())
         pts = self._battery_points(int(sinceEpoch), now)
         total_drop = sum(max(0.0, pts[i - 1][1] - pts[i][1]) for i in range(1, len(pts)))

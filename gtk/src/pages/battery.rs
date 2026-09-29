@@ -434,10 +434,22 @@ impl StoandlBatteryPage {
                     "Start it with: systemctl --user start stoandl".to_string(),
                 )
             } else if kind == "notready" {
+                // Only when both captures are off.
                 (
                     "battery-missing-symbolic",
-                    "No battery data",
-                    "Battery capture is off, or no watch is connected.".to_string(),
+                    "Battery capture is off",
+                    "stoandl records neither the analytics heartbeat nor the battery level. Turn on \
+                     “Battery insights” or “Battery level history” in Settings → Daemon configuration."
+                        .to_string(),
+                )
+            } else if kind == "unknown" && self.client().connected_watch().is_none() {
+                // The daemon resolves these methods among CONNECTED watches only, so with none
+                // connected it answers `unknown:` whatever it stored.
+                (
+                    "battery-symbolic",
+                    "No watch connected",
+                    "Battery insights are for the connected watch. Connect it to see its battery."
+                        .to_string(),
                 )
             } else {
                 (
@@ -450,7 +462,7 @@ impl StoandlBatteryPage {
             imp.empty_status.set_icon_name(Some(icon));
             imp.empty_status.set_title(title);
             imp.empty_status.set_description(Some(&desc));
-            dbg_smoke(&format!("battery ui: empty (up={up}, kind={kind})"));
+            dbg_smoke(&format!("battery ui: empty (up={up}, kind={kind}): {title}"));
             return;
         }
 
