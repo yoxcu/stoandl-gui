@@ -37,7 +37,7 @@ Single-threaded GTK main loop. Every D-Bus call is `async` on the GLib
 - Daemon liveness: `gio::bus_watch_name` (name-appeared / name-vanished) drives the `daemon-up` property — cleaner than polling `NameHasOwner`, but still do one `NameHasOwner`-equivalent implicitly via the initial watch callback.
 - Signals: `conn.signal_subscribe(Some(NAME), Some(IFACE), Some(signal), Some(PATH), None, flags, cb)` — one per the 7 Control signals.
 - Timers (safety-net polls / op watchdogs): `glib::timeout_add_seconds_local` / `timeout_add_local`, storing the `SourceId` to remove on stop.
-- CLI shell-outs (backup/restore/support) and `systemctl --user start stoandl`: `gio::Subprocess` with `communicate_utf8_future`.
+- CLI shell-outs (backup/restore/support) and "Start daemon" (`systemctl --user reset-failed stoandl`, then `start`; a failed start is toasted with systemctl's first stderr line): `gio::Subprocess` with `communicate_utf8_future`.
 - `Gtk.UriLauncher` for opening config/changelog URLs; `Gtk.FileDialog` for pickers.
 
 The daemon is **not** D-Bus-activated, so polling + re-sync-on-daemon-up stays as
@@ -90,8 +90,9 @@ Return types on the wire are only `s`, `b`, `as`, void → trivial `glib::Varian
 Top-level: `Adw.ApplicationWindow` → `Adw.ToastOverlay` (app-wide; every page
 posts `Adw.Toast` via `window.toast()`) → `Gtk.Stack root_stack` with two children:
 
-- **`daemon`**: `Adw.StatusPage` ("daemon not running", `systemctl --user start
-  stoandl` button) shown when `daemon-up` is false — the whole nav disappears.
+- **`daemon`**: `Adw.StatusPage` ("daemon not running", a "Start daemon" button
+  running `systemctl --user reset-failed stoandl` + `start`) shown when `daemon-up`
+  is false — the whole nav disappears.
 - **`main`**: `Adw.ToolbarView` with `Adw.HeaderBar` (top) carrying an
   `Adw.ViewSwitcher` (title widget, wide policy) + an `Adw.ViewSwitcherBar`
   (bottom bar, revealed on narrow) both driving an `Adw.ViewStack view_stack` with

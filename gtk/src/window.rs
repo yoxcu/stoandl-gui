@@ -88,15 +88,27 @@ impl StoandlWindow {
             ),
         );
 
-        // "Start daemon" — the daemon is NOT D-Bus-activated.
+        // "Start daemon" — the daemon is NOT D-Bus-activated. Success shows up as
+        // the bus name appearing (daemon-up); a failed start is reported here.
         imp.start_daemon_button.connect_clicked(glib::clone!(
             #[weak(rename_to = win)]
             self,
             #[weak]
             client,
             move |_| {
-                client.start_daemon();
                 win.toast("Starting stoandl…");
+                glib::spawn_future_local(glib::clone!(
+                    #[weak]
+                    win,
+                    #[weak]
+                    client,
+                    async move {
+                        if let Err(e) = client.start_daemon().await {
+                            eprintln!("stoandl: systemctl --user start stoandl failed: {e}");
+                            win.toast(&format!("Could not start stoandl: {e}"));
+                        }
+                    }
+                ));
             }
         ));
 
@@ -139,6 +151,11 @@ impl StoandlWindow {
                     app.quit();
                 }
                 return glib::ControlFlow::Break;
+            }
+            // Daemon down: press "Start daemon" once (a failed start is logged on stderr).
+            if idx == 0 && !win.client().daemon_up() {
+                eprintln!("stoandl-smoke: daemon down, pressing Start daemon");
+                win.imp().start_daemon_button.emit_clicked();
             }
             if let Some(page) = pages.item(idx).and_downcast::<adw::ViewStackPage>() {
                 let child = page.child();

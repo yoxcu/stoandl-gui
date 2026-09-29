@@ -466,17 +466,43 @@ impl StoandlClient {
         }
     }
 
-    /// The daemon is NOT D-Bus-activated — start the user service explicitly.
-    pub fn start_daemon(&self) {
-        let argv: [&OsStr; 4] = [
-            OsStr::new("systemctl"),
-            OsStr::new("--user"),
-            OsStr::new("start"),
-            OsStr::new("stoandl"),
-        ];
-        if let Err(e) = gio::Subprocess::newv(&argv, gio::SubprocessFlags::NONE) {
-            eprintln!("stoandl: failed to launch daemon: {e}");
+    /// Run `systemctl --user <args>`: Ok on exit 0, else systemctl's first stderr
+    /// line ("Job for stoandl.service failed because …", "Unit … not found.") or
+    /// why it could not run at all (no systemctl, e.g. inside the flatpak).
+    async fn systemctl(args: &[&str]) -> Result<(), String> {
+        let mut argv: Vec<&OsStr> = vec![OsStr::new("systemctl"), OsStr::new("--user")];
+        argv.extend(args.iter().map(OsStr::new));
+        let proc = gio::Subprocess::newv(
+            &argv,
+            gio::SubprocessFlags::STDOUT_SILENCE | gio::SubprocessFlags::STDERR_PIPE,
+        )
+        .map_err(|e| format!("could not run systemctl ({e})"))?;
+        let (_, err) = proc.communicate_utf8_future(None).await.map_err(|e| e.to_string())?;
+        if proc.is_successful() {
+            return Ok(());
         }
+        let first = err
+            .as_ref()
+            .and_then(|e| e.as_str().trim().lines().next())
+            .unwrap_or("")
+            .to_string();
+        Err(if !first.is_empty() {
+            first
+        } else if proc.has_exited() {
+            format!("systemctl exited with code {}", proc.exit_status())
+        } else {
+            "systemctl was killed".to_string()
+        })
+    }
+
+    /// The daemon is NOT D-Bus-activated — start the user service explicitly.
+    /// `reset-failed` first: the unit allows StartLimitBurst=5 starts per 300 s,
+    /// and once that trips a plain `start` is refused until the failed state is
+    /// reset, however long ago the crashes were. The reset's own outcome doesn't
+    /// matter (it fails harmlessly on a unit that isn't failed) — the start's does.
+    pub async fn start_daemon(&self) -> Result<(), String> {
+        let _ = Self::systemctl(&["reset-failed", "stoandl"]).await;
+        Self::systemctl(&["start", "stoandl"]).await
     }
 
     // --- generic calls --------------------------------------------------------

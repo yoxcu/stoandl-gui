@@ -1744,15 +1744,46 @@ void StoandlClient::onExtensionStateChanged(const QString &name, const QString &
     refreshExtensions(); // emits extensionsChanged with the merged runtimeState
 }
 
-bool StoandlClient::startDaemon()
+void StoandlClient::runSystemctl(const QStringList &args,
+                                 const std::function<void(bool ok, const QString &message)> &done)
 {
-    // The daemon is NOT D-Bus-activated — start the systemd *user* service.
-    const bool launched = QProcess::startDetached(QStringLiteral("systemctl"),
-                                                  { QStringLiteral("--user"),
-                                                    QStringLiteral("start"),
-                                                    QStringLiteral("stoandl") });
-    // NameOwnerChanged should fire, but re-probe a couple of times as a fallback.
-    QTimer::singleShot(1500, this, &StoandlClient::recheckDaemon);
-    QTimer::singleShot(4000, this, &StoandlClient::recheckDaemon);
-    return launched;
+    auto *p = new QProcess(this);
+    // FailedToStart never reaches finished(), so each outcome reports exactly once.
+    connect(p, &QProcess::errorOccurred, this, [p, done](QProcess::ProcessError e) {
+        if (e != QProcess::FailedToStart)
+            return;
+        done(false, QStringLiteral("could not run systemctl (%1)").arg(p->errorString()));
+        p->deleteLater();
+    });
+    connect(p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [p, done](int code, QProcess::ExitStatus st) {
+        // systemctl explains a failure on stderr; its first line is the useful part ("Job for
+        // stoandl.service failed because …" / "Unit stoandl.service not found.").
+        QString msg = QString::fromUtf8(p->readAllStandardError()).trimmed().section(QLatin1Char('\n'), 0, 0);
+        if (msg.isEmpty())
+            msg = QStringLiteral("systemctl exited with code %1").arg(code);
+        done(st == QProcess::NormalExit && code == 0, msg);
+        p->deleteLater();
+    });
+    p->start(QStringLiteral("systemctl"), QStringList{ QStringLiteral("--user") } + args);
+}
+
+void StoandlClient::startDaemon()
+{
+    // The daemon is NOT D-Bus-activated — start the systemd *user* service. Clear a failed unit
+    // first: the unit allows StartLimitBurst=5 starts per 300 s, and once that trips a plain
+    // `start` is refused until `reset-failed`, however long ago the crashes were. The reset's own
+    // outcome doesn't matter (it fails harmlessly on a unit that isn't failed) — the start's does.
+    runSystemctl({ QStringLiteral("reset-failed"), QStringLiteral("stoandl") }, [this](bool, const QString &) {
+        runSystemctl({ QStringLiteral("start"), QStringLiteral("stoandl") }, [this](bool ok, const QString &message) {
+            if (!ok) {
+                qCWarning(lcStoandl).noquote() << "systemctl --user start stoandl failed:" << message;
+                Q_EMIT daemonStartFailed(message);
+                return;
+            }
+            // NameOwnerChanged should fire, but re-probe a couple of times as a fallback.
+            QTimer::singleShot(1500, this, &StoandlClient::recheckDaemon);
+            QTimer::singleShot(4000, this, &StoandlClient::recheckDaemon);
+        });
+    });
 }

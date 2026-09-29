@@ -11,11 +11,11 @@ Kirigami.PlaceholderMessage {
     helpfulAction: Kirigami.Action {
         icon.name: "media-playback-start-symbolic"
         text: "Start daemon"
+        // Async (reset-failed, then start): a failure arrives as daemonStartFailed, which Main.qml
+        // reports once — this placeholder is instantiated on every page.
         onTriggered: {
-            if (StoandlClient.startDaemon())
-                applicationWindow().showPassiveNotification("Starting stoandl…");
-            else
-                applicationWindow().showPassiveNotification("Could not launch systemctl --user start stoandl");
+            StoandlClient.startDaemon();
+            applicationWindow().showPassiveNotification("Starting stoandl…");
         }
     }
 }

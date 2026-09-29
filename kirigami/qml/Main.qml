@@ -53,6 +53,12 @@ Kirigami.ApplicationWindow {
         interval: Math.max(1, StoandlClient.smokeMs)
         repeat: true
         onTriggered: {
+            // Daemon down: press "Start daemon" once, as DaemonPlaceholder's action does (a failed
+            // start is logged by StoandlClient and toasted by the handler below).
+            if (smokeTimer.step === 0 && !StoandlClient.daemonUp) {
+                console.log("stoandl-smoke: daemon down, pressing Start daemon");
+                StoandlClient.startDaemon();
+            }
             if (smokeTimer.step >= root.pageComponents.length) {
                 console.log("stoandl-smoke: cycled all " + root.pageComponents.length + " pages, quitting");
                 smokeTimer.running = false;
@@ -65,6 +71,15 @@ Kirigami.ApplicationWindow {
             if (cur && typeof cur.smokeExercise === "function")
                 cur.smokeExercise();
             smokeTimer.step += 1;
+        }
+    }
+
+    // "Start daemon" (DaemonPlaceholder) is async: report a failed start here, once, rather than
+    // from each page's placeholder. The message is systemctl's own first stderr line.
+    Connections {
+        target: StoandlClient
+        function onDaemonStartFailed(message) {
+            root.showPassiveNotification("Could not start stoandl: " + message, "long");
         }
     }
 

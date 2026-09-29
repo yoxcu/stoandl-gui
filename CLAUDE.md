@@ -128,7 +128,9 @@ caught, so it is worth keeping honest.
 - Returns are either `kind:message` (split on first `:`) or tab-separated `as` records. Parse in
   `StoandlClient`, never in QML. Handle `notready` as the "no watch / not ready" empty state.
 - The daemon is NOT D-Bus-activated. If the bus name is unowned → show "daemon not running", offer
-  `systemctl --user start stoandl`. Never assume it's up.
+  "Start daemon": `systemctl --user reset-failed stoandl`, then `systemctl --user start stoandl` (the
+  unit's `StartLimitBurst` refuses a plain start once tripped, silently from a button), and toast a
+  failed start with systemctl's own first stderr line (`daemonStartFailed`). Never assume it's up.
 - Paths passed to SideloadApp/SideloadFirmware/etc. are **absolute, daemon-side**.
 - **Actions stay on the page `actions` (Kirigami renders them: header on desktop, footer toolbar on
   mobile); never hand-place them, NO round floating FAB.** Pages keep their `title`. A page's

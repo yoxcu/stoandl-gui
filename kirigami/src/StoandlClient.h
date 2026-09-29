@@ -9,6 +9,8 @@
 #include <QHash>
 #include <QUrl>
 
+#include <functional>
+
 class QTimer;
 
 // The ONLY object that touches D-Bus. Registered as a QML singleton
@@ -215,7 +217,10 @@ public:
     Q_INVOKABLE void stopPairPoll();
 
     // --- daemon lifecycle --------------------------------------------------
-    Q_INVOKABLE bool startDaemon();      // systemctl --user start stoandl
+    // systemctl --user reset-failed stoandl, then systemctl --user start stoandl (async). The
+    // reset clears a tripped StartLimitBurst, which otherwise makes the start fail. A start that
+    // fails (or a systemctl that can't run, e.g. inside the flatpak) emits daemonStartFailed.
+    Q_INVOKABLE void startDaemon();
     Q_INVOKABLE void recheckDaemon();    // NameHasOwner probe
 
 Q_SIGNALS:
@@ -234,6 +239,7 @@ Q_SIGNALS:
     void firmwareStatus(const QString &kind, int percent, const QString &detail);
     void languageStatus(const QString &kind, int percent, const QString &detail);
     void cliResult(const QString &op, bool ok, const QString &message);
+    void daemonStartFailed(const QString &message);  // startDaemon() could not start the service
 
 private Q_SLOTS:
     void onNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
@@ -275,6 +281,9 @@ private:
     // languagePollOnce — it guards a stale poll snapshot; the signal is always live.)
     void         emitLanguageStatus(const QString &phase, int percent, const QString &detail);
     void         runCli(const QString &op, const QStringList &args);
+    // Run `systemctl --user <args>` asynchronously; `done` gets (exit 0, first stderr line / reason).
+    void         runSystemctl(const QStringList &args,
+                              const std::function<void(bool ok, const QString &message)> &done);
 
     QDBusConnection m_bus;
     bool            m_daemonUp = false;
