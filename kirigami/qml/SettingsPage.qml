@@ -21,15 +21,19 @@ Kirigami.ScrollablePage {
     Component { id: backupPage;    BackupSettingsPage {} }
     Component { id: debugPage;     DebugSettingsPage {} }
 
-    function open(component) { applicationWindow().pageStack.push(component); }
+    function open(component) { return applicationWindow().pageStack.push(component); }
 
     // Headless smoke harness (STOANDL_SMOKE_MS): instantiate every sub-page so their reload() paths —
-    // and therefore every schema-driven widget kind — actually run under `QT_QPA_PLATFORM=offscreen`.
+    // and therefore every schema-driven widget kind — actually run under `QT_QPA_PLATFORM=offscreen`,
+    // then run a sub-page's own smokeExercise() for state only a button reaches (Debug → Heartbeat).
     // The sub-pages are page-scoped Components, so Main.qml drives this through the page, not directly.
     function smokeExercise() {
         var pages = [syncPage, calendarsPage, watchPage, healthProfilePage, generalPage, backupPage, debugPage];
-        for (var i = 0; i < pages.length; ++i)
-            page.open(pages[i]);
+        for (var i = 0; i < pages.length; ++i) {
+            var sub = page.open(pages[i]);
+            if (sub && typeof sub.smokeExercise === "function")
+                sub.smokeExercise();
+        }
         console.log("stoandl-smoke: exercised " + pages.length + " settings sub-pages");
     }
 

@@ -10,9 +10,10 @@ import org.stoandl.gui
 // (they used to hang off the watch-details dialog, which hid them behind the connected-watch card).
 // Grouped Diagnostics / Recovery / Testing, with the one destructive action in a danger position last.
 //
-// Every tool except the analytics heartbeat acts on "the connected watch" — the daemon methods take no
-// watch argument — so those rows are disabled (with an inline explanation) until a watch is connected.
-// The heartbeat read-out works off stored records and stays available.
+// Every tool acts on "the connected watch", so the rows are disabled (with an inline explanation) until
+// a watch is connected. Most daemon methods here take no watch argument at all; the heartbeat ones do,
+// but the daemon resolves it among CONNECTED watches only, so with none connected they answer
+// `unknown:` even when records are stored.
 Kirigami.ScrollablePage {
     id: page
     objectName: "debugSettings"
@@ -26,7 +27,14 @@ Kirigami.ScrollablePage {
     Component { id: heartbeatPage; HeartbeatPage {} }
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
-    function open(component) { applicationWindow().pageStack.push(component); }
+    function open(component) { return applicationWindow().pageStack.push(component); }
+
+    // Headless smoke (STOANDL_SMOKE_MS): the heartbeat page is only reachable from here.
+    function smokeExercise() {
+        var hb = page.open(heartbeatPage);
+        if (hb && typeof hb.smokeExercise === "function")
+            hb.smokeExercise();
+    }
 
     function applyWatches(rows) {
         var found = false;
@@ -73,7 +81,7 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.largeSpacing
             type: Kirigami.MessageType.Information
             text: "No watch is connected. These tools act on the connected watch, so they stay disabled "
-                  + "until one is — only the analytics heartbeat (read from stored records) works without it."
+                  + "until one is."
         }
 
         FormCard.FormHeader {
@@ -107,11 +115,12 @@ Kirigami.ScrollablePage {
                 }
             }
             FormCard.FormDelegateSeparator {}
-            // Reads the record the daemon already stored — no connected watch required.
+            // The newest record the daemon stored for the connected watch.
             FormCard.FormButtonDelegate {
                 text: "Analytics heartbeat"
                 description: "The watch's hourly diagnostic record, metric by metric"
                 icon.name: "office-chart-line-symbolic"
+                enabled: page.watchTools
                 onClicked: page.open(heartbeatPage)
             }
         }

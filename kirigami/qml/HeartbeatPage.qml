@@ -12,7 +12,9 @@ import org.stoandl.gui
 // The watch logs one record about once an hour, so there is no poll — the page has a Refresh
 // action instead. When the daemon reports known = 0 it has no verified layout for that
 // (size, version): the record is still captured and stored raw, but NO metrics are listed,
-// because stoandl never shows guessed values.
+// because stoandl never shows guessed values. The daemon reads the stored record of the CONNECTED
+// watch (it resolves the watch argument among connected ones), so with none connected it answers
+// `unknown:` — shown as "no watch connected", not as "nothing captured".
 Kirigami.ScrollablePage {
     id: page
     objectName: "heartbeat"
@@ -21,6 +23,7 @@ Kirigami.ScrollablePage {
     property var info: null      // heartbeatInfo() map (null before the first fetch)
     property var groups: []      // heartbeatMetrics(): [{group, label, metrics:[…]}]
     property string query: ""    // metric-name filter (header search field)
+    property bool watchConnected: true   // latest ListWatches verdict; tells the two `unknown:` cases apart
 
     readonly property bool hasInfo: page.info !== null && page.info.ok === true
     // The daemon has a verified layout for this record — only then are there metrics to show.
@@ -55,8 +58,17 @@ Kirigami.ScrollablePage {
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
+    function applyWatches(rows) {
+        var found = false;
+        for (var i = 0; i < rows.length; ++i) {
+            if (rows[i].connected) { found = true; break; }
+        }
+        page.watchConnected = found;
+    }
+
     function reload() {
         if (!StoandlClient.daemonUp) { page.info = null; page.groups = []; return; }
+        page.applyWatches(StoandlClient.listWatches());
         page.info = StoandlClient.heartbeatInfo("");
         // Empty by contract for an unverified layout / a watch with no heartbeat yet.
         page.groups = StoandlClient.heartbeatMetrics("");
@@ -65,6 +77,21 @@ Kirigami.ScrollablePage {
     Connections {
         target: StoandlClient
         function onDaemonUpChanged() { if (StoandlClient.daemonUp) page.reload(); }
+        // A (re)connect makes the connected watch's record readable; a disconnect makes it unreadable.
+        function onWatchesChanged(rows) {
+            var was = page.watchConnected;
+            page.applyWatches(rows);
+            if (page.watchConnected !== was)
+                page.reload();
+        }
+    }
+
+    // Headless smoke (STOANDL_SMOKE_MS): the name filter only runs once something is typed.
+    function smokeExercise() {
+        searchField.text = "battery";   // onTextChanged → page.query
+        console.log("stoandl-smoke: heartbeat kind=" + (page.info ? page.info.kind : "none")
+                    + " watchConnected=" + page.watchConnected + " groups=" + page.groups.length
+                    + " shown=" + page.shownGroups.length + " known=" + page.known);
     }
 
     Component.onCompleted: page.reload()
@@ -130,7 +157,7 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             icon.name: "dialog-information-symbolic"
             text: "Heartbeat capture is off"
-            explanation: "The daemon is not capturing analytics heartbeats (battery.heartbeat in stoandl.conf), so there is no record to inspect."
+            explanation: "The daemon is not capturing analytics heartbeats, so there is no record to inspect. Turn on “Battery insights” in Settings → Daemon configuration."
         }
 
         // --- no record for this watch yet (unknown:<label>) -----------------
@@ -139,10 +166,13 @@ Kirigami.ScrollablePage {
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             icon.name: "chronometer-symbolic"
-            text: "No heartbeat captured yet"
-            // `label` is the watch the daemon resolved the request to (empty when it resolved none).
-            explanation: "The watch logs one analytics record about once an hour while connected. None has been captured yet"
-                         + ((page.info && page.info.label) ? (" for " + page.info.label + ".") : ".")
+            // With no watch connected the daemon has nothing to resolve the request to, whatever it
+            // stored earlier; otherwise `label` is the connected watch's name.
+            text: page.watchConnected ? "No heartbeat captured yet" : "No watch connected"
+            explanation: page.watchConnected
+                ? "The watch logs one analytics record about once an hour while connected. None has been captured yet"
+                  + ((page.info && page.info.label) ? (" for " + page.info.label + ".") : ".")
+                : "stoandl shows the newest heartbeat of the connected watch. Connect it to see its record."
         }
 
         // --- the call itself failed ----------------------------------------

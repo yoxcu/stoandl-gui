@@ -12,9 +12,15 @@
 //! verified, the daemon returns NO metrics rather than guessed ones — the page
 //! says so prominently instead of showing an empty list.
 //!
+//! The daemon reads the stored record of the CONNECTED watch (it resolves the
+//! watch argument among connected ones), so with none connected it answers
+//! `unknown:` whatever it stored — the empty state says "no watch connected"
+//! then, not "nothing captured".
+//!
 //! Lifecycle: a fresh page is built on every open and dropped on pop, so it just
 //! loads once on `bind_client` (plus on the refresh action). The record only
-//! updates hourly, so there is no poll and no client-signal subscription.
+//! updates hourly, so there is no poll; the one client subscription reloads when
+//! a watch (dis)connects and is dropped with the page.
 
 use std::cell::{Cell, OnceCell, RefCell};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -141,6 +147,10 @@ mod imp {
         pub metric_groups: RefCell<Vec<adw::PreferencesGroup>>,
 
         pub reload_gen: Cell<u64>,
+
+        // watches-changed subscription (+ the connected state it last saw), dropped in dispose.
+        pub watches_handler: RefCell<Option<glib::SignalHandlerId>>,
+        pub watch_connected: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -157,7 +167,13 @@ mod imp {
         }
     }
 
-    impl ObjectImpl for StoandlHeartbeatPage {}
+    impl ObjectImpl for StoandlHeartbeatPage {
+        fn dispose(&self) {
+            if let (Some(c), Some(id)) = (self.client.get(), self.watches_handler.take()) {
+                c.disconnect(id);
+            }
+        }
+    }
     impl WidgetImpl for StoandlHeartbeatPage {}
     impl NavigationPageImpl for StoandlHeartbeatPage {}
 }
@@ -207,6 +223,20 @@ impl StoandlHeartbeatPage {
             self,
             move |e| page.set_filter(&e.text())
         ));
+
+        // A (re)connect makes the connected watch's record readable, a disconnect unreadable.
+        imp.watch_connected.set(client.connected_watch().is_some());
+        let id = client.connect_watches_changed(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            move |c| {
+                let now = c.connected_watch().is_some();
+                if page.imp().watch_connected.replace(now) != now {
+                    page.spawn_reload();
+                }
+            }
+        ));
+        imp.watches_handler.replace(Some(id));
 
         self.spawn_reload();
     }
@@ -292,6 +322,14 @@ impl StoandlHeartbeatPage {
                         &detail,
                     ),
                 )
+            } else if kind == "unknown" && self.client().connected_watch().is_none() {
+                (
+                    "dialog-information-symbolic",
+                    "No watch connected",
+                    "stoandl shows the newest heartbeat of the connected watch. Connect it to see \
+                     its record."
+                        .to_string(),
+                )
             } else if kind == "unknown" {
                 (
                     "dialog-information-symbolic",
@@ -316,7 +354,7 @@ impl StoandlHeartbeatPage {
             imp.search_button.set_visible(false);
             imp.search_bar.set_search_mode(false);
             self.clear_metric_groups();
-            dbg_smoke(&format!("heartbeat ui: empty (up={up}, kind={kind})"));
+            dbg_smoke(&format!("heartbeat ui: empty (up={up}, kind={kind}, title={title:?})"));
             return;
         };
 

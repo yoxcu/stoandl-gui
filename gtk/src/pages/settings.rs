@@ -1058,9 +1058,11 @@ impl StoandlSettingsPage {
     /// the watch-details page, which hid them behind the connected-watch card).
     /// Deliberately its own settings category so the landing stays end-user shaped.
     ///
-    /// Every tool but the analytics heartbeat acts on "the connected watch" — those
-    /// daemon methods take no watch argument — so those rows are gated on a
-    /// connected watch (with an inline explanation), live via `watches-changed`.
+    /// Every tool acts on "the connected watch", so the rows are gated on one (with
+    /// an inline explanation), live via `watches-changed`. Most of these daemon
+    /// methods take no watch argument; the heartbeat ones do, but the daemon
+    /// resolves it among CONNECTED watches only, so with none they answer
+    /// `unknown:` even when records are stored.
     fn push_debug(&self) {
         let prefs = adw::PreferencesPage::builder()
             .description("Low-level tools for diagnostics and recovery. Use with care.")
@@ -1070,10 +1072,7 @@ impl StoandlSettingsPage {
         let hint = adw::PreferencesGroup::new();
         let hint_row = adw::ActionRow::builder()
             .title("No watch connected")
-            .subtitle(
-                "These tools act on the connected watch. Only the analytics heartbeat \
-                 (read from stored records) works without one.",
-            )
+            .subtitle("These tools act on the connected watch, so they stay disabled until one is.")
             .build();
         hint_row.add_prefix(&gtk::Image::from_icon_name("dialog-information-symbolic"));
         hint.add(&hint_row);
@@ -1105,7 +1104,7 @@ impl StoandlSettingsPage {
             ),
         );
         diagnostics.add(&logs_row);
-        // Reads the record the daemon already stored — no connected watch required.
+        // The newest record the daemon stored for the connected watch.
         let hb_row = adw::ActionRow::builder()
             .title("Analytics heartbeat")
             .subtitle("The watch’s hourly analytics record, decoded metric by metric")
@@ -1182,6 +1181,7 @@ impl StoandlSettingsPage {
         self.imp().debug_watch_rows.replace(vec![
             core_row,
             logs_row,
+            hb_row,
             recovery_row,
             flash_row,
             notif_row,

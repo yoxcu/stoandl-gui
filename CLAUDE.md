@@ -55,7 +55,9 @@ watch* — the daemon methods take no watch argument — those rows disable with
 none is connected. Its Diagnostics group also pushes **`HeartbeatPage`**:
 the watch's hourly analytics record via `HeartbeatInfo`/`HeartbeatMetrics`, header facts + every metric
 grouped by name prefix; when the daemon reports `known=0` it shows *why* nothing is decoded instead of
-guessed values — read from stored records, so it works with no watch connected). `Main.qml`'s
+guessed values. It reads the daemon's stored record, but the daemon resolves the watch argument among
+*connected* watches only — with none connected it answers `unknown:` — so the row is gated like the
+other Debug tools and the page tells "no watch connected" apart from "nothing captured"). `Main.qml`'s
 `showTab()` pops pushed sub-pages on tab-switch and on re-tapping the active tab. (Calendars used to be
 a flat list nested in SyncSettingsPage; they moved to their own page when account grouping + CRUD landed.)
 

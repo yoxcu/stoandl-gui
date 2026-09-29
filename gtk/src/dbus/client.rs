@@ -178,12 +178,14 @@ impl StoandlClient {
 
     // --- reactive signal connect helpers (ergonomic wrappers) ----------------
 
-    pub fn connect_watches_changed<F: Fn(&Self) + 'static>(&self, f: F) {
+    /// Returns the handler id, for a short-lived subscriber (a pushed page) to
+    /// disconnect when it goes away; the long-lived tabs just ignore it.
+    pub fn connect_watches_changed<F: Fn(&Self) + 'static>(&self, f: F) -> glib::SignalHandlerId {
         self.connect_closure(
             "watches-changed",
             false,
             glib::closure_local!(move |c: StoandlClient| f(&c)),
-        );
+        )
     }
 
     pub fn connect_pair_status<F: Fn(&Self, &str, &str) + 'static>(&self, f: F) {
