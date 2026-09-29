@@ -104,12 +104,17 @@ same hook in `gtk/src/window.rs::maybe_start_smoke`.) The env var is read via `S
 **Add a `smokeExercise()` to any page whose interesting state is only reachable by navigation or by a
 button press** — otherwise it is not covered. `SettingsPage` pushes all seven sub-pages and runs their
 own `smokeExercise()` (`WatchSettingsPage` round-trips a Quiet Time window, `DebugSettingsPage` pushes
-`HeartbeatPage`, which filters); `NotificationsPage` fires the send-test; with the daemon down the tick
-presses "Start daemon". This harness is how the delegate-binding scope trap below was caught, so it is
-worth keeping honest. Mock switches for the states a healthy mock never reaches: `MOCK_NO_WATCH=1`
-(paired, nothing connected), `MOCK_HB_UNKNOWN=1` (unverified heartbeat layout), `MOCK_FW_DOWNGRADE=1`
-(every sideload is a downgrade through recovery) and `MOCK_FW_AUTOSTART=<s>` (a flash the GUI didn't
-start, seen only through `FirmwareProgress`).
+`HeartbeatPage`, which filters); `NotificationsPage` fires the send-test; `WatchPage` hands the pairing
+dialog the daemon's search states (the bare `pending:` and a pause note) and pushes `BatteryPage` even
+with no watch connected; with the daemon down the tick presses "Start daemon". This harness is how the
+delegate-binding scope trap below was caught, so it is worth keeping honest. The mock's
+`GetConfigSchema` is the daemon's `GUI_CONFIG_FIELDS` row for row, so the `general loaded N keys in G
+groups` line counts the real schema. Mock switches for the states a healthy
+mock never reaches: `MOCK_NO_WATCH=1` (paired, nothing connected — also the only way to walk "Pair new
+watch", since the daemon opens no window while a watch is connected), `MOCK_PAIR_PAUSE=bt|busy|slept`
+(each pairing window starts with that "can't discover" note), `MOCK_HB_UNKNOWN=1` (unverified heartbeat
+layout), `MOCK_FW_DOWNGRADE=1` (every sideload is a downgrade through recovery) and
+`MOCK_FW_AUTOSTART=<s>` (a flash the GUI didn't start, seen only through `FirmwareProgress`).
 
 ## Hard rules
 - **The interface has SEVEN signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
