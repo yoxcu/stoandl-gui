@@ -7,13 +7,13 @@ long-running ops (Pair/Firmware/Language) walk pending -> terminal over a few
 polls — so the GUI's "re-fetch after every mutation" path and the poll loops both
 light up.
 
-Covers the full surface the GUI uses: the 51 documented control methods that the
-new screens touch (Watch, Apps/Faces, Extensions, Notifications, Settings) PLUS
-the daemon-side hooks added in this milestone (handoff §5). The hooks are flagged
-"HOOK #n" inline; they are the new D-Bus contract the real Kotlin daemon must grow
-to match (see the drift report). Returns follow docs/handoff/dbus-interface.md:
+Covers every method either GUI calls: the daemon's whole de.yoxcu.stoandl.Control
+except the CLI-only FakeCallRing/FakeCallEnd/ForceCoreDump/HeartRate/Ping/RunningApp,
+plus the ExtCrash test hook. "HOOK #n" marks the methods the GUI work added to the
+daemon. Returns follow the daemon's docs/dbus-interface.md, the one contract doc:
 status strings are "kind:tail" with tab-separated fields; list methods return one
-tab-joined record per element.
+tab-joined record per element. Where the daemon's replies change, change the mock
+to match rather than the GUI to match the mock.
 
 Run inside a session bus, e.g.:  dbus-run-session -- python3 mock_stoandl.py
 """

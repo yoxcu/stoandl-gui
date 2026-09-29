@@ -22,7 +22,7 @@
 #include <algorithm>
 
 namespace {
-// Service contract — docs/dbus-interface.md §"Service summary".
+// Service contract — the daemon's docs/dbus-interface.md §"Service summary".
 constexpr auto SERVICE = "de.yoxcu.stoandl";
 constexpr auto PATH    = "/de/yoxcu/stoandl";
 constexpr auto IFACE   = "de.yoxcu.stoandl.Control";
@@ -36,7 +36,7 @@ constexpr int CALL_TIMEOUT_MS = 10000;  // ordinary request/response
 constexpr int FIND_TIMEOUT_MS = 20000;  // FindWatch may linger daemon-side
 constexpr int NAME_TIMEOUT_MS = 3000;
 
-// Pair/Repair poll: 1.5 s cadence, 145 s ceiling (dbus-interface.md §Long-running operations).
+// Pair/Repair poll: 1.5 s cadence, 145 s ceiling (the daemon's dbus-interface.md §Long-running operations).
 constexpr int PAIR_INTERVAL_MS = 1500;
 constexpr int PAIR_TIMEOUT_MS  = 145000;
 
@@ -1664,7 +1664,7 @@ void StoandlClient::pollPairOnce()
     }
     const Status s = callStatus(QStringLiteral("PairStatus"));
     Q_EMIT pairStatus(s.kind, s.tail);
-    // Terminal states per dbus-interface.md: ok / error / timeout.
+    // Terminal states per the daemon's dbus-interface.md: ok / error / timeout.
     if (s.kind == QStringLiteral("ok") || s.kind == QStringLiteral("error")
         || s.kind == QStringLiteral("timeout"))
         stopPairPoll();

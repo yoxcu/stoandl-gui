@@ -21,8 +21,9 @@ Kirigami (Qt6/QML) front-end for the stoandl Pebble daemon. Convergent: Plasma M
 
 ## Architecture
 - QML UI (Kirigami + KirigamiAddons FormCard) + one C++ shim `StoandlClient` (raw `QDBusConnection`).
-- Talks to `de.yoxcu.stoandl.Control`, session bus, path `/de/yoxcu/stoandl`. Full contract:
-  `docs/dbus-interface.md`. No code shared with the daemon — we are just another client.
+- Talks to `de.yoxcu.stoandl.Control`, session bus, path `/de/yoxcu/stoandl`. Full contract: the
+  daemon repo's `docs/dbus-interface.md` (the one copy; `docs/dbus-interface.md` here links to it). No
+  code shared with the daemon — we are just another client.
 - Builds musl-native (Alpine/postmarketOS) and glibc (desktop). No JVM.
 
 ## Navigation — 5 tabs (current)

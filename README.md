@@ -16,7 +16,8 @@ desktop, or run both to compare:
 
 Both speak the same `de.yoxcu.stoandl.Control` D-Bus contract (session bus, path
 `/de/yoxcu/stoandl`) and are thin clients of the (separately installed) daemon —
-no code is shared with it. Full contract: `docs/dbus-interface.md`.
+no code is shared with it. Full contract: the daemon repo's `docs/dbus-interface.md`
+([`docs/dbus-interface.md`](docs/dbus-interface.md) links to it).
 
 ## Layout
 
