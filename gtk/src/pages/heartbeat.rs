@@ -313,7 +313,8 @@ impl StoandlHeartbeatPage {
                 (
                     "dialog-information-symbolic",
                     "Daemon not running",
-                    "Start it with: systemctl --user start stoandl".to_string(),
+                    "Start it with: systemctl --user reset-failed stoandl; systemctl --user start stoandl"
+                        .to_string(),
                 )
             } else if kind == "notready" {
                 (

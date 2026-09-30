@@ -156,7 +156,7 @@ Kirigami.ScrollablePage {
               : (page.insights && page.insights.kind === "notready") ? "Battery capture is off"
               : (page.insights && page.insights.kind === "unknown" && !page.watchConnected) ? "No watch connected"
               : "No battery data yet"
-        explanation: !StoandlClient.daemonUp ? "Start it with: systemctl --user start stoandl"
+        explanation: !StoandlClient.daemonUp ? "Start it with: systemctl --user reset-failed stoandl; systemctl --user start stoandl"
               : (page.insights && page.insights.kind === "notready")
                 ? "stoandl records neither the analytics heartbeat nor the battery level. Turn on “Battery insights” or “Battery level history” in Settings → Daemon configuration."
               : (page.insights && page.insights.kind === "unknown" && !page.watchConnected)
