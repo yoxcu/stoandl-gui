@@ -49,7 +49,7 @@ Kirigami.ScrollablePage {
 
     function stateColor(state) {
         if (state === "connected")  return Kirigami.Theme.positiveTextColor;
-        if (state === "connecting") return Kirigami.Theme.neutralTextColor;
+        if (state === "connecting" || state === "recovery") return Kirigami.Theme.neutralTextColor;
         return Kirigami.Theme.disabledTextColor;
     }
 
@@ -111,6 +111,14 @@ Kirigami.ScrollablePage {
         var bp = applicationWindow().pageStack.push(batteryPageComponent);
         console.log("stoandl-smoke: battery kind=" + (bp.insights ? bp.insights.kind : "none")
                     + " watchConnected=" + bp.watchConnected + " hasInsights=" + bp.hasInsights);
+        // STOANDL_SMOKE_FLASH=1: start a flash the way Settings → Debug does (sideloadFirmware, which
+        // arms the firmware poll), so the phase handling — the prf walk with MOCK_FW_DOWNGRADE=1 or
+        // drop — runs end to end and lands on this page's banner. The path doesn't exist: the mock
+        // walks any path, a real daemon refuses it.
+        if (StoandlClient.smokeFlash) {
+            var r = StoandlClient.sideloadFirmware("file:///nonexistent/stoandl-smoke.pbz");
+            console.log("stoandl-smoke: sideload " + r.kind);
+        }
     }
 
     // Page actions: header (desktop) / footer toolbar (mobile). NOT a Material FAB.
@@ -341,9 +349,9 @@ Kirigami.ScrollablePage {
                     id: watchRow
                     required property var modelData
 
-                    // Tap connects (unless already active).
+                    // Tap connects (unless already active, or connected in recovery).
                     onClicked: {
-                        if (!modelData.connected)
+                        if (modelData.state === "disconnected")
                             page.connectTo(modelData.name);
                     }
 
@@ -368,10 +376,14 @@ Kirigami.ScrollablePage {
                             }
                             QQC2.Label {
                                 Layout.fillWidth: true
+                                // A watch in recovery (PRF) is connected, but only for a firmware flash
+                                // (Settings → Debug), a core dump and its logs.
                                 text: watchRow.modelData.state === "connected"
                                       ? (page.transportLabel(watchRow.modelData.transport)
                                          + (watchRow.modelData.battery !== "" ? " · " + watchRow.modelData.battery + "%" : ""))
-                                      : (watchRow.modelData.state === "connecting" ? "Connecting…" : "disconnected")
+                                      : watchRow.modelData.state === "recovery"
+                                        ? "In recovery (PRF) — flash a firmware to bring it back"
+                                        : (watchRow.modelData.state === "connecting" ? "Connecting…" : "disconnected")
                                 elide: Text.ElideRight
                                 font: Kirigami.Theme.smallFont
                                 opacity: 0.7
@@ -379,8 +391,8 @@ Kirigami.ScrollablePage {
                         }
 
                         StatusChip {
-                            visible: watchRow.modelData.state === "connected" || watchRow.modelData.state === "connecting"
-                            label: watchRow.modelData.state === "connecting" ? "connecting" : "active"
+                            visible: watchRow.modelData.state !== "disconnected"
+                            label: watchRow.modelData.state === "connected" ? "active" : watchRow.modelData.state
                             tint: page.stateColor(watchRow.modelData.state)
                         }
 

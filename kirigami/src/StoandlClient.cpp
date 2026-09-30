@@ -79,8 +79,12 @@ StoandlClient::StoandlClient(QObject *parent)
     m_fwTimer->setInterval(FW_INTERVAL_MS);
     connect(m_fwTimer, &QTimer::timeout, this, &StoandlClient::firmwarePollOnce);
     // What the Watch page is told, after normalisation (QT_LOGGING_RULES="stoandl.debug=true").
+    // The smoke harness prints it unconditionally, like the GTK front-end.
     connect(this, &StoandlClient::firmwareStatus, this, [](const QString &kind, int percent, const QString &detail) {
-        qCDebug(lcStoandl).noquote().nospace() << "firmwareStatus → " << kind << " " << percent << " " << detail;
+        if (smokeMs() > 0)
+            qInfo().noquote().nospace() << "stoandl-smoke: firmwareStatus → " << kind << " " << percent << " " << detail;
+        else
+            qCDebug(lcStoandl).noquote().nospace() << "firmwareStatus → " << kind << " " << percent << " " << detail;
     });
 
     m_langTimer = new QTimer(this);
@@ -212,6 +216,8 @@ QVariantList StoandlClient::listWatches()
         m[QStringLiteral("battery")]   = f.value(2);
         m[QStringLiteral("transport")] = f.value(3);   // HOOK #4: ble|classic, empty when disconnected
         m[QStringLiteral("connected")] = (f.value(1) == QStringLiteral("connected"));
+        // Connected in its recovery firmware (PRF): only the firmware flash, core dump and logs work.
+        m[QStringLiteral("recovery")]  = (f.value(1) == QStringLiteral("recovery"));
         rows.append(m);
     }
     return rows;

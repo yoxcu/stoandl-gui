@@ -181,6 +181,12 @@ impl StoandlClient {
         self.imp().watches.borrow().iter().find(|w| w.connected).cloned()
     }
 
+    /// Whether a watch is connected in its recovery firmware (PRF): reachable for a
+    /// firmware flash, a core dump and logs only.
+    pub fn watch_in_recovery(&self) -> bool {
+        self.imp().watches.borrow().iter().any(|w| w.recovery)
+    }
+
     // --- reactive signal connect helpers (ergonomic wrappers) ----------------
 
     /// Returns the handler id, for a short-lived subscriber (a pushed page) to
@@ -240,6 +246,10 @@ impl StoandlClient {
         self.emit_by_name::<()>("pair-status", &[&kind.to_string(), &msg.to_string()]);
     }
     fn signal_firmware_status(&self, kind: &str, percent: i32, detail: &str) {
+        // What the Watch page is told, after normalisation (Kirigami logs the same line).
+        if std::env::var_os("STOANDL_SMOKE_MS").is_some() {
+            eprintln!("stoandl-smoke: firmwareStatus → {kind} {percent} {detail}");
+        }
         self.emit_by_name::<()>(
             "firmware-status",
             &[&kind.to_string(), &percent, &detail.to_string()],

@@ -13,16 +13,21 @@ import org.stoandl.gui
 // Every tool acts on "the connected watch", so the rows are disabled (with an inline explanation) until
 // a watch is connected. Most daemon methods here take no watch argument at all; the heartbeat ones do,
 // but the daemon resolves it among CONNECTED watches only, so with none connected they answer
-// `unknown:` even when records are stored.
+// `unknown:` even when records are stored. A watch in its recovery firmware (ListWatches `recovery`)
+// is reachable for the core dump, the logs and a firmware flash (that is how it gets back), not for
+// the rest.
 Kirigami.ScrollablePage {
     id: page
     objectName: "debugSettings"
     title: "Debug"
 
-    // Latest ListWatches verdict: is any watch connected right now?
+    // Latest ListWatches verdict: is any watch connected right now, or connected in recovery (PRF)?
     property bool watchConnected: false
-    // Guard for the watch-scoped rows.
+    property bool watchInRecovery: false
+    // Guard for the rows that need the watch's normal firmware.
     readonly property bool watchTools: StoandlClient.daemonUp && page.watchConnected
+    // Guard for the rows the daemon also serves on a watch in recovery.
+    readonly property bool recoveryTools: StoandlClient.daemonUp && (page.watchConnected || page.watchInRecovery)
 
     Component { id: heartbeatPage; HeartbeatPage {} }
 
@@ -31,17 +36,20 @@ Kirigami.ScrollablePage {
 
     // Headless smoke (STOANDL_SMOKE_MS): the heartbeat page is only reachable from here.
     function smokeExercise() {
+        console.log("stoandl-smoke: debug watchTools=" + page.watchTools + " recoveryTools=" + page.recoveryTools);
         var hb = page.open(heartbeatPage);
         if (hb && typeof hb.smokeExercise === "function")
             hb.smokeExercise();
     }
 
     function applyWatches(rows) {
-        var found = false;
+        var found = false, recovery = false;
         for (var i = 0; i < rows.length; ++i) {
-            if (rows[i].connected) { found = true; break; }
+            if (rows[i].connected) found = true;
+            if (rows[i].recovery) recovery = true;
         }
         page.watchConnected = found;
+        page.watchInRecovery = recovery;
     }
 
     function reload() {
@@ -72,16 +80,19 @@ Kirigami.ScrollablePage {
             text: "Low-level tools for diagnostics and recovery. Use with care."
         }
 
-        // No watch → the watch-scoped rows below are disabled; say why instead of leaving them dead.
+        // No watch (or one in recovery) → some rows below are disabled; say why instead of leaving them dead.
         Kirigami.InlineMessage {
             visible: StoandlClient.daemonUp && !page.watchConnected
             Layout.fillWidth: true
             Layout.leftMargin: Kirigami.Units.largeSpacing
             Layout.rightMargin: Kirigami.Units.largeSpacing
             Layout.topMargin: Kirigami.Units.largeSpacing
-            type: Kirigami.MessageType.Information
-            text: "No watch is connected. These tools act on the connected watch, so they stay disabled "
-                  + "until one is."
+            type: page.watchInRecovery ? Kirigami.MessageType.Warning : Kirigami.MessageType.Information
+            text: page.watchInRecovery
+                  ? "The watch is in recovery (PRF). Flash a firmware to bring it back; the core dump and "
+                    + "watch logs work too, the other tools need its normal firmware."
+                  : "No watch is connected. These tools act on the connected watch, so they stay disabled "
+                    + "until one is."
         }
 
         FormCard.FormHeader {
@@ -95,7 +106,7 @@ Kirigami.ScrollablePage {
                 text: "Core dump"
                 description: "Save the watch's last crash dump to a file"
                 icon.name: "documentinfo-symbolic"
-                enabled: page.watchTools
+                enabled: page.recoveryTools
                 onClicked: {
                     var r = StoandlClient.getCoreDump();
                     page.toast(r.kind === "ok" ? ("Core dump saved: " + r.path)
@@ -108,7 +119,7 @@ Kirigami.ScrollablePage {
                 text: "Pull watch logs"
                 description: "Fetch the watch's on-device log to a file"
                 icon.name: "text-x-generic-symbolic"
-                enabled: page.watchTools
+                enabled: page.recoveryTools
                 onClicked: {
                     var r = StoandlClient.gatherLogs();
                     page.toast(r.kind === "ok" ? ("Logs saved: " + r.path) : ("Logs: " + (r.msg || r.kind)));
@@ -144,7 +155,7 @@ Kirigami.ScrollablePage {
                 text: "Flash firmware from file…"
                 description: "Install a local .pbz firmware bundle"
                 icon.name: "system-software-update-symbolic"
-                enabled: page.watchTools
+                enabled: page.recoveryTools
                 onClicked: fwFileDialog.open()
             }
         }

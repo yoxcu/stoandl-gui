@@ -109,6 +109,9 @@ pub struct WatchRow {
     pub battery: String,
     pub transport: String,
     pub connected: bool,
+    /// Connected in its recovery firmware (PRF): the daemon serves the firmware flash,
+    /// core dump and logs for it, and treats it as absent for everything else.
+    pub recovery: bool,
 }
 
 pub fn parse_watches(rows: &[String]) -> Vec<WatchRow> {
@@ -119,6 +122,7 @@ pub fn parse_watches(rows: &[String]) -> Vec<WatchRow> {
             let state = g(1);
             WatchRow {
                 connected: state == "connected",
+                recovery: state == "recovery",
                 name: g(0),
                 state,
                 battery: g(2),
@@ -1133,9 +1137,10 @@ mod tests {
             "Pebble Time\tconnected\t87\tble".to_string(),
             "Pebble 2\tdisconnected\t\t".to_string(),
             "Kickstarter\tdisconnected".to_string(), // trailing empties omitted
+            "Time 2\trecovery\t60\tble".to_string(),
         ];
         let w = parse_watches(&rows);
-        assert_eq!(w.len(), 3);
+        assert_eq!(w.len(), 4);
         assert!(w[0].connected);
         assert_eq!(w[0].battery, "87");
         assert_eq!(w[0].transport, "ble");
@@ -1143,6 +1148,8 @@ mod tests {
         assert_eq!(w[1].transport, "");
         assert!(!w[2].connected);
         assert_eq!(w[2].battery, ""); // missing field → ""
+        assert!(w[3].recovery && !w[3].connected); // PRF: reachable, but not "connected"
+        assert!(!w[0].recovery);
     }
 
     #[test]

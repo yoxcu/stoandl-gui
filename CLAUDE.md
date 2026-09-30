@@ -53,7 +53,9 @@ never a hard read), **`BackupSettingsPage`** (backup/restore/support CLI), and
 factory reset — core dump, watch logs, reboot-to-recovery, flash a local `.pbz`, write a test
 notification; they moved here out of the watch-details dialog, and since they all act on *the connected
 watch* — the daemon methods take no watch argument — those rows disable with an inline explanation when
-none is connected. Its Diagnostics group also pushes **`HeartbeatPage`**:
+none is connected. A watch in its recovery firmware lists as `recovery` in `ListWatches` (the `recovery`
+row flag; "In recovery" on the Watch tab): core dump, watch logs and the `.pbz` flash stay enabled for
+it — flashing is how it gets back — and the rest disable with a recovery note. Its Diagnostics group also pushes **`HeartbeatPage`**:
 the watch's hourly analytics record via `HeartbeatInfo`/`HeartbeatMetrics`, header facts + every metric
 grouped by name prefix; when the daemon reports `known=0` it shows *why* nothing is decoded instead of
 guessed values. It reads the daemon's stored record, but the daemon resolves the watch argument among
@@ -106,14 +108,21 @@ button press** — otherwise it is not covered. `SettingsPage` pushes all seven 
 own `smokeExercise()` (`WatchSettingsPage` round-trips a Quiet Time window, `DebugSettingsPage` pushes
 `HeartbeatPage`, which filters); `NotificationsPage` fires the send-test; `WatchPage` hands the pairing
 dialog the daemon's search states (the bare `pending:` and a pause note) and pushes `BatteryPage` even
-with no watch connected; with the daemon down the tick presses "Start daemon". This harness is how the
+with no watch connected; with the daemon down the tick presses "Start daemon". With
+`STOANDL_SMOKE_FLASH=1` the `WatchPage` hook also flashes a `.pbz` that doesn't exist, as Settings → Debug
+does (the mock walks any path, a real daemon refuses a missing file), and both front-ends print every
+normalised `firmwareStatus → <kind>` line — how the `prf` handling is checked end to end (run with a
+`STOANDL_SMOKE_MS` of ~2400 so the ~11 s walk ends before the quit, ~1900 to reach Settings → Debug while
+the watch is in recovery). This harness is how the
 delegate-binding scope trap below was caught, so it is worth keeping honest. The mock's
 `GetConfigSchema` is the daemon's `GUI_CONFIG_FIELDS` row for row, so the `general loaded N keys in G
 groups` line counts the real schema. Mock switches for the states a healthy
 mock never reaches: `MOCK_NO_WATCH=1` (paired, nothing connected — also the only way to walk "Pair new
 watch", since the daemon opens no window while a watch is connected), `MOCK_PAIR_PAUSE=bt|busy|slept`
 (each pairing window starts with that "can't discover" note), `MOCK_HB_UNKNOWN=1` (unverified heartbeat
-layout), `MOCK_FW_DOWNGRADE=1` (every sideload is a downgrade through recovery) and
+layout), `MOCK_FW_DOWNGRADE=1` (every sideload is a downgrade through recovery; the watch lists as
+`recovery` while it is flashed there, like on the daemon), `MOCK_FW_DOWNGRADE=drop` (the same, but the watch
+comes back on its normal firmware and the daemon reports the dropped downgrade as `failed:`) and
 `MOCK_FW_AUTOSTART=<s>` (a flash the GUI didn't start, seen only through `FirmwareProgress`).
 
 ## Hard rules

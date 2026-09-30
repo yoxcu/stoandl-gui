@@ -36,6 +36,10 @@ class StoandlClient : public QObject
     // `QT_QPA_PLATFORM=offscreen tools/run-with-mock.sh` proves QML -> D-Bus -> mock -> render
     // end-to-end and self-terminates. The GTK front-end has the same hook (window.rs).
     Q_PROPERTY(int smokeMs READ smokeMs CONSTANT)
+    // STOANDL_SMOKE_FLASH=1 (with STOANDL_SMOKE_MS): the Watch page's smoke hook starts a flash of a .pbz
+    // that doesn't exist, so the GUI-started firmware path runs end to end against the mock, which walks
+    // any path (MOCK_FW_DOWNGRADE=1|drop picks the walk). A real daemon refuses the missing file.
+    Q_PROPERTY(bool smokeFlash READ smokeFlash CONSTANT)
 
 public:
     explicit StoandlClient(QObject *parent = nullptr);
@@ -43,6 +47,7 @@ public:
     bool daemonUp() const { return m_daemonUp; }
     bool bluetoothOn() const { return m_bluetoothOn; }
     static int smokeMs() { return qEnvironmentVariableIntValue("STOANDL_SMOKE_MS"); }
+    static bool smokeFlash() { return smokeMs() > 0 && qEnvironmentVariableIntValue("STOANDL_SMOKE_FLASH") == 1; }
 
     // Parsed status string: "kind:tail", tail tab-split into fields.
     struct Status {

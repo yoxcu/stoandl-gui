@@ -268,10 +268,13 @@ mod imp {
         // The shell view stack (bound with the switcher), so a started firmware
         // flash can bring the Watch tab — which carries the progress card — forward.
         pub shell_stack: OnceCell<adw::ViewStack>,
-        // Debug sub-page: the watch-scoped rows + the "no watch" hint group, so a
-        // watches-changed can gate them live while the page is open.
+        // Debug sub-page: the watch-scoped rows (those that need the watch's normal
+        // firmware, and those a watch in recovery also answers) + the "no watch" hint,
+        // so a watches-changed can gate them live while the page is open.
         pub debug_watch_rows: RefCell<Vec<adw::ActionRow>>,
+        pub debug_recovery_rows: RefCell<Vec<adw::ActionRow>>,
         pub debug_hint: RefCell<Option<adw::PreferencesGroup>>,
+        pub debug_hint_row: RefCell<Option<adw::ActionRow>>,
         pub debug_bound: std::cell::Cell<bool>,
         // Sync sub-page (persisted so force-sync/toggle can refresh Last-sync).
         pub sync_group: RefCell<Option<adw::PreferencesGroup>>,
@@ -432,7 +435,9 @@ impl StoandlSettingsPage {
                     }
                     Some("debug") => {
                         imp.debug_watch_rows.borrow_mut().clear();
+                        imp.debug_recovery_rows.borrow_mut().clear();
                         imp.debug_hint.replace(None);
+                        imp.debug_hint_row.replace(None);
                     }
                     _ => {}
                 }
@@ -1081,7 +1086,9 @@ impl StoandlSettingsPage {
     /// an inline explanation), live via `watches-changed`. Most of these daemon
     /// methods take no watch argument; the heartbeat ones do, but the daemon
     /// resolves it among CONNECTED watches only, so with none they answer
-    /// `unknown:` even when records are stored.
+    /// `unknown:` even when records are stored. A watch in its recovery firmware
+    /// (ListWatches `recovery`) is reachable for the core dump, the logs and a
+    /// firmware flash (that is how it gets back), not for the rest.
     fn push_debug(&self) {
         let prefs = adw::PreferencesPage::builder()
             .description("Low-level tools for diagnostics and recovery. Use with care.")
@@ -1097,6 +1104,7 @@ impl StoandlSettingsPage {
         hint.add(&hint_row);
         prefs.add(&hint);
         self.imp().debug_hint.replace(Some(hint));
+        self.imp().debug_hint_row.replace(Some(hint_row));
 
         let diagnostics = adw::PreferencesGroup::builder().title("Diagnostics").build();
         let core_row = action_row(
@@ -1197,15 +1205,12 @@ impl StoandlSettingsPage {
         danger.add(&reset_row);
         prefs.add(&danger);
 
-        self.imp().debug_watch_rows.replace(vec![
-            core_row,
-            logs_row,
-            hb_row,
-            recovery_row,
-            flash_row,
-            notif_row,
-            reset_row,
-        ]);
+        self.imp()
+            .debug_watch_rows
+            .replace(vec![hb_row, recovery_row, notif_row, reset_row]);
+        self.imp()
+            .debug_recovery_rows
+            .replace(vec![core_row, logs_row, flash_row]);
         // Connect/disconnect while the page is open must re-gate the rows. Bound
         // once (the page can be pushed again after a pop).
         if !self.imp().debug_bound.replace(true) {
@@ -1221,19 +1226,42 @@ impl StoandlSettingsPage {
         self.nav().push(&np);
     }
 
-    /// Enable the watch-scoped Debug rows only with a connected watch, and show
-    /// the inline explanation when there is none. A no-op once the page is popped
-    /// (its handles are dropped in the `popped` handler).
+    /// Enable the watch-scoped Debug rows only with a connected watch (the core
+    /// dump, logs and flash rows also with one in recovery), and show the inline
+    /// explanation when there is none. A no-op once the page is popped (its handles
+    /// are dropped in the `popped` handler).
     fn update_debug_gate(&self) {
         let imp = self.imp();
-        let connected = self.client().connected_watch().is_some();
+        let client = self.client();
+        let connected = client.connected_watch().is_some();
+        let recovery = client.watch_in_recovery();
         for row in imp.debug_watch_rows.borrow().iter() {
             row.set_sensitive(connected);
+        }
+        for row in imp.debug_recovery_rows.borrow().iter() {
+            row.set_sensitive(connected || recovery);
         }
         if let Some(hint) = imp.debug_hint.borrow().as_ref() {
             hint.set_visible(!connected);
         }
-        dbg_smoke(&format!("settings: debug watch tools enabled={connected}"));
+        if let Some(row) = imp.debug_hint_row.borrow().as_ref() {
+            if recovery {
+                row.set_title("Watch in recovery");
+                row.set_subtitle(
+                    "It runs its recovery firmware (PRF). Flash a firmware to bring it back; the \
+                     core dump and watch logs work too, the other tools need its normal firmware.",
+                );
+            } else {
+                row.set_title("No watch connected");
+                row.set_subtitle(
+                    "These tools act on the connected watch, so they stay disabled until one is.",
+                );
+            }
+        }
+        dbg_smoke(&format!(
+            "settings: debug watch tools enabled={connected} recovery tools enabled={}",
+            connected || recovery
+        ));
     }
 
     /// Bring the Watch tab forward — its flash-progress card is the live readout

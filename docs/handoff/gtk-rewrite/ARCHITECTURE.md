@@ -79,7 +79,9 @@ the fallback beneath the 7 signals — see the "Hard rules" in `../../CLAUDE.md`
     write-only; firmware success = `reboot` **or** a `notready` seen *after*
     activity, except that a downgrade's `prf:<version>` (reboot into recovery,
     nothing flashed yet) restarts that tracking and is held across the disconnect
-    until the flash resumes from recovery; extension run-state override;
+    until the flash resumes from recovery; a `ListWatches` state `recovery` (a watch
+    connected in its recovery firmware: firmware flash, core dump and logs only,
+    `WatchRow.recovery`); extension run-state override;
     `NotifSetMuteAll` has no getter (derive "all muted" from per-app list).
 
 Return types on the wire are only `s`, `b`, `as`, void → trivial `glib::Variant`

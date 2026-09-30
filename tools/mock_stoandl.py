@@ -48,8 +48,12 @@ PAIR_PAUSE_NOTES = {
              "(e.g. the screen on) until the watch is found.",
 }
 
-# The older firmware MOCK_FW_DOWNGRADE=1 pretends every sideloaded .pbz carries.
+# The older firmware MOCK_FW_DOWNGRADE=1 pretends every sideloaded .pbz carries. MOCK_FW_DOWNGRADE=drop
+# is the same downgrade, but the watch comes back on its normal firmware instead of recovery, which the
+# daemon reports as failed: (FirmwareControl's dropped downgrade).
 DOWNGRADE_VERSION = "4.4.1"
+DOWNGRADE_DROPPED = (f"failed:The watch came back on its normal firmware without the downgrade to "
+                     f"{DOWNGRADE_VERSION}; sideload the .pbz again to retry")
 
 # PebbleOS changelog (HOOK: appended to CheckFirmware so the GUI's "What's new" works).
 CHANGELOG_URL = "https://ndocs.repebble.com/PebbleOS-Changelog-25efbb55ea84801da04bfcf73c9346e1"
@@ -541,6 +545,14 @@ class MockStoandl(dbus.service.Object):
                 return name
         return None
 
+    def _reachable_name(self):
+        """The watch the daemon's firmware, core-dump and logs methods act on: a connected one, or
+        one connected in its recovery firmware (ListWatches `recovery`), which nothing else serves."""
+        for name, w in self.watches.items():
+            if w["state"] in ("connected", "recovery"):
+                return name
+        return None
+
     def _resolve_connected(self, query):
         """The daemon's resolveWatch() for the battery/heartbeat methods: a blank query is the connected
         watch; otherwise a CONNECTED watch matching by exact-then-substring name. None when no connected
@@ -569,9 +581,11 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def ListWatches(self):
-        # HOOK #4: `transport` (ble|classic, empty when disconnected) appended.
-        return [rec(n, w["state"], w["battery"],
-                    w["transport"] if w["state"] == "connected" else "")
+        # HOOK #4: `transport` (ble|classic, empty when disconnected) appended. State `recovery` is a
+        # watch connected in its recovery firmware; battery and transport are known for it too.
+        live = ("connected", "recovery")
+        return [rec(n, w["state"], w["battery"] if w["state"] in live else "",
+                    w["transport"] if w["state"] in live else "")
                 for n, w in self.watches.items()]
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
@@ -1770,8 +1784,10 @@ class MockStoandl(dbus.service.Object):
     def SideloadFirmware(self, path):
         if not path:
             return "error:empty path"
-        # MOCK_FW_DOWNGRADE=1: every sideload is an older .pbz on a dual-slot watch.
-        self._start_fw_push(downgrade=os.environ.get("MOCK_FW_DOWNGRADE") == "1")
+        if self._reachable_name() is None:
+            return "notready:No watch connected"
+        # MOCK_FW_DOWNGRADE=1|drop: every sideload is an older .pbz on a dual-slot watch.
+        self._start_fw_push(downgrade=os.environ.get("MOCK_FW_DOWNGRADE", ""))
         return f"ok:Flashing {path.rsplit('/', 1)[-1]}"
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
@@ -1870,7 +1886,7 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def GetCoreDump(self, path):
-        if self._connected_name() is None:
+        if self._reachable_name() is None:
             return "notready:"
         try:
             with open(path, "wb") as f:
@@ -1955,12 +1971,15 @@ class MockStoandl(dbus.service.Object):
         declares success at the first disconnect is wrong by one whole flash.
         """
         flash = [("waiting:", None)] + [(f"inprogress:{p}", None) for p in (20, 40, 60, 80, 100)]
-        if not downgrade:
+        if downgrade not in ("1", "drop"):
             return [("downloading:core-fw.pbz", None)] * 2 + flash + [("reboot:", "end")]
         nowatch = "notready:No watch connected"
-        return ([("waiting:", None)] + [(f"prf:{DOWNGRADE_VERSION}", None)] * 2
-                + [(nowatch, "drop")] + [(nowatch, None)] * 3
-                + [("idle:", "back")] + flash + [("reboot:", "end")])
+        head = ([("waiting:", None)] + [(f"prf:{DOWNGRADE_VERSION}", None)] * 2
+                + [(nowatch, "drop")] + [(nowatch, None)] * 3)
+        if downgrade == "drop":
+            # Back on normal firmware: the daemon drops the pending .pbz and says so.
+            return head + [(DOWNGRADE_DROPPED, "end")]
+        return head + [("idle:", "back")] + flash + [("reboot:", "end")]
 
     def _fw_tick(self, op):
         """Drive a firmware op forward one step and PUSH the phase via FirmwareProgress.
@@ -1982,10 +2001,12 @@ class MockStoandl(dbus.service.Object):
                 self.watches[self.fw["watch"]]["state"] = "disconnected"
             self.WatchesChanged()
         elif effect == "back":
-            # Reconnected in recovery; the daemon flashes the pending .pbz from here.
+            # Reconnected in recovery; the daemon flashes the pending .pbz from here. The real daemon
+            # lists such a watch as `recovery`, never `connected` (ConnectedPebbleDeviceInRecovery is
+            # not a ConnectedPebbleDevice), and only the firmware/core-dump/logs methods serve it.
             self.fw["prf_pending"] = False
             if self.fw["watch"]:
-                self.watches[self.fw["watch"]]["state"] = "connected"
+                self.watches[self.fw["watch"]]["state"] = "recovery"
             self.WatchesChanged()
         # Same (phase, percent, detail) split as the daemon's startSignalEmitters() parse(); its
         # status flow says a bare "notready:" when the watch is gone.
@@ -1995,12 +2016,16 @@ class MockStoandl(dbus.service.Object):
         else:
             self.FirmwareProgress(phase, -1, "" if phase == "notready" else rest)
         if effect == "end":
+            # The watch comes back on its normal firmware: after the post-flash reboot, or, with
+            # MOCK_FW_DOWNGRADE=drop, instead of recovery.
+            if self.fw["watch"]:
+                self.watches[self.fw["watch"]]["state"] = "connected"
             self.fw = None
             self.WatchesChanged()                     # link drops → list state changes
             return False
         return True
 
-    def _start_fw_push(self, downgrade=False):
+    def _start_fw_push(self, downgrade=""):
         self.fw = {"steps": self._fw_steps(downgrade), "step": -1, "prf_pending": False, "watch": None}
         GLib.timeout_add(700, self._fw_tick, self.fw)  # ~match the CLI/GUI firmware poll cadence
 
@@ -2041,11 +2066,11 @@ def main():
     print(f"[mock] {BUS_NAME} owning {OBJ_PATH} ({IFACE}) — ready", flush=True)
     # MOCK_FW_AUTOSTART=<seconds>: start a flash that long after startup, as if the CLI had kicked
     # it off — the GUI then only sees FirmwareProgress signals, never its own Update/Sideload call.
-    # With MOCK_FW_DOWNGRADE=1 it is a downgrade through recovery (see _fw_steps).
+    # With MOCK_FW_DOWNGRADE=1 (or drop) it is a downgrade through recovery (see _fw_steps).
     delay = os.environ.get("MOCK_FW_AUTOSTART")
     if delay:
         GLib.timeout_add(int(float(delay) * 1000), lambda: mock._start_fw_push(
-            downgrade=os.environ.get("MOCK_FW_DOWNGRADE") == "1") and False)
+            downgrade=os.environ.get("MOCK_FW_DOWNGRADE", "")) and False)
     GLib.MainLoop().run()
 
 

@@ -491,19 +491,24 @@ impl StoandlWatchPage {
                     s.push_str(&format!(" · {}%", w.battery));
                 }
                 s
+            } else if w.recovery {
+                // Connected in its recovery firmware: only for a firmware flash
+                // (Settings → Debug), a core dump and its logs.
+                "In recovery (PRF) — flash a firmware to bring it back".to_string()
             } else if connecting {
                 "Connecting…".to_string()
             } else {
                 "disconnected".to_string()
             };
+            let live = w.connected || w.recovery || connecting;
             let row = adw::ActionRow::builder()
                 .title(&esc(&w.name))
                 .subtitle(&esc(&subtitle))
-                .activatable(!w.connected && !connecting)
+                .activatable(!live)
                 .build();
 
             let icon = gtk::Image::from_icon_name("preferences-system-time-symbolic");
-            if !w.connected && !connecting {
+            if !live {
                 icon.add_css_class("dim-label");
             }
             row.add_prefix(&icon);
@@ -513,6 +518,13 @@ impl StoandlWatchPage {
                 pill.set_valign(gtk::Align::Center);
                 pill.add_css_class("status-chip");
                 pill.add_css_class("success");
+                row.add_suffix(&pill);
+            } else if w.recovery {
+                // Warning: unlike "connecting", recovery needs the user (a flash).
+                let pill = gtk::Label::new(Some("recovery"));
+                pill.set_valign(gtk::Align::Center);
+                pill.add_css_class("status-chip");
+                pill.add_css_class("warning");
                 row.add_suffix(&pill);
             } else if connecting {
                 // Accent (neutral emphasis), not warning/amber — "connecting" is a
@@ -546,7 +558,7 @@ impl StoandlWatchPage {
             ));
             row.add_suffix(&forget);
 
-            if !w.connected && !connecting {
+            if !live {
                 let name = w.name.clone();
                 row.connect_activated(glib::clone!(
                     #[weak(rename_to = page)]
@@ -908,6 +920,17 @@ impl StoandlWatchPage {
             bp.smoke_exercise(); // also hit the multi-day draw path
         }
         dbg_smoke("exercised details/language/battery pages");
+        // STOANDL_SMOKE_FLASH=1: start a flash the way Settings → Debug does (SideloadFirmware, which
+        // arms the firmware poll), so the phase handling — the prf walk with MOCK_FW_DOWNGRADE=1 or
+        // drop — runs end to end. The path doesn't exist: the mock walks any path, a real daemon
+        // refuses it.
+        if std::env::var("STOANDL_SMOKE_FLASH").as_deref() == Ok("1") {
+            let client = self.client();
+            glib::spawn_future_local(async move {
+                let s = client.sideload_firmware("/nonexistent/stoandl-smoke.pbz").await;
+                dbg_smoke(&format!("sideload {}", s.kind));
+            });
+        }
     }
 
     // --- battery insights (pushed navigation page) ----------------------------
