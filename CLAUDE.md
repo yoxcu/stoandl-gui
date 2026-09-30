@@ -108,7 +108,8 @@ button press** — otherwise it is not covered. `SettingsPage` pushes all seven 
 own `smokeExercise()` (`WatchSettingsPage` round-trips a Quiet Time window, `DebugSettingsPage` pushes
 `HeartbeatPage`, which filters); `NotificationsPage` fires the send-test; `WatchPage` hands the pairing
 dialog the daemon's search states (the bare `pending:` and a pause note) and pushes `BatteryPage` even
-with no watch connected; with the daemon down the tick presses "Start daemon". With
+with no watch connected; with the daemon down the tick presses "Start daemon". The Quiet Time round trip
+writes the watch's own window back afterwards (the hook also runs against a real daemon). With
 `STOANDL_SMOKE_FLASH=1` the `WatchPage` hook also flashes a `.pbz` that doesn't exist, as Settings → Debug
 does (the mock walks any path, a real daemon refuses a missing file), and both front-ends print every
 normalised `firmwareStatus → <kind>` line — how the `prf` handling is checked end to end (run with a

@@ -36,12 +36,25 @@ Kirigami.ScrollablePage {
     }
 
     // Headless smoke (STOANDL_SMOKE_MS): run the schedule validator both ways and round-trip a
-    // window through SetWatchPref, so the re-fetched value re-renders the schedule delegate.
+    // window through SetWatchPref, so the re-fetched value re-renders the schedule delegate. The hook
+    // also runs against a real daemon, so it writes the watch's own window back afterwards (a pinned
+    // `watch.dndWeekdaySchedule` would otherwise be rewritten in stoandl.conf too), and writes nothing
+    // without a valid one to restore.
     function smokeExercise() {
         var bad = StoandlClient.normalizeSchedule("25:00-07:00");
         var good = StoandlClient.normalizeSchedule(" 7:5-22:30 ");
-        page.applyPref("dndWeekdaySchedule", good);
         console.log("stoandl-smoke: schedule validator bad='" + bad + "' good='" + good + "'");
+        var orig = "";
+        for (var i = 0; i < page.watchPrefs.length; ++i)
+            if (page.watchPrefs[i].id === "dndWeekdaySchedule")
+                orig = StoandlClient.normalizeSchedule(page.watchPrefs[i].current);
+        if (orig === "" || good === "") {
+            console.log("stoandl-smoke: schedule round-trip skipped: no schedule to restore");
+            return;
+        }
+        page.applyPref("dndWeekdaySchedule", good);
+        page.applyPref("dndWeekdaySchedule", orig);
+        console.log("stoandl-smoke: schedule round-trip restored " + orig);
     }
 
     function applyPref(id, value) {

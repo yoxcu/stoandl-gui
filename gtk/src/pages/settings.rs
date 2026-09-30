@@ -2317,6 +2317,42 @@ impl StoandlSettingsPage {
 
     /// Headless smoke hook: push each sub-page so it builds/loads — including
     /// Debug, which now carries the watch-scoped diagnostic/recovery tools.
+    /// Write a test Quiet Time window and then the watch's own one back, in one
+    /// future so the two writes can't reorder. The hook also runs against a real
+    /// daemon, where it must not leave the user's schedule changed (a pinned
+    /// `watch.dndWeekdaySchedule` would even be rewritten in stoandl.conf). Without
+    /// a valid original to restore, nothing is written.
+    fn smoke_schedule_round_trip(&self, test: String) {
+        const ID: &str = "dndWeekdaySchedule";
+        let client = self.client();
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            client,
+            async move {
+                let orig = client
+                    .list_watch_prefs()
+                    .await
+                    .into_iter()
+                    .find(|p| p.id == ID)
+                    .and_then(|p| normalize_schedule(&p.current));
+                let Some(orig) = orig else {
+                    dbg_smoke("schedule round-trip skipped: no schedule to restore");
+                    return;
+                };
+                let set = client.set_watch_pref(ID, &test).await;
+                page.reload_watch_prefs();
+                let back = client.set_watch_pref(ID, &orig).await;
+                dbg_smoke(&format!(
+                    "schedule round-trip set={} restored {orig} = {}",
+                    set.kind, back.kind
+                ));
+                page.reload_watch_prefs();
+            }
+        ));
+    }
+
     pub fn smoke_exercise(&self) {
         if std::env::var_os("STOANDL_SMOKE_MS").is_none() {
             return;
@@ -2329,7 +2365,9 @@ impl StoandlSettingsPage {
         // Round-trip a Quiet Time window: validator both ways, then SetWatchPref + rebuild.
         let (bad, good) = (normalize_schedule("25:00-07:00"), normalize_schedule(" 7:5-22:30 "));
         dbg_smoke(&format!("schedule validator bad={bad:?} good={good:?}"));
-        self.apply_pref("dndWeekdaySchedule", good.as_deref().unwrap_or_default());
+        if let Some(good) = good {
+            self.smoke_schedule_round_trip(good);
+        }
         self.push_calendars();
         self.push_debug();
         self.push_heartbeat();
