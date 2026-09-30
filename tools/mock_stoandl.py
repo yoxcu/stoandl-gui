@@ -82,7 +82,9 @@ def _conn_params(v):
     except ValueError:
         return "expected min_ms,max_ms,latency,supervision_ms, e.g. 500,520,0,6000", None
     ms = lambda x: str(int(x)) if x == int(x) else str(x)
-    if lo < 7.5:
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        err = "intervals must be numbers"   # float("NaN") passes every check below
+    elif lo < 7.5:
         err = f"min interval {lo}ms < 7.5ms"
     elif hi < lo:
         err = f"max interval {hi}ms < min {lo}ms"
@@ -308,12 +310,14 @@ class MockStoandl(dbus.service.Object):
              "allowed": "RRGGBB|Red|Orange|Yellow|Lime|Green|Cyan|Blue|Purple|Magenta|Pink|Warm White|Cool White",
              "flags": "", "name": "Backlight Color",
              "description": "LED color used when the backlight is on (color watches only)"},
-            # libpebble3 has no description for textStyle; the daemon appends its fw 4.38.1 note.
+            # libpebble3 has no description for textStyle; the daemon appends its per-firmware note.
             {"id": "textStyle", "type": "enum", "current": "Default", "default": "Default",
              "allowed": "Smaller|Default|Larger", "flags": "", "name": "Text Size",
-             "description": "From PebbleOS 4.38.1 the watch keeps its own system and notification text "
-                            "sizes, which the phone can't set: this only seeds them once, so set the size "
-                            "on the watch."},
+             "description": "What this sizes depends on the firmware: up to PebbleOS 4.36 notifications "
+                            "and the timeline, on 4.37 the whole system UI, on 4.38.0 the system UI but not "
+                            "notifications (they have their own size). From 4.38.1 it only seeds the "
+                            "notification size once, on a watch that never stored one. The phone can't set "
+                            "the newer sizes: change them on the watch."},
             {"id": "lightAmbientThreshold", "type": "number", "current": "200", "default": "150",
              "allowed": "1..4096", "flags": "debug", "name": "Ambient Light Threshold",
              "description": "How low ambient light must be to enable the backlight"},
