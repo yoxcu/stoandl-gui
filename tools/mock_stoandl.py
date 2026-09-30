@@ -412,6 +412,7 @@ class MockStoandl(dbus.service.Object):
                 ("notification.default_mute", "combo", "Default mute for new apps", "Never,Always,Weekdays,Weekends", "How a newly-seen app is muted until you change it", "Notifications", "live", "", "", "", ""),
                 ("notification.sync_to_watch", "toggle", "Sync the app list to the watch", "", "Push the per-app list and mute states to the watch's BlobDB. Current firmware surfaces no per-app notification UI, so this normally changes nothing — mute is enforced host-side.", "Notifications", "restart", "", "", "", ""),
                 ("notification.catch_up_minutes", "int", "Catch up after a disconnect", "", "A reconnecting watch also gets the notifications it missed that are at most this old (never from before the daemon started or the watch was paired). 0 = only ones posted after it reconnected.", "Notifications", "restart", "0", "1440", "min", ""),
+                ("notification.canned_replies", "list", "Canned replies", "", "The watch's Reply list for desktop notifications that take a reply (Plasma with the InvokeReply patch) and for extensions without their own list. Empty = Ok, Yes, No, Call me, Call you later. Whole items up to 512 bytes in total are sent.", "Notifications", "live", "", "", "", "Ok,Yes,No,Call me,Call you later"),
                 # --- stoandl alerts ---
                 ("alerts.enabled", "toggle", "Alerts from stoandl", "", "Master switch for the desktop alerts stoandl raises about itself (pairing, Bluetooth, extensions). Forwarded app notifications are unaffected.", "stoandl alerts", "live", "", "", "", ""),
                 ("alerts.pairing", "toggle", "Pairing problems", "", "Alert when a watch keeps dropping the link (unpaired on the watch) or its pairing was removed on this computer — each with the action that fixes it", "stoandl alerts", "live", "", "", "", ""),
@@ -477,6 +478,7 @@ class MockStoandl(dbus.service.Object):
         self.config = {
             "notification.per_app": "true", "notification.default_mute": "Never",
             "notification.sync_to_watch": "false", "notification.catch_up_minutes": "10",
+            "notification.canned_replies": "Ok,Yes,No,Call me,Call you later",
             "alerts.enabled": "true", "alerts.pairing": "true", "alerts.bluetooth": "true",
             "alerts.extensions": "true",
             "call.dialer_apps": "spacebar,calls", "contacts.vcard_paths": "",
