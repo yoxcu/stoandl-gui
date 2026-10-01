@@ -154,7 +154,7 @@ Kirigami.ScrollablePage {
         }
 
         // --- Bluetooth-off state (daemon up, adapter off / rfkill / airplane) ---
-        // The daemon detects this (adapter Powered + org.bluez.GattManager1) and reconnects on its
+        // The daemon detects this (BlueZ: no powered adapter) and reconnects on its
         // own when BT returns; we just surface it instead of an empty/"pair a watch" screen.
         Kirigami.InlineMessage {
             visible: StoandlClient.daemonUp && !StoandlClient.bluetoothOn

@@ -419,8 +419,8 @@ class MockStoandl(dbus.service.Object):
                 ("alerts.bluetooth", "toggle", "Bluetooth blocked", "", "Alert when another app's Bluetooth scan is monopolising the adapter and blocking reconnects", "stoandl alerts", "live", "", "", "", ""),
                 ("alerts.extensions", "toggle", "Extension problems", "", "Alert when an installed extension needs configuring before it can start", "stoandl alerts", "live", "", "", "", ""),
                 # --- Calls & contacts ---
-                ("call.dialer_apps", "list", "Dialer apps", "", "Notifications from these apps are suppressed (the watch's native call screen replaces them) and their title is used as a fallback caller name", "Calls & contacts", "live", "", "", "", "spacebar,calls"),
-                ("contacts.vcard_paths", "list", "Contact files", "", "vCard files or directories scanned to turn an incoming number into a name. No egress.", "Calls & contacts", "live", "", "", "", "~/.local/share/contacts"),
+                ("call.dialer_apps", "list", "Dialer apps", "", "Apps, by name or desktop-entry id (exact match), whose notifications are held back while a call is up (the watch's native call screen replaces them); their title is a fallback caller name. Their other notifications, such as Missed call, still reach the watch.", "Calls & contacts", "live", "", "", "", "calls"),
+                ("contacts.vcard_paths", "list", "Contact files", "", "vCard files (.vcf, .vcard) or folders, searched recursively, used to turn an incoming number into a name. Default: ~/.local/share/kpeoplevcard (Plasma Mobile's phonebook). No egress.", "Calls & contacts", "live", "", "", "", "~/.local/share/kpeoplevcard"),
                 # --- Weather ---
                 ("weather.locations", "list", "Locations", "", "Fixed locations to fetch weather for, as Name:lat:lon entries", "Weather", "live", "", "", "", "Berlin:52.52:13.405"),
                 ("weather.location_source", "combo", "Extra locations from", "Manual,GNOME,Command", "Where additional fixed locations come from besides the list above", "Weather", "live", "", "", "", ""),
@@ -477,11 +477,11 @@ class MockStoandl(dbus.service.Object):
         ]
         self.config = {
             "notification.per_app": "true", "notification.default_mute": "Never",
-            "notification.sync_to_watch": "false", "notification.catch_up_minutes": "10",
+            "notification.sync_to_watch": "false", "notification.catch_up_minutes": "60",
             "notification.canned_replies": "Ok,Yes,No,Call me,Call you later",
             "alerts.enabled": "true", "alerts.pairing": "true", "alerts.bluetooth": "true",
             "alerts.extensions": "true",
-            "call.dialer_apps": "spacebar,calls", "contacts.vcard_paths": "",
+            "call.dialer_apps": "calls", "contacts.vcard_paths": "~/.local/share/kpeoplevcard",
             "weather.locations": "Berlin:52.52:13.405", "weather.location_source": "Manual",
             "weather.location_command": "", "weather.interval": "30",
             "weather.gps": "false", "weather.gps_name": "Current location",
