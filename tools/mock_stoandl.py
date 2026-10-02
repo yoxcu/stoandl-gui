@@ -71,7 +71,7 @@ CONFIG_COLS = ("key", "type", "label", "options", "desc", "group", "apply",
 
 def _conn_params(v):
     """The daemon's StoandlConfig.decodeConnParams + BleConnParamSet.validate: `(error, normalised)`.
-    Empty or off means "the phone manages them" and reads back as ""."""
+    Empty or off means "the watch manages them" and reads back as ""."""
     if v == "" or v.lower() in ("off", "false", "no", "none"):
         return None, ""
     parts = [p.strip() for p in v.split(",")]
@@ -464,7 +464,8 @@ class MockStoandl(dbus.service.Object):
                 ("power.sleep_guard", "toggle", "Sleep guard", "", "Hold a logind delay lock so a suspend waits until watch traffic in flight (the notification a push wake produced) has reached the watch. Never makes a suspend fail; harmless on a desktop.", "Deep sleep", "restart", "", "", "", ""),
                 ("power.sleep_guard_max_ms", "int", "Longest hold per suspend", "", "How long a suspend waits at most for pending watch traffic (logind's own cap is 5 s)", "Deep sleep", "restart", "0", "4500", "ms", ""),
                 ("power.pause_datalog_screen_off", "toggle", "Pause datalog while the display is off", "", "The watch holds back its health data (flushed every 15 min) until the display is on again: fewer wakes on a phone that keeps the watch link across suspend", "Deep sleep", "live", "", "", "", ""),
-                ("ble.conn_params", "text", "Idle connection parameters", "", "min_ms,max_ms,latency,supervision_ms the watch keeps while idle; empty or off = the phone manages them. Needs MaxConnectionInterval in BlueZ's main.conf: read docs/deep-sleep.md first.", "Deep sleep", "restart", "", "", "", "500,520,0,6000"),
+                ("power.quiet_time_link_off", "toggle", "Pause watch connection during Quiet Time", "", "Saves phone battery at night. Notifications that arrive during Quiet Time are sent to the watch when it ends. If calls may interrupt Quiet Time, the connection stays on.", "Deep sleep", "live", "", "", "", ""),
+                ("ble.conn_params", "text", "Idle connection parameters", "", "min_ms,max_ms,latency,supervision_ms the watch keeps while idle; empty or off = the watch manages them. Needs MaxConnectionInterval in BlueZ's main.conf: read docs/deep-sleep.md first.", "Deep sleep", "restart", "", "", "", "500,520,0,6000"),
                 ("ble.conn_params_fast", "text", "Fast connection parameters", "", "Optional set for the connect handshake and bulk transfers; only used with the idle set. Needs the K5 kernel fix (docs/deep-sleep.md).", "Deep sleep", "restart", "", "", "", "15,15,0,6000"),
                 # --- Do Not Disturb ---
                 ("dnd.sync", "combo", "Do Not Disturb sync", "Off,To watch,To host,Both", "Mirror desktop Do Not Disturb and the watch's Quiet Time", "Do Not Disturb", "live", "", "", "", ""),
@@ -500,6 +501,7 @@ class MockStoandl(dbus.service.Object):
             "classic.discover": "true", "connection.autoswitch": "true",
             "power.sleep_guard": "true", "power.sleep_guard_max_ms": "3000",
             "power.pause_datalog_screen_off": "false",
+            "power.quiet_time_link_off": "false",
             "ble.conn_params": "", "ble.conn_params_fast": "",
             "dnd.sync": "Off", "geolocation.enabled": "false",
             "datalog.enabled": "false", "developer.autostart": "false",
