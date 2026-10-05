@@ -69,40 +69,6 @@ CONFIG_COLS = ("key", "type", "label", "options", "desc", "group", "apply",
                "min", "max", "unit", "placeholder")
 
 
-def _conn_params(v):
-    """The daemon's StoandlConfig.decodeConnParams + BleConnParamSet.validate: `(error, normalised)`.
-    Empty or off means "the watch manages them" and reads back as ""."""
-    if v == "" or v.lower() in ("off", "false", "no", "none"):
-        return None, ""
-    parts = [p.strip() for p in v.split(",")]
-    try:
-        if len(parts) != 4:
-            raise ValueError
-        lo, hi, lat, sup = float(parts[0]), float(parts[1]), int(parts[2]), int(parts[3])
-    except ValueError:
-        return "expected min_ms,max_ms,latency,supervision_ms, e.g. 500,520,0,6000", None
-    ms = lambda x: str(int(x)) if x == int(x) else str(x)
-    if not (math.isfinite(lo) and math.isfinite(hi)):
-        err = "intervals must be numbers"   # float("NaN") passes every check below
-    elif lo < 7.5:
-        err = f"min interval {lo}ms < 7.5ms"
-    elif hi < lo:
-        err = f"max interval {hi}ms < min {lo}ms"
-    elif hi > 4000.0:
-        err = f"max interval {hi}ms > 4000ms"
-    elif (hi - lo) / 1.25 > 255:
-        err = "max - min > 318.75ms (does not fit the watch's one-byte delta)"
-    elif not 0 <= lat <= 255:
-        err = f"slave latency {lat} outside 0..255"
-    elif not 100 <= sup <= 7650:
-        err = f"supervision {sup}ms outside 100..7650ms"
-    elif sup <= 2 * (1 + lat) * hi:
-        err = f"supervision {sup}ms must exceed 2 x (1 + latency) x max interval"
-    else:
-        return None, f"{ms(lo)},{ms(hi)},{lat},{sup}"
-    return err, None
-
-
 def _weather_locations(v):
     """The daemon's StoandlConfig.parseWeatherLocations: `(error, normalised)`. GetConfig reads each
     entry back with lat/lon printed like a Kotlin Double ("Home:48:11" -> "Home:48.0:11.0")."""
@@ -141,8 +107,6 @@ CONFIG_CHECKS = {
     "weather.locations": _weather_locations,
     "firmware.github_repo": lambda v: (_github_repo_err(v), v),
     "firmware.cohorts_url": lambda v: (_http_url_err(v), v),
-    "ble.conn_params": _conn_params,
-    "ble.conn_params_fast": _conn_params,
 }
 
 
@@ -462,11 +426,9 @@ class MockStoandl(dbus.service.Object):
                 ("connection.autoswitch", "toggle", "Auto-switch between watches", "", "With 2+ paired watches, connect whichever is in range — preferring the most recently used", "Connection", "live", "", "", "", ""),
                 # --- Deep sleep ---
                 ("power.sleep_guard", "toggle", "Sleep guard", "", "Hold a logind delay lock so a suspend waits until watch traffic in flight (the notification a push wake produced) has reached the watch. Never makes a suspend fail; harmless on a desktop.", "Deep sleep", "restart", "", "", "", ""),
-                ("power.sleep_guard_max_ms", "int", "Longest hold per suspend", "", "How long a suspend waits at most for pending watch traffic (logind's own cap is 5 s)", "Deep sleep", "restart", "0", "4500", "ms", ""),
+                ("power.sleep_guard_max_ms", "int", "Longest hold per suspend", "", "How long a suspend waits at most for pending watch traffic (logind's own cap is 5 s). 0 doesn't wait; stoandl still stops its own discovery before every suspend.", "Deep sleep", "restart", "0", "4500", "ms", ""),
                 ("power.pause_datalog_screen_off", "toggle", "Pause datalog while the display is off", "", "The watch holds back its health data (flushed every 15 min) until the display is on again: fewer wakes on a phone that keeps the watch link across suspend", "Deep sleep", "live", "", "", "", ""),
                 ("power.quiet_time_link_off", "toggle", "Pause watch connection during Quiet Time", "", "Saves phone battery at night. Notifications that arrive during Quiet Time are sent to the watch when it ends. If calls may interrupt Quiet Time, the connection stays on.", "Deep sleep", "live", "", "", "", ""),
-                ("ble.conn_params", "text", "Idle connection parameters", "", "min_ms,max_ms,latency,supervision_ms the watch keeps while idle; empty or off = the watch manages them. Needs MaxConnectionInterval in BlueZ's main.conf: read docs/deep-sleep.md first.", "Deep sleep", "restart", "", "", "", "500,520,0,6000"),
-                ("ble.conn_params_fast", "text", "Fast connection parameters", "", "Optional set for the connect handshake and bulk transfers; only used with the idle set. Needs the K5 kernel fix (docs/deep-sleep.md).", "Deep sleep", "restart", "", "", "", "15,15,0,6000"),
                 # --- Do Not Disturb ---
                 ("dnd.sync", "combo", "Do Not Disturb sync", "Off,To watch,To host,Both", "Mirror desktop Do Not Disturb and the watch's Quiet Time", "Do Not Disturb", "live", "", "", "", ""),
                 # --- Privacy ---
@@ -502,7 +464,6 @@ class MockStoandl(dbus.service.Object):
             "power.sleep_guard": "true", "power.sleep_guard_max_ms": "3000",
             "power.pause_datalog_screen_off": "false",
             "power.quiet_time_link_off": "false",
-            "ble.conn_params": "", "ble.conn_params_fast": "",
             "dnd.sync": "Off", "geolocation.enabled": "false",
             "datalog.enabled": "false", "developer.autostart": "false",
         }
@@ -1757,7 +1718,7 @@ class MockStoandl(dbus.service.Object):
             err, readback = check(v) if check else (None, v)
             if err:
                 return f"error:{key}: {err}"
-            token, v = v, readback   # e.g. ble.conn_params "off" is written as-is and reads back as ""
+            token, v = v, readback   # e.g. weather.locations "Home:48:11" reads back as "Home:48.0:11.0"
         self.config[key] = v
         tail = " (restart stoandl to apply)" if field["apply"] == "restart" else ""
         return f"ok:{key} = {token if token is not None else v}{tail}"
