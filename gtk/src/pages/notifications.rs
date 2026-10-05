@@ -1,8 +1,11 @@
 //! The Notifications tab (`StoandlNotificationsPage`) — port of
 //! `qml/NotificationsPage.qml`. Master forward toggle (via sync-status) + a
-//! temporary mute, a per-app list (each row opens a deeper dialog for on/off,
-//! temp-mute, vibration + icon), and regex allow/block filters. No change
-//! signals — every mutation re-fetches (reload).
+//! temporary mute + where the app name goes on the watch (`notification.app_name`,
+//! with a watch-card preview), a per-app list (each row opens a deeper dialog for
+//! on/off, temp-mute, colour, vibration, icon + the app's own app-name choice, with
+//! the same preview), and regex allow/block filters. No change signals — every
+//! mutation re-fetches (reload), and so does showing the page, since the global
+//! app-name key is also on Settings → Daemon configuration.
 
 use std::cell::{Cell, OnceCell, RefCell};
 
@@ -12,6 +15,7 @@ use gtk::{glib, CompositeTemplate};
 
 use super::esc;
 use crate::dbus::{NotifApp, NotifFilter, StoandlClient};
+use crate::widgets::watch_preview::WatchPreview;
 use crate::window::StoandlWindow;
 
 const VIBES: [&str; 5] = ["Standard", "Double", "Long", "Subtle", "Heartbeat"];
@@ -31,6 +35,38 @@ const COLORS: [(&str, &str, Option<(f64, f64, f64)>); 8] = [
     ("Blue", "BlueMoon", Some((0.0, 0.333, 1.0))), // #0055FF
     ("Violet", "VividViolet", Some((0.667, 0.0, 1.0))), // #AA00FF
 ];
+
+/// The app's override of `notification.app_name`. `.0` = display name, `.1` = what
+/// NotifSetAppName takes (`default` drops the override, so the app follows the global
+/// key and NotifList's app-name column is empty). Mirrors NotificationsPage.qml appNameOptions.
+const APP_NAMES: [(&str, &str); 4] =
+    [("Default", "default"), ("Small line", "small"), ("Subtitle", "subtitle"), ("Off", "off")];
+
+/// Index into [`APP_NAMES`] for a NotifList app-name token (case-insensitive, like the daemon);
+/// empty (no override) → Default.
+fn app_name_index(token: &str) -> usize {
+    APP_NAMES.iter().position(|(_, v)| v.eq_ignore_ascii_case(token)).unwrap_or(0)
+}
+
+/// The global setting the per-app choice overrides. Its choices are [`APP_NAMES`] without Default,
+/// whose labels are the daemon's combo labels: what GetConfig reports and SetConfig takes back.
+const APP_NAME_KEY: &str = "notification.app_name";
+
+/// The placement token for a GetConfig value of [`APP_NAME_KEY`] (a label; a bare token works too).
+fn app_name_token(value: &str) -> Option<&'static str> {
+    APP_NAMES[1..]
+        .iter()
+        .find(|(label, token)| label.eq_ignore_ascii_case(value) || token.eq_ignore_ascii_case(value))
+        .map(|(_, token)| *token)
+}
+
+/// The app the Alerts page's preview shows.
+const SAMPLE_APP: &str = "NeoChat";
+
+/// What a preview shows, for the smoke log: `preview <placement>: title=… | small=… | …`.
+fn dbg_preview(preview: &WatchPreview) {
+    dbg_smoke(&format!("preview {}: {}", preview.placement(), preview.summary()));
+}
 
 fn dbg_smoke(msg: &str) {
     if std::env::var_os("STOANDL_SMOKE_MS").is_some() {
@@ -79,6 +115,10 @@ mod imp {
         pub perapp_rows: RefCell<Vec<gtk::Widget>>,
         pub filter_rows: RefCell<Vec<gtk::Widget>>,
         pub mute: OnceCell<MuteRow>,
+        pub app_name_row: OnceCell<adw::ComboRow>,
+        pub preview: OnceCell<WatchPreview>,
+        /// `notification.app_name` as last read; None until then (or from a daemon without the key).
+        pub global_app_name: Cell<Option<&'static str>>,
     }
 
     #[glib::object_subclass]
@@ -137,6 +177,7 @@ impl StoandlNotificationsPage {
     pub fn bind_client(&self, client: &StoandlClient) {
         self.imp().client.set(client.clone()).ok();
         self.build_mute_row();
+        self.build_app_name_row();
 
         self.imp().add_filter_button.connect_clicked(glib::clone!(
             #[weak(rename_to = page)]
@@ -189,6 +230,10 @@ impl StoandlNotificationsPage {
             ),
         );
 
+        // The pages outlive a tab switch here (Kirigami rebuilds its page on each one), so re-read when
+        // shown: the app-name key can have changed on Settings → Daemon configuration meanwhile.
+        self.connect_map(|page| page.spawn_reload());
+
         self.spawn_reload();
     }
 
@@ -216,6 +261,12 @@ impl StoandlNotificationsPage {
             .unwrap_or(false);
         let apps = c.notif_list().await;
         let filters = c.notif_list_filters().await;
+        let app_name = c
+            .get_config()
+            .await
+            .into_iter()
+            .find(|(k, _)| k == APP_NAME_KEY)
+            .and_then(|(_, v)| app_name_token(&v));
 
         // A newer mutation+reload superseded us while awaiting — don't rebuild the
         // per-app rows from this stale snapshot (it could revert a just-set switch).
@@ -224,6 +275,7 @@ impl StoandlNotificationsPage {
         }
         *self.imp().apps.borrow_mut() = apps;
         *self.imp().filters.borrow_mut() = filters;
+        self.imp().global_app_name.set(app_name);
         self.update_ui(forward);
     }
 
@@ -234,9 +286,18 @@ impl StoandlNotificationsPage {
 
     fn update_ui(&self, forward: bool) {
         let imp = self.imp();
-        // Guarded set so it doesn't re-trigger the toggle handler.
+        // Guarded sets so they don't re-trigger the handlers.
         imp.updating.set(true);
         imp.forward_switch.set_active(forward);
+        let global = imp.global_app_name.get();
+        if let (Some(row), Some(preview)) = (imp.app_name_row.get(), imp.preview.get()) {
+            row.set_visible(global.is_some());
+            preview.widget().set_visible(global.is_some());
+            if let Some(token) = global {
+                row.set_selected(app_name_index(token).saturating_sub(1) as u32);
+                preview.set_placement(token);
+            }
+        }
         imp.updating.set(false);
 
         // Temporary mute row.
@@ -325,6 +386,74 @@ impl StoandlNotificationsPage {
         ));
     }
 
+    // --- global app-name placement ---------------------------------------------
+
+    /// `notification.app_name`, the key of the same row on Settings → Daemon configuration, with a
+    /// preview of the card under it. Both stay hidden until a reload has read the key, so a daemon
+    /// without it shows neither.
+    fn build_app_name_row(&self) {
+        let labels: Vec<&str> = APP_NAMES[1..].iter().map(|(label, _)| *label).collect();
+        let row = adw::ComboRow::builder()
+            .title("App name on the watch")
+            .subtitle("Where an app's name goes on a notification. Each app can override it.")
+            .model(&gtk::StringList::new(&labels))
+            .visible(false)
+            .build();
+        let preview = WatchPreview::new(SAMPLE_APP);
+        preview.widget().set_visible(false);
+        row.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            preview,
+            move |r| {
+                if page.imp().updating.get() {
+                    return;
+                }
+                let Some(&(label, token)) = APP_NAMES[1..].get(r.selected() as usize) else {
+                    return;
+                };
+                page.imp().global_app_name.set(Some(token));
+                preview.set_placement(token);
+                page.set_global_app_name(label);
+            }
+        ));
+        self.imp().forwarding_group.add(&row);
+        self.imp().forwarding_group.add(preview.widget()); // not a row: goes under the list
+        self.imp().app_name_row.set(row).ok();
+        self.imp().preview.set(preview).ok();
+    }
+
+    fn set_global_app_name(&self, label: &str) {
+        let client = self.client();
+        let label = label.to_string();
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            client,
+            async move {
+                let s = client.set_config(APP_NAME_KEY, &label).await;
+                if s.ok() {
+                    page.toast(&format!("App name · {label}"));
+                } else {
+                    let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
+                    page.toast(&format!("App name: {m}"));
+                }
+                page.reload().await;
+            }
+        ));
+    }
+
+    /// The placement an [`APP_NAMES`] choice shows: its own, or for Default the global one (the
+    /// daemon's default, the small line, until a reload has read it).
+    fn app_name_placement(&self, idx: usize) -> &'static str {
+        match APP_NAMES.get(idx) {
+            Some(&(_, token)) if token != "default" => token,
+            _ => self.imp().global_app_name.get().unwrap_or("small"),
+        }
+    }
+
     // --- per-app list ---------------------------------------------------------
 
     fn rebuild_perapp(&self) {
@@ -379,7 +508,9 @@ impl StoandlNotificationsPage {
         row.connect_activated(glib::clone!(
             #[weak(rename_to = page)]
             self,
-            move |_| page.open_app_dialog(&app)
+            move |_| {
+                page.open_app_dialog(&app);
+            }
         ));
         row
     }
@@ -426,7 +557,28 @@ impl StoandlNotificationsPage {
         ));
     }
 
-    fn open_app_dialog(&self, app: &NotifApp) {
+    fn set_app_name(&self, name: &str, label: &str, placement: &str) {
+        let client = self.client();
+        let (name, label, placement) = (name.to_string(), label.to_string(), placement.to_string());
+        glib::spawn_future_local(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            client,
+            async move {
+                let s = client.notif_set_app_name(&name, &placement).await;
+                if s.ok() {
+                    page.toast(&format!("App name · {label}"));
+                } else {
+                    let m = if s.tail.is_empty() { s.kind.clone() } else { s.tail.clone() };
+                    page.toast(&format!("App name: {m}"));
+                }
+                page.reload().await;
+            }
+        ));
+    }
+
+    fn open_app_dialog(&self, app: &NotifApp) -> (adw::Dialog, WatchPreview) {
         let prefs = adw::PreferencesPage::new();
 
         // On/off + temporary mute. All buttons are built once; a local `muted`
@@ -519,8 +671,9 @@ impl StoandlNotificationsPage {
             ));
         }
 
-        // Colour + vibration + icon.
+        // Colour + vibration + icon + app name, and a preview of the card with the colour and app name.
         let g2 = adw::PreferencesGroup::new();
+        let preview = WatchPreview::new(&app.name);
 
         let color_labels: Vec<&str> = COLORS.iter().map(|(t, _, _)| *t).collect();
         let color_model = gtk::StringList::new(&color_labels);
@@ -529,8 +682,10 @@ impl StoandlNotificationsPage {
             .subtitle("Accent colour on the watch")
             .model(&color_model)
             .build();
-        let sel0 = COLORS.iter().position(|(_, v, _)| *v == app.color).unwrap_or(0);
+        let sel0 =
+            COLORS.iter().position(|(_, v, _)| v.eq_ignore_ascii_case(&app.color)).unwrap_or(0);
         color_row.set_selected(sel0 as u32);
+        preview.set_color(COLORS[sel0].2);
 
         // A swatch prefix reflecting the current selection (the QML showed a colour
         // per option); "default" draws a themed outline ring, not a fill.
@@ -569,12 +724,15 @@ impl StoandlNotificationsPage {
             swatch,
             #[strong]
             sel,
+            #[strong]
+            preview,
             move |r| {
                 let idx = r.selected() as usize;
                 sel.set(idx);
                 swatch.queue_draw();
-                let (text, value, _) =
+                let (text, value, rgb) =
                     COLORS.get(idx).copied().unwrap_or(("Default", "default", None));
+                preview.set_color(rgb);
                 page.set_app_style(&name, value, "", "", format!("Color · {text}"));
             }
         ));
@@ -611,6 +769,35 @@ impl StoandlNotificationsPage {
             }
         ));
         g2.add(&icon_row);
+
+        let app_name_labels: Vec<&str> = APP_NAMES.iter().map(|(t, _)| *t).collect();
+        let now = match self.imp().global_app_name.get() {
+            Some(token) => format!(", now {}", APP_NAMES[app_name_index(token)].0),
+            None => String::new(),
+        };
+        let app_name_row = adw::ComboRow::builder()
+            .title("App name")
+            .subtitle(format!("Default follows the Alerts page{now}."))
+            .model(&gtk::StringList::new(&app_name_labels))
+            .build();
+        let name_idx = app_name_index(&app.app_name_placement);
+        app_name_row.set_selected(name_idx as u32);
+        preview.set_placement(self.app_name_placement(name_idx));
+        let name = app.name.clone();
+        app_name_row.connect_selected_notify(glib::clone!(
+            #[weak(rename_to = page)]
+            self,
+            #[strong]
+            preview,
+            move |r| {
+                let (text, value) =
+                    APP_NAMES.get(r.selected() as usize).copied().unwrap_or(APP_NAMES[0]);
+                preview.set_placement(page.app_name_placement(r.selected() as usize));
+                page.set_app_name(&name, text, value);
+            }
+        ));
+        g2.add(&app_name_row);
+        g2.add(preview.widget()); // not a row: goes under the list
         prefs.add(&g2);
 
         let header = adw::HeaderBar::new();
@@ -623,6 +810,7 @@ impl StoandlNotificationsPage {
         dialog.set_content_height(560);
         dialog.set_child(Some(&tv));
         dialog.present(Some(self));
+        (dialog, preview)
     }
 
     // --- filters --------------------------------------------------------------
@@ -792,8 +980,9 @@ impl StoandlNotificationsPage {
         dialog.present(Some(self));
     }
 
-    /// Headless smoke hook — the default view already renders everything, so this
-    /// just marks the page was reached.
+    /// Headless smoke hook — the default view already renders everything; this adds
+    /// the send-test path, the app-name choice with its preview and the per-app
+    /// dialog, which only a click reaches.
     pub fn smoke_exercise(&self) {
         if std::env::var_os("STOANDL_SMOKE_MS").is_none() {
             return;
@@ -803,6 +992,37 @@ impl StoandlNotificationsPage {
         // button is insensitive then, so firing it would exercise a path a user cannot reach.
         if self.client().daemon_up() {
             self.send_test();
+        }
+        // The global app name: the preview for each placement (without the write), then the stored
+        // value written back unchanged (a no-op, also against a real daemon).
+        let global = self.imp().global_app_name.get().filter(|_| self.client().daemon_up());
+        if let (Some(preview), Some(stored)) = (self.imp().preview.get(), global) {
+            for &(_, token) in &APP_NAMES[1..] {
+                preview.set_placement(token);
+                dbg_preview(preview);
+            }
+            preview.set_placement(stored);
+            let label = APP_NAMES[app_name_index(stored)].0;
+            dbg_smoke(&format!("notif app name global = {label}"));
+            self.set_global_app_name(label);
+        }
+        // The per-app dialog, for an app with an app-name override if there is one: its preselection
+        // comes from NotifList's 7th column, and the same value goes back through NotifSetAppName
+        // (a no-op change, also against a real daemon). Its preview shows that override, then —
+        // without the write — "Default", which follows the global placement.
+        let app = {
+            let apps = self.imp().apps.borrow();
+            apps.iter().find(|a| !a.app_name_placement.is_empty()).or(apps.first()).cloned()
+        };
+        if let Some(app) = app.filter(|_| self.client().daemon_up()) {
+            let (dialog, preview) = self.open_app_dialog(&app);
+            dbg_preview(&preview);
+            let (label, value) = APP_NAMES[app_name_index(&app.app_name_placement)];
+            dbg_smoke(&format!("notif app name: {} = {label}", app.name));
+            self.set_app_name(&app.name, label, value);
+            preview.set_placement(self.app_name_placement(0));
+            dbg_preview(&preview);
+            dialog.close();
         }
         dbg_smoke("exercised notifications page");
     }

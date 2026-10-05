@@ -29,4 +29,7 @@ Requires the toolchain from `../.container/Dockerfile` (Rust, `libgtk-4-dev`,
 - `src/dbus/` — `StoandlClient` (the only D-Bus toucher) + wire parsing.
 - `src/pages/` — one module per screen (Watch/Health/Apps/Alerts/Settings…; the
   Alerts module + stack page keep the internal id `notifications`).
+- `src/widgets/` — custom widgets: the Health charts, and the watch-card preview
+  that shows where the app name lands on a notification (under the Alerts page's
+  global app-name choice and in the per-app dialog).
 - `src/window.rs` / `application.rs` — the Adwaita shell.

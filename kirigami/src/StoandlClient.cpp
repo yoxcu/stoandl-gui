@@ -1433,7 +1433,8 @@ QVariantList StoandlClient::heartbeatMetrics(const QString &watch)
 
 QVariantList StoandlClient::notifList()
 {
-    // Record: name \t muteLabel \t color \t icon \t vibe \t lastNotifiedEpochSeconds
+    // Record: name \t muteLabel \t color \t icon \t vibe \t lastNotifiedEpochSeconds \t appNamePlacement
+    // (the app's notification.app_name override, small|subtitle|off; empty = follows the global setting).
     QVariantList rows;
     const QVariantList records = list(QStringLiteral("NotifList"));
     for (const QVariant &v : records) {
@@ -1447,6 +1448,7 @@ QVariantList StoandlClient::notifList()
         m[QStringLiteral("icon")]         = f.value(3);
         m[QStringLiteral("vibe")]         = f.value(4);
         m[QStringLiteral("lastNotified")] = f.value(5);
+        m[QStringLiteral("appNamePlacement")] = f.value(6);
         rows.append(m);
     }
     return rows;
@@ -1464,6 +1466,10 @@ QVariantMap StoandlClient::notifSetStyle(const QString &name, const QString &col
                                          const QString &icon, const QString &vibe)
 {
     return statusMap(callStatus(QStringLiteral("NotifSetStyle"), {name, color, icon, vibe}));
+}
+QVariantMap StoandlClient::notifSetAppName(const QString &name, const QString &placement)
+{
+    return statusMap(callStatus(QStringLiteral("NotifSetAppName"), {name, placement}));
 }
 
 QVariantList StoandlClient::notifListFilters()

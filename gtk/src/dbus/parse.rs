@@ -547,8 +547,10 @@ pub fn parse_ext_schema(json: &str) -> Vec<ExtField> {
 
 // --- Notifications-tab typed builders --------------------------------------
 
-/// A `NotifList` record: `name \t muteLabel \t color \t icon \t vibe \t lastNotified`.
-/// `muted` = the mute label isn't `never`.
+/// A `NotifList` record: `name \t muteLabel \t color \t icon \t vibe \t lastNotified \t
+/// appNamePlacement`. `muted` = the mute label isn't `never`. `app_name_placement` is the app's
+/// `notification.app_name` override (`small`/`subtitle`/`off`); empty (or absent, from a 6-column
+/// daemon) = follows the global setting.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NotifApp {
     pub name: String,
@@ -558,6 +560,7 @@ pub struct NotifApp {
     pub icon: String,
     pub vibe: String,
     pub last_notified: String,
+    pub app_name_placement: String,
 }
 
 pub fn parse_notif_list(rows: &[String]) -> Vec<NotifApp> {
@@ -573,6 +576,7 @@ pub fn parse_notif_list(rows: &[String]) -> Vec<NotifApp> {
                 icon: g(3).to_string(),
                 vibe: g(4).to_string(),
                 last_notified: g(5).to_string(),
+                app_name_placement: g(6).to_string(),
                 mute,
             }
         })
@@ -1282,11 +1286,16 @@ mod tests {
     fn notif_and_sync_builders() {
         let apps = parse_notif_list(&[
             "Messages\tnever\t#00f\tBell\tDouble\t2m ago".into(),
-            "Slack\talways\t\tDefault\tStandard\t".into(),
+            "Slack\talways\t\tDefault\tStandard\t\tsubtitle".into(),
+            "NeoChat\tnever\t\t\t\t1718901200\t".into(),
         ]);
         assert!(!apps[0].muted);
         assert_eq!(apps[0].vibe, "Double");
+        assert_eq!(apps[0].app_name_placement, ""); // 6 columns: follows the global setting
         assert!(apps[1].muted); // mute != "never"
+        assert_eq!(apps[1].app_name_placement, "subtitle");
+        assert_eq!(apps[2].app_name_placement, ""); // empty 7th column: no override
+        assert_eq!(apps[2].last_notified, "1718901200");
 
         let filters = parse_notif_filters(&["OTP.*\tblock".into(), "boss\tallow".into()]);
         assert_eq!(filters[0].action, "block");

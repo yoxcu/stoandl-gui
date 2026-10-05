@@ -109,6 +109,12 @@ CONFIG_CHECKS = {
     "firmware.cohorts_url": lambda v: (_http_url_err(v), v),
 }
 
+# Combo options whose stoandl.conf token (ConfigSchema.kt's ConfigChoice token) isn't the label
+# lower-cased with '_' for spaces.
+CONFIG_COMBO_TOKENS = {
+    "notification.app_name": {"Small line": "small"},
+}
+
 
 class MockStoandl(dbus.service.Object):
     def __init__(self, bus, path):
@@ -374,6 +380,7 @@ class MockStoandl(dbus.service.Object):
                 # --- Notifications ---
                 ("notification.per_app", "toggle", "Per-app notifications", "", "Track apps and enforce per-app mute host-side", "Notifications", "live", "", "", "", ""),
                 ("notification.default_mute", "combo", "Default mute for new apps", "Never,Always,Weekdays,Weekends", "How a newly-seen app is muted until you change it", "Notifications", "live", "", "", "", ""),
+                ("notification.app_name", "combo", "App name on the watch", "Small line,Subtitle,Off", "Where the app's name goes on the watch: a small line under the title, the large bold subtitle, or not at all. A source's own subtitle (an extension's) keeps the subtitle. Apps can override this in their notification settings.", "Notifications", "live", "", "", "", ""),
                 ("notification.sync_to_watch", "toggle", "Sync the app list to the watch", "", "Push the per-app list and mute states to the watch's BlobDB. Current firmware surfaces no per-app notification UI, so this normally changes nothing — mute is enforced host-side.", "Notifications", "restart", "", "", "", ""),
                 ("notification.catch_up_minutes", "int", "Catch up after a disconnect", "", "A reconnecting watch also gets the notifications it missed that are at most this old (never from before the daemon started or the watch was paired). 0 = only ones posted after it reconnected.", "Notifications", "restart", "0", "1440", "min", ""),
                 ("notification.canned_replies", "list", "Canned replies", "", "The watch's Reply list for desktop notifications that take a reply (Plasma with the InvokeReply patch) and for extensions without their own list. Empty = Ok, Yes, No, Call me, Call you later. Whole items up to 512 bytes in total are sent.", "Notifications", "live", "", "", "", "Ok,Yes,No,Call me,Call you later"),
@@ -440,6 +447,7 @@ class MockStoandl(dbus.service.Object):
         ]
         self.config = {
             "notification.per_app": "true", "notification.default_mute": "Never",
+            "notification.app_name": "Small line",
             "notification.sync_to_watch": "false", "notification.catch_up_minutes": "60",
             "notification.canned_replies": "Ok,Yes,No,Call me,Call you later",
             "alerts.enabled": "true", "alerts.pairing": "true", "alerts.bluetooth": "true",
@@ -491,13 +499,14 @@ class MockStoandl(dbus.service.Object):
             "resting_hr": "58",
             "max_hr": "189",
         }
-        # Notifications (per-app store + master forwarding via sync["notifications"]).
+        # Notifications (per-app store + master forwarding via sync["notifications"]). `app_name` is the
+        # per-app notification.app_name override (small|subtitle|off), "" = follows the global setting.
         self.notif_apps = [
-            {"name": "Signal",   "mute": "never",  "color": "default", "icon": "default", "vibe": "Double",   "last": 1718900000},
-            {"name": "Matrix",   "mute": "never",  "color": "default", "icon": "default", "vibe": "Standard", "last": 1718901200},
-            {"name": "Gmail",    "mute": "never",  "color": "default", "icon": "default", "vibe": "Subtle",   "last": 1718890000},
-            {"name": "Phone",    "mute": "never",  "color": "default", "icon": "default", "vibe": "Long",     "last": 1718880000},
-            {"name": "Calendar", "mute": "always", "color": "default", "icon": "calendar","vibe": "Standard", "last": 1718800000},
+            {"name": "Signal",   "mute": "never",  "color": "default", "icon": "default", "vibe": "Double",   "last": 1718900000, "app_name": ""},
+            {"name": "Matrix",   "mute": "never",  "color": "default", "icon": "default", "vibe": "Standard", "last": 1718901200, "app_name": ""},
+            {"name": "Gmail",    "mute": "never",  "color": "default", "icon": "default", "vibe": "Subtle",   "last": 1718890000, "app_name": "subtitle"},
+            {"name": "Phone",    "mute": "never",  "color": "default", "icon": "default", "vibe": "Long",     "last": 1718880000, "app_name": "off"},
+            {"name": "Calendar", "mute": "always", "color": "default", "icon": "calendar","vibe": "Standard", "last": 1718800000, "app_name": ""},
         ]
         # HOOK (notifications): regex filters (config-backed today).
         self.filters = [
@@ -1422,7 +1431,7 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def NotifList(self):
-        return [rec(a["name"], a["mute"], a["color"], a["icon"], a["vibe"], a["last"])
+        return [rec(a["name"], a["mute"], a["color"], a["icon"], a["vibe"], a["last"], a["app_name"])
                 for a in self.notif_apps]
 
     @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
@@ -1449,6 +1458,20 @@ class MockStoandl(dbus.service.Object):
                 continue
             a[field] = "default" if val == "default" else val
         return f"ok:{a['name']} style updated"
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def NotifSetAppName(self, query, placement):
+        # Per-app override of notification.app_name; default/''/none/clear drops it (follows the global).
+        p = placement.strip().lower()
+        if p in ("", "default", "none", "clear"):
+            p = ""
+        elif p not in ("small", "subtitle", "off"):
+            return f"error:Unknown app-name placement '{placement}' (use small|subtitle|off|default)"
+        a = self._resolve_notif(query)
+        if a is None:
+            return f"notfound:no app matching '{query}'"
+        a["app_name"] = p
+        return f"ok:{a['name']} app name = {p or 'default (follows notification.app_name)'}"
 
     @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
     def SendTestNotification(self, title, body):
@@ -1682,14 +1705,14 @@ class MockStoandl(dbus.service.Object):
         kind = field["type"]
         token = None  # what the daemon writes to stoandl.conf and echoes in its ok: reply
         if kind == "combo":
-            # The label or the raw conf token (every daemon combo's token is its label, lower-cased and
-            # with '_' for spaces: "To watch" <-> to_watch).
+            # The label or the raw conf token (the label lower-cased with '_' for spaces, "To watch" <->
+            # to_watch, unless CONFIG_COMBO_TOKENS says otherwise: "Small line" <-> small).
             opts = [o for o in field["options"].split(",") if o]
-            match = next((o for o in opts
-                          if v.lower() in (o.lower(), o.lower().replace(" ", "_"))), None)
+            tok = lambda o: CONFIG_COMBO_TOKENS.get(key, {}).get(o, o.lower().replace(" ", "_"))
+            match = next((o for o in opts if v.lower() in (o.lower(), tok(o))), None)
             if match is None:
                 return f"error:invalid value '{value}' for {key} (expected one of {field['options']})"
-            v, token = match, match.lower().replace(" ", "_")
+            v, token = match, tok(match)
         elif kind == "toggle":
             if v.lower() in ("true", "yes", "on", "1"):
                 v = "true"

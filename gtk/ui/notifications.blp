@@ -1,9 +1,10 @@
 using Gtk 4.0;
 using Adw 1;
 
-// The Notifications tab: master forward toggle + temporary mute, a per-app list
-// (each row opens a deeper dialog), and regex filters. Everything is re-fetched
-// in reload() (the interface has no change events). Rows are built in Rust.
+// The Notifications tab: master forward toggle + temporary mute + the global
+// app-name choice with its watch-card preview, a per-app list (each row opens a
+// deeper dialog), and regex filters. Everything is re-fetched in reload() (the
+// interface has no change events). Rows and the preview are built in Rust.
 //
 // The page owns the single header bar for its surface: window controls + the view
 // switcher (a bottom ViewSwitcherBar on narrow) + its own actions.

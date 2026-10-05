@@ -5,10 +5,10 @@ import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
 
-// Notifications screen. Master forward toggle + temp-mute, per-app list (each
-// row opens a deeper Kirigami.Dialog), and regex filters. Everything is
-// polled/re-fetched in reload() — the interface has no change events, so every
-// mutation re-fetches its slice (handoff hard rules).
+// Notifications screen. Master forward toggle + temp-mute + where the app name goes on the watch (with a
+// WatchCardPreview), per-app list (each row opens a deeper Kirigami.Dialog), and regex filters. Everything
+// is polled/re-fetched in reload() — the interface has no change events, so every mutation re-fetches its
+// slice (handoff hard rules).
 Kirigami.ScrollablePage {
     id: page
     objectName: "notifications"
@@ -24,7 +24,39 @@ Kirigami.ScrollablePage {
     // getter, so this stays correct across reload / per-app mutes / external changes.
     readonly property bool allMuted: page.apps.length > 0 && page.apps.every(function (a) { return a.muted === true; })
 
+    // Where an app's name goes on the watch: notification.app_name's options. `text` is the label GetConfig
+    // reports and SetConfig takes, `value` the placement token (WatchCardPreview's, and NotifSetAppName's
+    // for the per-app override).
+    readonly property var appNamePlacements: [
+        { text: "Small line", value: "small" },
+        { text: "Subtitle",   value: "subtitle" },
+        { text: "Off",        value: "off" }
+    ]
+    // notification.app_name as a token: the Alerts preview's placement and what an app on "Default"
+    // follows. reload() reads it with GetConfig; "" until then (or from a daemon without the key), which
+    // hides the row and its preview.
+    property string appNameGlobal: ""
+
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
+
+    // The label of a placement token ("Small line" for small); "" for one that isn't offered.
+    function appNameLabel(token) {
+        var i = page.optionIndex(page.appNamePlacements, token);
+        return i >= 0 ? page.appNamePlacements[i].text : "";
+    }
+
+    // Index of the option whose value is `v` (case-insensitive, like the daemon's TimelineColor.findByName);
+    // -1 when none is. `byLabel` also accepts the label: only for GetConfig, which answers a combo with
+    // its label. NotifList's colour and placement are values, and matching their labels would pick the
+    // wrong colour ("Yellow" is ChromeYellow's label but its own TimelineColor).
+    function optionIndex(options, v, byLabel) {
+        var s = String(v || "").toLowerCase();
+        for (var i = 0; i < options.length; ++i) {
+            if (options[i].value.toLowerCase() === s || (byLabel && options[i].text.toLowerCase() === s))
+                return i;
+        }
+        return -1;
+    }
 
     function reload() {
         if (!StoandlClient.daemonUp)
@@ -38,6 +70,24 @@ Kirigami.ScrollablePage {
         page.forward = fwd;
         page.apps = StoandlClient.notifList();
         page.filters = StoandlClient.notifListFilters();
+        // The combo is set imperatively, not bound, like the per-app combos (see appDialog.showChoices()).
+        var c = StoandlClient.getConfig();
+        var g = page.optionIndex(page.appNamePlacements, ((c && c.values) ? c.values : {})["notification.app_name"], true);
+        page.appNameGlobal = g >= 0 ? page.appNamePlacements[g].value : "";
+        appNameGlobalCombo.currentIndex = g;
+    }
+
+    // The same key as Settings → Daemon configuration's row, written as its label. The preview follows
+    // the pick before the write lands.
+    function setAppNameGlobal(index) {
+        var o = page.appNamePlacements[index];
+        page.appNameGlobal = o.value;
+        var r = StoandlClient.setConfig("notification.app_name", o.text);
+        if (r.ok)
+            page.toast("App name · " + o.text);
+        else
+            page.toast("App name: " + (r.tail || r.kind));
+        page.reload();
     }
 
     // Master mute (30m / 1h / today / never). Re-reads the per-app list since the
@@ -76,13 +126,48 @@ Kirigami.ScrollablePage {
         page.reload();
     }
 
+    // What a WatchCardPreview shows, for the smoke log (the same line as the GTK front-end's).
+    function smokePreview(preview) {
+        console.log("stoandl-smoke: preview " + preview.placement + ": " + preview.summary);
+    }
+
     // Headless smoke harness (STOANDL_SMOKE_MS) — see Main.qml. Covers the send-test path, the only
-    // control on this page that goes through SendTestNotification.
+    // control on this page that goes through SendTestNotification, the app-name choice with its preview
+    // and the per-app dialog, which only a click reaches.
     function smokeExercise() {
         // Guarded like the action itself: with the daemon down the button is disabled, so firing it
         // here would exercise a path a user cannot reach and log a misleading D-Bus error.
         if (StoandlClient.daemonUp)
             page.sendTest();
+        // The global app name: the preview for each placement (without the write), then the stored
+        // value written back unchanged (a no-op, also against a real daemon).
+        var stored = page.appNameGlobal;
+        if (StoandlClient.daemonUp && stored !== "") {
+            for (var i = 0; i < page.appNamePlacements.length; ++i) {
+                page.appNameGlobal = page.appNamePlacements[i].value;
+                page.smokePreview(alertsPreview);
+            }
+            page.appNameGlobal = stored;
+            var label = page.appNameLabel(stored);
+            var g = StoandlClient.setConfig("notification.app_name", label);
+            console.log("stoandl-smoke: notif app name global = " + label + " (" + g.kind + ")");
+            page.reload();
+        }
+        // The per-app dialog, for an app with an app-name override if there is one: its preselection
+        // comes from NotifList's 7th column, and the same value goes back through NotifSetAppName
+        // (a no-op change, also against a real daemon). Its preview shows that override, then —
+        // without the write — "Default", which follows the global placement.
+        var a = page.apps.find(function (x) { return x.appNamePlacement !== ""; }) || page.apps[0];
+        if (StoandlClient.daemonUp && a) {
+            appDialog.openFor(a);
+            page.smokePreview(dialogPreview);
+            var r = StoandlClient.notifSetAppName(a.name, a.appNamePlacement || "default");
+            console.log("stoandl-smoke: notif app name: " + a.name + " = " + appNameCombo.currentText
+                        + " (" + r.kind + ")");
+            appNameCombo.currentIndex = 0;
+            page.smokePreview(dialogPreview);
+            appDialog.close();
+        }
         console.log("stoandl-smoke: exercised notifications page");
     }
 
@@ -175,6 +260,31 @@ Kirigami.ScrollablePage {
                         }
                     }
                 }
+            }
+
+            FormCard.FormDelegateSeparator { visible: appNameGlobalCombo.visible }
+
+            // notification.app_name (also a row in Settings → Daemon configuration); apps override it in
+            // their own dialog.
+            FormCard.FormComboBoxDelegate {
+                id: appNameGlobalCombo
+                visible: page.appNameGlobal !== ""
+                text: "App name on the watch"
+                description: "Where an app's name goes on a notification. Each app can override it."
+                textRole: "text"
+                valueRole: "value"
+                model: page.appNamePlacements
+                onActivated: (index) => page.setAppNameGlobal(index)
+            }
+
+            WatchCardPreview {
+                id: alertsPreview
+                visible: appNameGlobalCombo.visible
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: Kirigami.Units.smallSpacing
+                Layout.bottomMargin: Kirigami.Units.largeSpacing
+                appName: "NeoChat"
+                placement: page.appNameGlobal
             }
         }
 
@@ -353,8 +463,9 @@ Kirigami.ScrollablePage {
         readonly property var iconOptions: ["Default", "Bell", "Calendar", "Chat"]
         // A curated subset of the watch's TimelineColor palette; `value` is the enum name the daemon
         // stores (NotifSetStyle takes a name, not a hex — NotifList ships no allowed set, so hardcode).
+        // `swatch` is the colour's hex ("" = no override: the watch's default, which WatchCardPreview draws).
         readonly property var colorOptions: [
-            { text: "Default", value: "default", swatch: "transparent" },
+            { text: "Default", value: "default", swatch: "" },
             { text: "Red",     value: "Red",          swatch: "#FF0000" },
             { text: "Orange",  value: "Orange",       swatch: "#FF5500" },
             { text: "Yellow",  value: "ChromeYellow", swatch: "#FFAA00" },
@@ -363,9 +474,16 @@ Kirigami.ScrollablePage {
             { text: "Blue",    value: "BlueMoon",     swatch: "#0055FF" },
             { text: "Violet",  value: "VividViolet",  swatch: "#AA00FF" }
         ]
+        // The app's override of notification.app_name; `value` is what NotifSetAppName takes ("default"
+        // drops the override, so the app follows the global key and its appNamePlacement is empty).
+        readonly property var appNameOptions: [{ text: "Default", value: "default" }].concat(page.appNamePlacements)
 
         title: appName
         preferredWidth: Kirigami.Units.gridUnit * 24
+        // Taller than most windows with the preview, so it scrolls. Kirigami.Dialog slides in from 2 gridUnits
+        // lower; at the default maximum that runs past the window's bottom, the popup is squeezed to fit, which
+        // moves it again (a binding loop on y and a jumpy open). Leave room for the slide.
+        maximumHeight: absoluteMaximumHeight - Kirigami.Units.gridUnit * 4
         standardButtons: QQC2.Dialog.Close
         showCloseButton: true
 
@@ -374,6 +492,7 @@ Kirigami.ScrollablePage {
         function openFor(row) {
             appDialog.app = row;
             appDialog.appName = row.name;
+            appDialog.showChoices();
             appDialog.open();
         }
 
@@ -384,6 +503,17 @@ Kirigami.ScrollablePage {
             for (var i = 0; i < rows.length; ++i) {
                 if (rows[i].name === appDialog.appName) { appDialog.app = rows[i]; break; }
             }
+            appDialog.showChoices();
+        }
+
+        // The app's stored colour and app-name placement into their combos (the preview follows both; a
+        // colour name not offered here shows as Default). Set imperatively, not bound: the mobile selection
+        // dialog assigns currentIndex itself, which would drop a binding and leave the next app's dialog
+        // showing this one's choice.
+        function showChoices() {
+            colorCombo.currentIndex = Math.max(0, page.optionIndex(appDialog.colorOptions, appDialog.app && appDialog.app.color));
+            appNameCombo.currentIndex = Math.max(0, page.optionIndex(appDialog.appNameOptions,
+                                                                     appDialog.app && appDialog.app.appNamePlacement));
         }
 
         ColumnLayout {
@@ -537,25 +667,58 @@ Kirigami.ScrollablePage {
                 }
             }
 
-            // --- options: accent color ---
+            // --- options: accent color (preselected by showChoices(), so only a user's pick writes) ---
             FormCard.FormComboBoxDelegate {
+                id: colorCombo
                 Layout.fillWidth: true
                 text: "Notification color"
                 description: "Accent colour on the watch"
                 textRole: "text"
                 valueRole: "value"
                 model: appDialog.colorOptions
-                currentIndex: 0
-                onCurrentValueChanged: {
-                    if (!appDialog.visible)
-                        return;
-                    var r = StoandlClient.notifSetStyle(appDialog.appName, currentValue, "", "");
-                    if (r.kind === "ok" || r.ok)
-                        page.toast("Color · " + currentText);
+                onActivated: (index) => {
+                    var o = appDialog.colorOptions[index];
+                    var r = StoandlClient.notifSetStyle(appDialog.appName, o.value, "", "");
+                    if (r.ok)
+                        page.toast("Color · " + o.text);
                     else
                         page.toast("Color: " + (r.tail || r.kind));
                     appDialog.refreshApp();
                 }
+            }
+
+            // --- options: where the app's name goes on the watch ---
+            FormCard.FormComboBoxDelegate {
+                id: appNameCombo
+                Layout.fillWidth: true
+                text: "App name"
+                description: "Default follows the Alerts page"
+                             + (page.appNameGlobal !== "" ? ", now " + page.appNameLabel(page.appNameGlobal) : "") + "."
+                textRole: "text"
+                valueRole: "value"
+                model: appDialog.appNameOptions
+                onActivated: (index) => {
+                    var o = appDialog.appNameOptions[index];
+                    var r = StoandlClient.notifSetAppName(appDialog.appName, o.value);
+                    if (r.ok)
+                        page.toast("App name · " + o.text);
+                    else
+                        page.toast("App name: " + (r.tail || r.kind));
+                    appDialog.refreshApp();
+                }
+            }
+
+            // This app's card as the colour and app-name picks put it on the watch.
+            WatchCardPreview {
+                id: dialogPreview
+                Layout.alignment: Qt.AlignHCenter
+                Layout.topMargin: Kirigami.Units.smallSpacing
+                Layout.bottomMargin: Kirigami.Units.largeSpacing
+                appName: appDialog.appName
+                // "Default" follows the global placement; the daemon's default before that is read.
+                placement: appNameCombo.currentValue && appNameCombo.currentValue !== "default"
+                           ? appNameCombo.currentValue : (page.appNameGlobal || "small")
+                accent: colorCombo.currentIndex >= 0 ? appDialog.colorOptions[colorCombo.currentIndex].swatch : ""
             }
         }
     }

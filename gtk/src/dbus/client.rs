@@ -1195,6 +1195,10 @@ impl StoandlClient {
     pub async fn notif_set_style(&self, name: &str, color: &str, icon: &str, vibe: &str) -> Status {
         self.call_status("NotifSetStyle", Some((name, color, icon, vibe).to_variant()), CALL_TIMEOUT_MS).await
     }
+    /// The app's `notification.app_name` override: `small`/`subtitle`/`off`, or `default` to drop it.
+    pub async fn notif_set_app_name(&self, name: &str, placement: &str) -> Status {
+        self.call_status("NotifSetAppName", Some((name, placement).to_variant()), CALL_TIMEOUT_MS).await
+    }
     /// Push a test notification through the normal mute/style/filter path.
     pub async fn send_test_notification(&self, title: &str, body: &str) -> Status {
         self.call_status("SendTestNotification", Some((title, body).to_variant()), CALL_TIMEOUT_MS).await

@@ -63,6 +63,7 @@ qt_add_qml_module(stoandl-gui
         qml/HealthPage.qml
         qml/AppsPage.qml
         qml/NotificationsPage.qml
+        qml/WatchCardPreview.qml
         qml/SettingsPage.qml
         qml/SyncSettingsPage.qml
         qml/CalendarsSettingsPage.qml

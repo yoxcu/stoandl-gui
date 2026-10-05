@@ -28,3 +28,56 @@
 .section-card {
   padding: 12px;
 }
+
+/* Watch-card preview (widgets/watch_preview.rs): a mock-up of the watch's own notification card, so
+   it keeps the watch's black-on-white in both themes — the one deliberate exception to the rule at the
+   top. The banner's app colour is drawn in code, and the card's 200 × 228 size set there. The text is
+   in em, so it follows the UI font: the watch's Gothic 18 / 24 / 28 at about 0.82 px a point on the
+   200 px card, the size at which the system font fits about as many characters on a line (1em ≈
+   Gothic 18 at 11 pt). */
+.watch-card {
+  background-color: white;
+  color: black;
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px alpha(black, 0.12), 0 1px 4px alpha(black, 0.2);
+}
+
+.watch-banner {
+  min-height: 2.6em;
+}
+
+.watch-banner-icon {
+  color: white;
+  -gtk-icon-size: 1.5em;
+}
+
+.watch-banner-icon.on-light {
+  color: black;
+}
+
+.watch-text {
+  padding: 0.3em 0.6em 0.6em;
+}
+
+.watch-title {
+  font-weight: bold;
+  font-size: 1.35em; /* Gothic 24 Bold */
+}
+
+.watch-subtitle {
+  font-weight: bold;
+  font-size: 1.55em; /* Gothic 28 Bold */
+}
+
+.watch-small {
+  font-size: 1em; /* Gothic 18 */
+}
+
+.watch-body {
+  font-size: 1.55em; /* Gothic 28 */
+}
+
+.watch-time {
+  font-size: 1em; /* Gothic 18 */
+  margin-top: 0.2em;
+}

@@ -170,7 +170,7 @@ gtk/
       watch.rs, health.rs, apps.rs, notifications.rs,
       settings.rs, sync.rs, calendars.rs, watch_prefs.rs, general.rs, backup.rs
     widgets/
-      status_chip.rs, chart.rs, ...   (custom widgets as needed)
+      status_chip.rs, chart.rs, watch_preview.rs, ...   (custom widgets as needed)
 ```
 
 ## Build & test

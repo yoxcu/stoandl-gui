@@ -106,9 +106,13 @@ same hook in `gtk/src/window.rs::maybe_start_smoke`.) The env var is read via `S
 **Add a `smokeExercise()` to any page whose interesting state is only reachable by navigation or by a
 button press** — otherwise it is not covered. `SettingsPage` pushes all seven sub-pages and runs their
 own `smokeExercise()` (`WatchSettingsPage` round-trips a Quiet Time window, `DebugSettingsPage` pushes
-`HeartbeatPage`, which filters); `NotificationsPage` fires the send-test; `WatchPage` hands the pairing
-dialog the daemon's search states (the bare `pending:` and a pause note) and pushes `BatteryPage` even
-with no watch connected; with the daemon down the tick presses "Start daemon". The Quiet Time round trip
+`HeartbeatPage`, which filters); `NotificationsPage` fires the send-test, steps the Alerts page's
+watch-card preview through each `notification.app_name` placement and writes the stored value back
+unchanged, then opens the per-app dialog, writes its app-name placement back unchanged and logs its
+preview for that override and for Default (each preview as `stoandl-smoke: preview <placement>:
+title=… | small=… | …`, the same line in both front-ends); `WatchPage` hands the pairing dialog the
+daemon's search states (the bare `pending:` and a pause note) and pushes `BatteryPage` even with no
+watch connected; with the daemon down the tick presses "Start daemon". The Quiet Time round trip
 writes the watch's own window back afterwards (the hook also runs against a real daemon). With
 `STOANDL_SMOKE_FLASH=1` the `WatchPage` hook also flashes a `.pbz` that doesn't exist, as Settings → Debug
 does (the mock walks any path, a real daemon refuses a missing file), and both front-ends print every
@@ -161,7 +165,11 @@ comes back on its normal firmware and the daemon reports the dropped downgrade a
   were briefly blanked to save space, then restored — the toolbar row is there for the actions anyway,
   so the title may as well use it.)
 - **Never hardcode colors or fonts.** Use `Kirigami.Theme` roles + `Kirigami.Units` spacing. The
-  prototype's dark hexes are a density spec, not a color spec.
+  prototype's dark hexes are a density spec, not a color spec. The one exception is
+  `WatchCardPreview` (the Alerts page and the per-app dialog): it depicts the watch's own notification
+  card — white, black text, a banner in the app's colour — so it looks the same in either theme. Its
+  `lines` is this front-end's only copy of the daemon's app-name rule (`watchFields()`); GTK's is
+  `widgets/watch_preview.rs::app_name_line`.
 - Row actions are **inline** (trailing buttons in the delegate), **not kebabs**.
 
 ## Status kinds
@@ -188,9 +196,10 @@ The GUI also consumes daemon-side hooks beyond the original 51 methods: `transpo
 `synced` on ListApps (#4); `GetSyncStatus`/`SetSyncEnabled` (#5); `ExtList.config` + `ExtOpenConfig` +
 `ExtConfigSchema`/`ExtGetConfig`/`ExtSetConfig` (#7); `GetHealthSummary`/`GetHealthSeries` (#8);
 `SetWatchNickname` (#9); `GetConfigSchema`/`GetConfig`/`SetConfig` (#10); `WatchDetails`; notification
-regex filters; a changelog URL on `CheckFirmware`. All are implemented in the mock
-(`tools/mock_stoandl.py`) and must be grown in the real Kotlin daemon to match. (Notification
-quiet-hours hooks were dropped — superseded by the daemon's `dnd.sync`.)
+regex filters; the per-app app-name placement (`NotifSetAppName` + `NotifList`'s 7th column, the
+override of `notification.app_name`; empty = follows it); a changelog URL on `CheckFirmware`. All are
+implemented in the mock (`tools/mock_stoandl.py`) and must be grown in the real Kotlin daemon to match.
+(Notification quiet-hours hooks were dropped — superseded by the daemon's `dnd.sync`.)
 
 ## Not on D-Bus (shell out to the `stoandl` CLI, co-located): backup, restore, support bundle.
 
