@@ -26,13 +26,24 @@ Kirigami.ScrollablePage {
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
+    // name:state of every watch at the last firmware check: a watch that connects, reboots after a flash
+    // or comes up in recovery gets a fresh CheckFirmware, so the update banner reflects what it runs now.
+    property string fwCheckedFor: ""
+
     function applyWatches(rows) {
         page.watches = rows;
         var found = null;
+        var states = [];
         for (var i = 0; i < rows.length; ++i) {
-            if (rows[i].connected) { found = rows[i]; break; }
+            if (rows[i].connected && !found) found = rows[i];
+            states.push(rows[i].name + ":" + rows[i].state);
         }
         page.connectedWatch = found;
+        var key = states.join(",");
+        if (key !== page.fwCheckedFor) {
+            page.fwCheckedFor = key;
+            page.checkFirmware();
+        }
     }
 
     function checkFirmware() {
