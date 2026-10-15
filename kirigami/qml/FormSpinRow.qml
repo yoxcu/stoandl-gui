@@ -65,7 +65,7 @@ FormCard.AbstractFormDelegate {
             to: root.to
             editable: true
             // ~100 steps across the range so a wide one stays navigable, snapped to 1, 2 or 5 × 10ⁿ so
-            // a step lands on round numbers (0..1440 min steps by 10, not 14). GTK's spin_row matches.
+            // a step lands on round numbers (0..1440 min steps by 10, not 14).
             stepSize: {
                 var raw = (root.to - root.from) / 100;
                 if (raw <= 1) return 1;

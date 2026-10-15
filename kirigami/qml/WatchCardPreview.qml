@@ -46,8 +46,7 @@ Rectangle {
         body:     { size: 28, bold: false },
         time:     { size: 18, bold: false }
     })
-    // The lines as the smoke harness logs them, top to bottom: "title=Family | small=NeoChat | …" (the
-    // GTK front-end's WatchPreview::summary()).
+    // The lines as the smoke harness logs them, top to bottom: "title=Family | small=NeoChat | …".
     readonly property string summary: card.lines.map(function (l) { return l.slot + "=" + l.text; }).join(" | ")
     // Pixels per Gothic point: the card stands for the Time 2's 200 px wide screen, and a system font at
     // about 4/5 of Gothic's nominal size (its line height) fits about as many characters on a line.
@@ -59,7 +58,7 @@ Rectangle {
     radius: Math.round(width * 0.06)
     color: "white"
 
-    // Read as one image, like the GTK card: its lines, and where the app name is.
+    // Read as one image: its lines, and where the app name is.
     Accessible.role: Accessible.Graphic
     Accessible.name: "Watch preview: " + card.lines.map(function (l) { return l.text; }).join(", ")
     Accessible.description: card.lines.some(function (l) { return l.slot === "subtitle"; })

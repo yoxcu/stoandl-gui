@@ -1,6 +1,6 @@
 # D-Bus interface
 
-Both front-ends are clients of the daemon's `de.yoxcu.stoandl.Control` interface (session bus, name
+The GUI is a client of the daemon's `de.yoxcu.stoandl.Control` interface (session bus, name
 `de.yoxcu.stoandl`, path `/de/yoxcu/stoandl`). Its contract (every method, the seven signals, the
 tab-separated record layouts and the status-string conventions) is documented in one place, the daemon
 repo's **`docs/dbus-interface.md`**:

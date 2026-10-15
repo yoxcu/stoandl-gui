@@ -45,7 +45,6 @@ Kirigami.ApplicationWindow {
     // Headless verification harness (sandbox only, gated on STOANDL_SMOKE_MS). Steps through every
     // destination one per tick, deep-exercises the Settings sub-pages, then quits — so an offscreen run
     // against the mock proves QML → StoandlClient → D-Bus → render end-to-end and self-terminates.
-    // The GTK front-end has the same hook (window.rs::maybe_start_smoke).
     Timer {
         id: smokeTimer
         property int step: 0

@@ -126,7 +126,7 @@ Kirigami.ScrollablePage {
         page.reload();
     }
 
-    // What a WatchCardPreview shows, for the smoke log (the same line as the GTK front-end's).
+    // What a WatchCardPreview shows, for the smoke log.
     function smokePreview(preview) {
         console.log("stoandl-smoke: preview " + preview.placement + ": " + preview.summary);
     }

@@ -106,14 +106,9 @@ install(FILES ../data/de.yoxcu.stoandl.gui.desktop
 install(FILES ../data/de.yoxcu.stoandl.gui.metainfo.xml
     DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo
 )
-# Ship only THIS variant's icons. The GTK variant's app-icon files
-# (de.yoxcu.stoandl.gui.gtk.*) live in the same shared hicolor tree, and since our
-# app-id is a string-prefix of the GTK one, flatpak-builder's `${app-id}*` icon
-# export would otherwise pull them into the Kirigami bundle — exclude them here.
 install(DIRECTORY ../data/icons/hicolor
     DESTINATION ${CMAKE_INSTALL_DATADIR}/icons
     FILES_MATCHING
         PATTERN "*.png"
         PATTERN "*.svg"
-        REGEX "\\.gtk[.-]" EXCLUDE
 )

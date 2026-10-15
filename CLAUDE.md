@@ -1,23 +1,10 @@
 # stoandl-gui
 
-This repo ships **two front-ends** of the same app, built + packaged independently so
-they install side by side (see `README.md` for the layout table):
-
-- **Kirigami** (Qt6/QML) — in `kirigami/`; app id `de.yoxcu.stoandl.gui`, binary
-  `stoandl-gui`. **This file documents the Kirigami front-end** (paths below are under
-  `kirigami/`).
-- **GTK** (GTK4/libadwaita, Rust) — in `gtk/`; app id `de.yoxcu.stoandl.gui.gtk`, binary
-  `stoandl-gui-gtk`. Its own guidance is `gtk/README.md` +
-  `docs/handoff/gtk-rewrite/ARCHITECTURE.md`.
-
-Shared across both: `data/` (per-variant `.desktop`/metainfo/flatpak manifest + the
-hicolor icon tree), `packaging/{kirigami,gtk}/APKBUILD`, `tools/mock_stoandl.py`, and
-the `.github/` matrix CI. Both speak the identical `de.yoxcu.stoandl.Control` contract,
-so one mock serves both. When you touch the app **identity** (app id, binary name,
-desktop/metainfo/icon file names, flatpak/apk package names) keep the Kirigami set and
-the `.gtk` set disjoint — that disjointness is what lets both install at once.
-
 Kirigami (Qt6/QML) front-end for the stoandl Pebble daemon. Convergent: Plasma Mobile + desktop.
+The app lives in `kirigami/` (paths below are under it); app id `de.yoxcu.stoandl.gui`, binary
+`stoandl-gui`. Around it: `data/` (`.desktop`/metainfo/flatpak manifest + the hicolor icon tree),
+`packaging/kirigami/APKBUILD`, `tools/mock_stoandl.py` and the `.github/` release CI. (A GTK4/libadwaita
+front-end used to ship alongside; it was retired on 2026-10-15.)
 
 ## Architecture
 - QML UI (Kirigami + KirigamiAddons FormCard) + one C++ shim `StoandlClient` (raw `QDBusConnection`).
@@ -100,8 +87,7 @@ data (quick-launch options, color presets) in a page-scope getter and have the d
 
 `STOANDL_SMOKE_MS=<ms>` makes the app step through every tab one per tick, call `smokeExercise()` on any
 page that defines one, and quit — so `QT_QPA_PLATFORM=offscreen tools/run-with-mock.sh` proves
-QML → `StoandlClient` → D-Bus → mock → render end-to-end and self-terminates. (The GTK front-end has the
-same hook in `gtk/src/window.rs::maybe_start_smoke`.) The env var is read via `StoandlClient.smokeMs`.
+QML → `StoandlClient` → D-Bus → mock → render end-to-end and self-terminates. The env var is read via `StoandlClient.smokeMs`.
 
 **Add a `smokeExercise()` to any page whose interesting state is only reachable by navigation or by a
 button press** — otherwise it is not covered. `SettingsPage` pushes all seven sub-pages and runs their
@@ -110,12 +96,12 @@ own `smokeExercise()` (`WatchSettingsPage` round-trips a Quiet Time window, `Deb
 watch-card preview through each `notification.app_name` placement and writes the stored value back
 unchanged, then opens the per-app dialog, writes its app-name placement back unchanged and logs its
 preview for that override and for Default (each preview as `stoandl-smoke: preview <placement>:
-title=… | small=… | …`, the same line in both front-ends); `WatchPage` hands the pairing dialog the
+title=… | small=… | …`); `WatchPage` hands the pairing dialog the
 daemon's search states (the bare `pending:` and a pause note) and pushes `BatteryPage` even with no
 watch connected; with the daemon down the tick presses "Start daemon". The Quiet Time round trip
 writes the watch's own window back afterwards (the hook also runs against a real daemon). With
 `STOANDL_SMOKE_FLASH=1` the `WatchPage` hook also flashes a `.pbz` that doesn't exist, as Settings → Debug
-does (the mock walks any path, a real daemon refuses a missing file), and both front-ends print every
+does (the mock walks any path, a real daemon refuses a missing file), and the app prints every
 normalised `firmwareStatus → <kind>` line — how the `prf` handling is checked end to end (run with a
 `STOANDL_SMOKE_MS` of ~2400 so the ~11 s walk ends before the quit, ~1900 to reach Settings → Debug while
 the watch is in recovery). This harness is how the
@@ -168,8 +154,7 @@ comes back on its normal firmware and the daemon reports the dropped downgrade a
   prototype's dark hexes are a density spec, not a color spec. The one exception is
   `WatchCardPreview` (the Alerts page and the per-app dialog): it depicts the watch's own notification
   card — white, black text, a banner in the app's colour — so it looks the same in either theme. Its
-  `lines` is this front-end's only copy of the daemon's app-name rule (`watchFields()`); GTK's is
-  `widgets/watch_preview.rs::app_name_line`.
+  `lines` is the GUI's only copy of the daemon's app-name rule (`watchFields()`).
 - Row actions are **inline** (trailing buttons in the delegate), **not kebabs**.
 
 ## Status kinds

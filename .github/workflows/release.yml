@@ -1,11 +1,10 @@
 name: CI & Release
 
-# Builds BOTH GUI variants — the Kirigami (Qt/KDE) build and the GTK (libadwaita)
-# build — as separate Flatpaks and separate aarch64 postmarketOS .apks, each with a
-# distinct app id / package name so they install side by side. On a `v*` tag it
-# publishes a GitHub Release with both .flatpak bundles, both .apks, a source tarball
-# (one whole-repo tarball feeds both APKBUILDs — see packaging/), and an
-# auto-generated changelog (cliff.toml).
+# Builds the Kirigami (Qt/KDE) GUI as a Flatpak and an aarch64 postmarketOS .apk.
+# On a `v*` tag it publishes a GitHub Release with the .flatpak bundle, the .apk, a
+# whole-repo source tarball (it feeds packaging/kirigami/APKBUILD), and an
+# auto-generated changelog (cliff.toml). The single-entry matrices keep the job and
+# artifact names (flatpak-bundle-kirigami, stoandl-gui-kirigami-aarch64-apk).
 on:
   push:
     branches: [main]
@@ -37,17 +36,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The container image's kde-6.xx / gnome-4x MUST match each manifest's
+          # The container image's kde-6.xx MUST match the manifest's
           # runtime-version. Bump image + manifest together. (The old
           # docker.io/bilelmoussaoui images are unmaintained — use flathub-infra's.)
           - variant: kirigami
             image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
             manifest: data/de.yoxcu.stoandl.gui.flatpak.yml
             bundle: de.yoxcu.stoandl.gui.flatpak
-          - variant: gtk
-            image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-47
-            manifest: data/de.yoxcu.stoandl.gui.gtk.flatpak.yml
-            bundle: de.yoxcu.stoandl.gui.gtk.flatpak
     container:
       image: ${{ matrix.image }}
       options: --privileged
@@ -80,13 +75,13 @@ jobs:
         with:
           fetch-depth: 0     # source tarball + git-cliff need full history + tags
 
-      - name: Download both Flatpak bundles
+      - name: Download the Flatpak bundle
         uses: actions/download-artifact@v4
         with:
           pattern: flatpak-bundle-*
           merge-multiple: true
 
-      - name: Source tarball (for the pmOS/Alpine APKBUILDs)
+      - name: Source tarball (for the pmOS/Alpine APKBUILD)
         run: |
           v="${GITHUB_REF_NAME#v}"
           git archive --format=tar.gz --prefix="stoandl-gui-$v/" \
@@ -109,7 +104,6 @@ jobs:
           fail_on_unmatched_files: true
           files: |
             de.yoxcu.stoandl.gui.flatpak
-            de.yoxcu.stoandl.gui.gtk.flatpak
             stoandl-gui-*.tar.gz
 
   apk-aarch64:
@@ -128,15 +122,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # kirigami/kirigami-addons/qqc2-desktop-style (Kirigami) and
-          # gtk4.0-dev/libadwaita-dev/blueprint-compiler (GTK) only exist in
+          # kirigami/kirigami-addons/qqc2-desktop-style only exist in
           # edge/community, so this can't use a stable Alpine branch.
           - variant: kirigami
             apkbuild: packaging/kirigami
             packages: alpine-sdk doas cmake samurai qt6-qtbase-dev qt6-qtdeclarative-dev kirigami-dev
-          - variant: gtk
-            apkbuild: packaging/gtk
-            packages: alpine-sdk doas cargo gtk4.0-dev libadwaita-dev blueprint-compiler glib-dev
     steps:
       - uses: actions/checkout@v4
 
@@ -150,8 +140,8 @@ jobs:
           sed -i "s/^pkgver=.*/pkgver=$v/" "${{ matrix.apkbuild }}/APKBUILD"
 
       # Chroots into an aarch64 Alpine root under QEMU user-mode emulation and
-      # pre-installs this variant's makedepends. branch: edge is kept for the freshest
-      # KDE Frameworks 6 / GTK4 toolchain.
+      # pre-installs the makedepends. branch: edge is kept for the freshest
+      # KDE Frameworks 6 toolchain.
       - uses: jirutka/setup-alpine@v1
         with:
           arch: aarch64
@@ -254,14 +244,9 @@ jobs:
         run: |
           gh release upload "$GITHUB_REF_NAME" dist/*.apk --clobber
           # Publish the public signing key so users can trust it once, then apk add
-          # without --allow-untrusted. The .rsa.pub is identical for both variants, so
-          # upload it from ONE leg only — the two matrix legs run concurrently and
-          # `gh release upload --clobber` is TOCTOU (fetch→delete→POST with no upsert),
-          # so both racing the same asset would 422 the loser and redden its job.
-          if [ "${{ matrix.variant }}" = kirigami ]; then
-            for pub in packaging/keys/*.rsa.pub; do
-              [ -f "$pub" ] && gh release upload "$GITHUB_REF_NAME" "$pub" --clobber
-            done
-          fi
+          # without --allow-untrusted.
+          for pub in packaging/keys/*.rsa.pub; do
+            [ -f "$pub" ] && gh release upload "$GITHUB_REF_NAME" "$pub" --clobber
+          done
         env:
           GH_TOKEN: ${{ github.token }}

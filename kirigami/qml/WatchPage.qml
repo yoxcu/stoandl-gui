@@ -99,8 +99,8 @@ Kirigami.ScrollablePage {
 
     // Headless smoke (STOANDL_SMOKE_MS): the pairing dialog's status line is only reached through a
     // button and a live pairing window, so hand it the daemon's two search states directly. Then push
-    // the Battery page, which the card only offers with a watch connected (GTK's smoke opens it either
-    // way), so a MOCK_NO_WATCH run reaches its "No watch connected" state.
+    // the Battery page, which the card only offers with a watch connected, so a MOCK_NO_WATCH run
+    // reaches its "No watch connected" state.
     function smokeExercise() {
         pairDialog.handleStatus("pending", "");
         var bare = pairDialog.statusMsg;
