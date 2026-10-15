@@ -120,6 +120,13 @@ public:
     Q_INVOKABLE QVariantList permList(const QString &app); // PermList(s) -> [{key,status,kind,label,lastUsed}]
     Q_INVOKABLE QVariantMap  permSet(const QString &app, const QString &key, const QString &decision); // PermSet(s,s,s)
     Q_INVOKABLE void         refreshPlugins();           // re-fetch + pluginsChanged + permissionRequestsChanged
+
+    // --- Voice (speech-to-text models, Settings → Voice) ---
+    Q_INVOKABLE QVariantMap  voiceStatus();              // VoiceStatus() -> {kind: off|ready|unavailable, tail}
+    Q_INVOKABLE QVariantList voiceModels();              // VoiceModels() -> [{id,name,program,sizeMb,state,progress,error,recommended,engineOk,note}]
+    Q_INVOKABLE QVariantMap  voiceDownloadModel(const QString &id); // VoiceDownloadModel(s): ok|installed|busy|notfound
+    Q_INVOKABLE QVariantMap  voiceCancelDownload();      // VoiceCancelDownload()
+    Q_INVOKABLE QVariantMap  voiceRemoveModel(const QString &id);   // VoiceRemoveModel(s)
     // HOOK #7 — extension config, two backends (url | schema).
     Q_INVOKABLE QVariantMap  extOpenConfig(const QString &name);   // ExtOpenConfig(s) -> xdg-open url; {kind,url,opened,msg}
     Q_INVOKABLE QVariantList extConfigSchema(const QString &name); // ExtConfigSchema(s) -> [{key,type,label,secret,options[]}]

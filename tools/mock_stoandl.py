@@ -113,7 +113,7 @@ CONFIG_CHECKS = {
 # lower-cased with '_' for spaces.
 CONFIG_COMBO_TOKENS = {
     "notification.app_name": {"Small line": "small"},
-    "voice.backend": {"Local command": "command", "HTTP service": "http"},
+    "voice.backend": {"Local model": "local", "Custom command": "command", "HTTP service": "http"},
     "plugins.permission_policy": {"If data could leave this machine": "ask_if_exfiltrating", "Always": "always_ask", "Never": "never_ask"},
     "calendar.reminder_vibe": {"Watch default": ""},
 }
@@ -420,10 +420,11 @@ class MockStoandl(dbus.service.Object):
                 ("plugins.permission_policy", "combo", "When apps ask", "If data could leave this machine,Always,Never", "When an app must ask before using a permission", "Plugins", "live", "", "", "", ""),
                 ("plugins.ask_legacy_apps", "toggle", "Ask older apps too", "", "Apps made before permissions are asked as well, instead of keeping internet access and what they declared", "Plugins", "live", "", "", "", ""),
                 # --- Voice ---
-                ("voice.backend", "combo", "Speech to text", "Off,Local command,HTTP service", "Turns the watch's dictation (voice replies, watchapps) and voice notes into text. Local runs a speech engine on this computer; HTTP sends the audio to an OpenAI-compatible service.", "Voice", "live", "", "", "", ""),
-                ("voice.command", "text", "Local command", "", "A command printing the transcript of {wav} (16 kHz mono WAV) in language {lang} (a code or auto)", "Voice", "live", "", "", "", "parakeet-cli -m ~/.local/share/stoandl/stt/ggml-parakeet-tdt-0.6b-v3-q8_0.bin -t 4 --no-prints -f {wav}"),
+                ("voice.backend", "combo", "Speech to text", "Off,Local model,Custom command,HTTP service", "Turns the watch's dictation (voice replies, watchapps) and voice notes into text. Local model runs a downloaded model on this computer; HTTP sends the audio to an OpenAI-compatible service.", "Voice", "live", "", "", "", ""),
+                ("voice.local_model", "combo", "Model", "No model installed", "The downloaded model the Local model backend runs (download one below)", "Voice", "live", "", "", "", ""),
+                ("voice.command", "text", "Custom command", "", "A command printing the transcript of {wav} (16 kHz mono WAV) in language {lang} (a code or auto)", "Voice", "live", "", "", "", "parakeet-cli -m ~/.local/share/stoandl/stt/ggml-parakeet-tdt-0.6b-v3-q8_0.bin -t 4 -ng --no-prints -f {wav}"),
                 ("voice.url", "text", "HTTP endpoint", "", "OpenAI-compatible transcription URL (whisper.cpp whisper-server, speaches, LocalAI, a hosted service)", "Voice", "live", "", "", "", "http://127.0.0.1:8080/v1/audio/transcriptions"),
-                ("voice.model", "text", "HTTP model", "", "The model the service should use, if it asks for one", "Voice", "live", "", "", "", "whisper-1"),
+                ("voice.http_model", "text", "HTTP model", "", "The model the service should use, if it asks for one", "Voice", "live", "", "", "", "whisper-1"),
                 ("voice.api_key", "secret", "HTTP API key", "", "Sent as a Bearer token; kept in the keyring (or a private file), never in stoandl.conf", "Voice", "live", "", "", "", ""),
                 ("voice.language", "text", "Language", "", "The language you speak: a code such as de or en, or auto", "Voice", "live", "", "", "", "auto"),
                 ("voice.save_audio", "toggle", "Keep recordings", "", "Save each dictation as a WAV in ~/.cache/stoandl/voice (for debugging)", "Voice", "live", "", "", "", ""),
@@ -484,7 +485,7 @@ class MockStoandl(dbus.service.Object):
             "weather.pins": "true", "weather.intercept_pkjs": "false",
             "calendar.discover": "false", "calendar.sync_interval": "30",
             "calendar.reminders": "true", "calendar.show_declined": "false", "calendar.reminder_vibe": "Watch default",
-            "voice.backend": "Off", "voice.command": "", "voice.url": "", "voice.model": "",
+            "voice.backend": "Off", "voice.command": "", "voice.url": "", "voice.http_model": "", "voice.local_model": "No model installed",
             "voice.api_key": "", "voice.language": "auto", "voice.save_audio": "false",
             "music.enabled": "true", "music.volume": "System",
             "music.volume_up_command": "", "music.volume_down_command": "",
@@ -2002,6 +2003,88 @@ class MockStoandl(dbus.service.Object):
         self.perm_pending = [r for r in self.perm_pending if not (r[0] == app and r[2] == key)]
         self.PermissionRequestsChanged()
         return f"ok:{key} {decision}"
+
+    # --- Voice: the daemon's speech-model catalog (VoiceModels.kt), downloads simulated over 6 s ---
+    MOCK_SPEECH_MODELS = [
+        ("parakeet-v3", "Parakeet v3", "parakeet-cli", 669, "true", "25 European languages, detects the language; best accuracy for its speed (phones, older PCs)"),
+        ("parakeet-v3-small", "Parakeet v3 (smaller)", "parakeet-cli", 356, "false", "the same model compressed further: less memory, slightly less accurate"),
+        ("whisper-small", "Whisper small", "whisper-cli", 264, "false", "99 languages, set voice.language; slower and less accurate than Parakeet"),
+        ("whisper-base", "Whisper base", "whisper-cli", 82, "false", "fast and small, weak for languages other than English"),
+        ("whisper-turbo", "Whisper large-v3-turbo", "whisper-cli", 874, "false", "most accurate, for fast desktops only"),
+    ]
+
+    def _voice_tick(self):
+        """Finish a simulated download whose time is up; installing activates it like the daemon does."""
+        d = getattr(self, "voice_dl", None)
+        if d and time.time() - d[1] >= 6:
+            self.voice_dl = None
+            self.voice_installed = getattr(self, "voice_installed", []) + [d[0]]
+            self._voice_installed_changed()
+            if self.config.get("voice.backend") in ("Off", "Local model"):
+                name = next(m[1] for m in self.MOCK_SPEECH_MODELS if m[0] == d[0])
+                self.config["voice.local_model"] = name
+                self.config["voice.backend"] = "Local model"
+
+    def _voice_installed_changed(self):
+        names = [m[1] for m in self.MOCK_SPEECH_MODELS if m[0] in getattr(self, "voice_installed", [])]
+        field = next(c for c in self.config_schema if c["key"] == "voice.local_model")
+        field["options"] = ",".join(names) or "No model installed"
+        if self.config.get("voice.local_model") not in names:
+            self.config["voice.local_model"] = names[0] if names else "No model installed"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def VoiceStatus(self):
+        self._voice_tick()
+        b = self.config.get("voice.backend", "Off")
+        if b == "Off":
+            return "off:voice.backend is off"
+        if b == "Local model":
+            m = self.config.get("voice.local_model", "")
+            return f"ready:local\t{m}" if m != "No model installed" else "unavailable:no model chosen (voice.local_model)"
+        return f"ready:{b.lower()}"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def VoiceModels(self):
+        self._voice_tick()
+        out = []
+        d = getattr(self, "voice_dl", None)
+        for mid, name, prog, size, recommended, note in self.MOCK_SPEECH_MODELS:
+            if d and d[0] == mid:
+                state = f"downloading:{min(99, int((time.time() - d[1]) * 100 / 6))}"
+            elif mid in getattr(self, "voice_installed", []):
+                state = "installed"
+            else:
+                state = "available"
+            out.append(rec(mid, name, prog, size, state, recommended, "true", note))
+        return out
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def VoiceDownloadModel(self, mid):
+        self._voice_tick()
+        m = next((m for m in self.MOCK_SPEECH_MODELS if m[0] == mid), None)
+        if m is None:
+            return f"notfound:no model '{mid}' (stoandl voice models)"
+        if mid in getattr(self, "voice_installed", []):
+            return f"installed:{m[1]} is already installed"
+        if getattr(self, "voice_dl", None):
+            return "busy:a model is downloading"
+        self.voice_dl = (mid, time.time())
+        return f"ok:downloading {m[1]} ({m[3]} MB)"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def VoiceCancelDownload(self):
+        if not getattr(self, "voice_dl", None):
+            return "none:no download running"
+        self.voice_dl = None
+        return "ok:cancelled"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def VoiceRemoveModel(self, mid):
+        if mid not in getattr(self, "voice_installed", []):
+            return f"notfound:{mid} isn't installed"
+        self.voice_installed.remove(mid)
+        self._voice_installed_changed()
+        return f"ok:removed {mid}"
 
     @dbus.service.signal(IFACE, signature="")
     def ExtensionsChanged(self):

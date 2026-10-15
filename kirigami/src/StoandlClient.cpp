@@ -1849,3 +1849,33 @@ void StoandlClient::onPluginsChanged()
     qCDebug(lcStoandl) << "signal PluginsChanged/PermissionRequestsChanged → refreshPlugins()";
     refreshPlugins();
 }
+
+// --- Voice -------------------------------------------------------------------
+
+QVariantMap StoandlClient::voiceStatus() { return statusMap(callStatus(QStringLiteral("VoiceStatus"))); }
+
+QVariantList StoandlClient::voiceModels()
+{
+    QVariantList rows;
+    for (const QVariant &v : list(QStringLiteral("VoiceModels"))) {
+        const QStringList f = v.toStringList();
+        const QString state = f.value(4);   // installed | available | downloading:<pct> | failed:<msg>
+        QVariantMap m;
+        m[QStringLiteral("id")]          = f.value(0);
+        m[QStringLiteral("name")]        = f.value(1);
+        m[QStringLiteral("program")]     = f.value(2);
+        m[QStringLiteral("sizeMb")]      = f.value(3).toInt();
+        m[QStringLiteral("state")]       = state.section(QLatin1Char(':'), 0, 0);
+        m[QStringLiteral("progress")]    = state.startsWith(QLatin1String("downloading:")) ? state.section(QLatin1Char(':'), 1).toInt() : 0;
+        m[QStringLiteral("error")]       = state.startsWith(QLatin1String("failed:")) ? state.section(QLatin1Char(':'), 1) : QString();
+        m[QStringLiteral("recommended")] = (f.value(5) == QStringLiteral("true"));
+        m[QStringLiteral("engineOk")]    = (f.value(6) == QStringLiteral("true"));
+        m[QStringLiteral("note")]        = f.value(7);
+        rows.append(m);
+    }
+    return rows;
+}
+
+QVariantMap StoandlClient::voiceDownloadModel(const QString &id) { return statusMap(callStatus(QStringLiteral("VoiceDownloadModel"), {id})); }
+QVariantMap StoandlClient::voiceCancelDownload()                 { return statusMap(callStatus(QStringLiteral("VoiceCancelDownload"))); }
+QVariantMap StoandlClient::voiceRemoveModel(const QString &id)   { return statusMap(callStatus(QStringLiteral("VoiceRemoveModel"), {id})); }

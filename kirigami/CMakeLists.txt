@@ -69,6 +69,7 @@ qt_add_qml_module(stoandl-gui
         qml/CalendarsSettingsPage.qml
         qml/WatchSettingsPage.qml
         qml/GeneralSettingsPage.qml
+        qml/VoiceModelsCard.qml
         qml/HealthProfileSettingsPage.qml
         qml/BackupSettingsPage.qml
         qml/DebugSettingsPage.qml

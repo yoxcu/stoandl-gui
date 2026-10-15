@@ -9,7 +9,8 @@ import org.stoandl.gui
 // GetConfig / SetConfig). Schema-driven: each key declares a type (toggle | combo | text | int | list),
 // the section to file it under, whether it applies live or needs a daemon restart, and — for numbers —
 // its range and unit. New keys the daemon adds therefore appear here automatically, with the right
-// widget, and nothing in this file names a config key.
+// widget, and nothing in this file names a config key. The one addition is the Voice section's model
+// manager (VoiceModelsCard), shown under that section's keys.
 Kirigami.ScrollablePage {
     id: page
     objectName: "generalSettings"
@@ -214,6 +215,14 @@ Kirigami.ScrollablePage {
                             }
                         }
                     }
+                }
+
+                // Downloads and removes speech models; its changed() re-reads the config so the schema's
+                // installed-model dropdown and the backend follow a finished download.
+                Loader {
+                    Layout.fillWidth: true
+                    active: groupItem.modelData.title === "Voice"
+                    sourceComponent: VoiceModelsCard { onChanged: page.reload() }
                 }
             }
         }
