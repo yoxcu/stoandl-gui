@@ -123,6 +123,7 @@ Kirigami.ScrollablePage {
                             sourceComponent: modelData.type === "toggle" ? cfgToggle
                                            : modelData.type === "combo"  ? cfgCombo
                                            : modelData.type === "int"    ? cfgInt
+                                           : modelData.type === "secret" ? cfgSecret
                                            : cfgText   // text, list, and any future kind
 
                             Component {
@@ -162,6 +163,33 @@ Kirigami.ScrollablePage {
                                     unit: cfgLoader.modelData.unit
                                     value: cfgLoader.modelData.valueInt
                                     onCommit: (newValue) => page.applyConfig(cfgLoader.modelData.key, String(newValue))
+                                }
+                            }
+
+                            // A secret (an API key): the daemon keeps it in the keyring and reports only
+                            // "set" or empty, so the field starts blank, shows dots, and an empty commit
+                            // leaves the stored value alone ("Remove" clears it).
+                            Component {
+                                id: cfgSecret
+                                ColumnLayout {
+                                    spacing: 0
+                                    FormTextRow {
+                                        id: sf
+                                        label: cfgLoader.modelData.label
+                                        description: cfgLoader.modelData.description +
+                                            (cfgLoader.modelData.value === "set" ? " (stored)" : " (not set)")
+                                        echoMode: TextInput.Password
+                                        placeholderText: cfgLoader.modelData.value === "set" ? "••••••••" : ""
+                                        onEditingFinished: {
+                                            if (sf.value !== "")
+                                                page.applyConfig(cfgLoader.modelData.key, sf.value);
+                                        }
+                                    }
+                                    FormCard.FormButtonDelegate {
+                                        visible: cfgLoader.modelData.value === "set"
+                                        text: "Remove " + cfgLoader.modelData.label
+                                        onClicked: page.applyConfig(cfgLoader.modelData.key, "")
+                                    }
                                 }
                             }
 

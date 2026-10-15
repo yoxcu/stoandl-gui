@@ -63,7 +63,6 @@ Only four types appear across the 51 methods:
 | `String` | `s` | string |
 | `Boolean` | `b` | boolean |
 | `List<String>` | `as` | array of strings (one per record; fields tab-separated) |
-| `Unit` / no return | *(empty)* | no out-arg (only `WebviewClose`) |
 
 There are no numeric, struct, dict, variant, or object-path types on the control interface.
 
@@ -112,8 +111,7 @@ tab-separated payloads. "CLI" is the `stoandl` subcommand that calls each method
 | `LaunchApp` | `(s) → s` | Launch app/face by UUID or name. `ok:`/`notfound:`/`ambiguous:`/`notready:`/`error:`. | `apps launch <name\|uuid>` |
 | `RemoveApp` | `(s) → s` | Uninstall app/face from the locker (system apps refused). | `apps remove <name\|uuid>` |
 | `SideloadApp` | `(s) → s` | Install a local `.pbw` (absolute daemon-side path). | `apps install <path.pbw>` (aliases `sideload`, `add`) |
-| `OpenConfig` | `(s) → s` | Config (Clay/PKJS) URL for a running app; empty string if none. The CLI proxies it over a local HTTP server. | `config [app]` |
-| `WebviewClose` | `(s) → ` *(void)* | Hand the saved settings JSON back to the running PKJS app after the config webview closes. | `config [app]` |
+| `OpenConfig` | `(s) → s` | Open the settings page of a PKJS app (name or UUID; launches it if needed). Returns a loopback `http://127.0.0.1:<port>/<token>/…` URL the daemon serves the page from (`data:` Clay pages decoded, `pebblejs://close` rewritten to the daemon), or empty string if none. The caller only opens it in a browser: Save goes from the page to the daemon to the app. The token is single-use and lapses after an hour or when the same app's page is opened again. | `config [app]` |
 
 `ListApps` record: `uuid \t type \t order \t flags \t title \t developer`, where `flags` is a
 comma-joined subset of **`{active, sideloaded, config, system}`** (`active` = current watchface,
@@ -313,7 +311,7 @@ level), `Connect`, `Pair`+`PairStatus`, `Repair`, `Unpair`, `WatchInfoText` (fre
 *Locker list with active/system/sideloaded/config flags, launch/install/remove, Clay config.*
 
 **Satisfied by:** `ListApps` (list + **all four flags** `active|system|sideloaded|config` are
-present), `LaunchApp`, `RemoveApp`, `SideloadApp`, `OpenConfig` + `WebviewClose` (Clay round-trip).
+present), `LaunchApp`, `RemoveApp`, `SideloadApp`, `OpenConfig` (the daemon serves the page and carries Save back to the app).
 
 | Gap | Kind | Today | Proposed hook | Feasibility |
 |---|---|---|---|---|

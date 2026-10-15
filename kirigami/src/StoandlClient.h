@@ -34,7 +34,7 @@ class StoandlClient : public QObject
     // Headless verification harness (sandbox only): milliseconds per step when STOANDL_SMOKE_MS is
     // set, else 0. Main.qml steps through every tab, exercises the Settings sub-pages and quits, so
     // `QT_QPA_PLATFORM=offscreen tools/run-with-mock.sh` proves QML -> D-Bus -> mock -> render
-    // end-to-end and self-terminates. The GTK front-end has the same hook (window.rs).
+    // end-to-end and self-terminates.
     Q_PROPERTY(int smokeMs READ smokeMs CONSTANT)
     // STOANDL_SMOKE_FLASH=1 (with STOANDL_SMOKE_MS): the Watch page's smoke hook starts a flash of a .pbz
     // that doesn't exist, so the GUI-started firmware path runs end to end against the mock, which walks
@@ -102,7 +102,7 @@ public:
     Q_INVOKABLE QVariantMap  setAppOrder(const QString &id, int order);  // SetAppOrder(s,i)
     Q_INVOKABLE QVariantMap  restoreSystemAppOrder();                    // RestoreSystemAppOrder()
     Q_INVOKABLE QVariantMap  sideloadApp(const QUrl &fileUrl); // SideloadApp(absolute daemon-side path)
-    Q_INVOKABLE QVariantMap  openConfig(const QString &id);  // OpenConfig(s) -> open the URL via xdg-open (v1: skip WebviewClose)
+    Q_INVOKABLE QVariantMap  openConfig(const QString &id);  // OpenConfig(s) -> open the daemon-served page via xdg-open
     Q_INVOKABLE void         refreshApps();              // re-fetch + appsChanged (on show + after any mutation)
 
     // --- typed wrappers: Extensions (Apps screen, 3rd segment) -------------
@@ -113,6 +113,13 @@ public:
     Q_INVOKABLE QVariantMap  extUninstall(const QString &name, bool keepConfig); // ExtUninstall(s,b)
     Q_INVOKABLE QVariantMap  extInstall(const QUrl &archiveUrl); // ExtInstall(absolute daemon-side path)
     Q_INVOKABLE void         refreshExtensions();        // re-fetch + extensionsChanged (on show + after any mutation)
+
+    // --- Plugins and app permissions ---
+    Q_INVOKABLE QVariantList pluginList();               // PluginList() -> [{uuid,kind,name,description,sources[],actions[]}]
+    Q_INVOKABLE QVariantList permPending();              // PermPending() -> [{appUuid,appName,key,label,requestedAt}]
+    Q_INVOKABLE QVariantList permList(const QString &app); // PermList(s) -> [{key,status,kind,label,lastUsed}]
+    Q_INVOKABLE QVariantMap  permSet(const QString &app, const QString &key, const QString &decision); // PermSet(s,s,s)
+    Q_INVOKABLE void         refreshPlugins();           // re-fetch + pluginsChanged + permissionRequestsChanged
     // HOOK #7 — extension config, two backends (url | schema).
     Q_INVOKABLE QVariantMap  extOpenConfig(const QString &name);   // ExtOpenConfig(s) -> xdg-open url; {kind,url,opened,msg}
     Q_INVOKABLE QVariantList extConfigSchema(const QString &name); // ExtConfigSchema(s) -> [{key,type,label,secret,options[]}]
@@ -237,6 +244,8 @@ Q_SIGNALS:
     void findWatchResult(bool ok);
     void appsChanged(const QVariantList &rows);      // ListApps refresh (Apps screen)
     void extensionsChanged(const QVariantList &rows); // ExtList refresh (Plugins screen)
+    void pluginsChanged(const QVariantList &rows);    // PluginList refresh
+    void permissionRequestsChanged(const QVariantList &rows); // PermPending refresh
     void calendarsChanged(const QVariantList &rows);  // ListCalendars refresh (Sync screen)
     // System screen. Normalised kinds: progress = idle/downloading/waiting/inprogress/prf
     // (firmware; `prf` = a downgrade rebooting into recovery, detail = the target version, held
@@ -257,6 +266,7 @@ private Q_SLOTS:
     void onCalendarsChanged();                                        // poke → refreshCalendars()
     void onLanguageProgress(const QString &phase, int percent, const QString &detail); // → languageStatus()
     void onExtensionsChanged();                                       // poke → refreshExtensions()
+    void onPluginsChanged();                                          // PluginsChanged / PermissionRequestsChanged → refreshPlugins()
     // Finer companion to ExtensionsChanged: an unsolicited per-extension run-state transition
     // (ready / exited / quarantined) the list-level poke can't carry. Records the state and
     // re-syncs the list (the override is merged into the rows extList() builds).

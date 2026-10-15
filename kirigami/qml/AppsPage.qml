@@ -21,6 +21,22 @@ Kirigami.ScrollablePage {
 
     // Latest ExtList snapshot.
     property var extensions: []
+    // Latest PluginList snapshot (empty while plugins are off) and pending permission requests.
+    property var plugins: []
+    property var permRequests: []
+    // Requests grouped per app: [{appUuid, appName, keys[], labels[]}].
+    readonly property var permGroups: {
+        const byApp = {}
+        const order = []
+        permRequests.forEach(function (r) {
+            if (!byApp[r.appUuid]) { byApp[r.appUuid] = { appUuid: r.appUuid, appName: r.appName, keys: [], labels: [] }; order.push(r.appUuid) }
+            byApp[r.appUuid].keys.push(r.key)
+            byApp[r.appUuid].labels.push(r.label)
+        })
+        return order.map(function (u) { return byApp[u] })
+    }
+    // Plugins not served by an extension (an extension's plugin is part of its own row).
+    readonly property var appPlugins: plugins.filter(function (p) { return p.kind !== "extension"; })
 
     readonly property bool extSegment: segment === "ext"
 
@@ -29,6 +45,32 @@ Kirigami.ScrollablePage {
     function reload() {
         StoandlClient.refreshApps();
         StoandlClient.refreshExtensions();
+        StoandlClient.refreshPlugins();
+    }
+
+    // --- Permissions ---------------------------------------------------------
+    function answer(group, allow) {
+        var failed = 0;
+        group.keys.forEach(function (k) {
+            var r = StoandlClient.permSet(group.appUuid, k, allow ? "allow" : "deny");
+            if (!r.ok) failed++;
+        });
+        page.toast(failed ? "Couldn't answer " + failed + " request(s)" : (allow ? "Allowed " : "Denied ") + group.appName);
+        StoandlClient.refreshPlugins();
+    }
+
+    function pluginKindLabel(kind) {
+        return kind === "builtin" ? "Built-in" : kind === "extension" ? "Extension" : "App";
+    }
+
+    /** What an extension's plugin serves, as one line ("" when it serves none). */
+    function extensionServes(name) {
+        for (var i = 0; i < page.plugins.length; ++i) {
+            var p = page.plugins[i];
+            if (p.kind === "extension" && p.name.toLowerCase() === name.toLowerCase())
+                return "serves " + p.sources.concat(p.actions).join(", ");
+        }
+        return "";
     }
 
     // --- Faces / Apps actions ---------------------------------------------
@@ -53,7 +95,7 @@ Kirigami.ScrollablePage {
         if (r.kind === "ok" && r.opened)
             page.toast("Opening config in your browser…");
         else if (r.kind === "none")
-            page.toast("No config available — is the app running on the watch?");
+            page.toast("No settings page — is the watch connected?");
         else
             page.toast("Config unavailable: " + (r.msg || r.kind));
     }
@@ -110,6 +152,8 @@ Kirigami.ScrollablePage {
         target: StoandlClient
         function onAppsChanged(rows) { page.apps = rows; }
         function onExtensionsChanged(rows) { page.extensions = rows; }
+        function onPluginsChanged(rows) { page.plugins = rows; }
+        function onPermissionRequestsChanged(rows) { page.permRequests = rows; }
         function onDaemonUpChanged() {
             if (StoandlClient.daemonUp)
                 page.reload();
@@ -274,7 +318,9 @@ Kirigami.ScrollablePage {
         }
     }
 
-    // Pinned segment switcher (Faces / Apps / Extensions) — stays at the top while the list scrolls.
+    // Pinned segment switcher (Faces / Apps / Plugins) — stays at the top while the list scrolls. The Plugins
+    // segment lists the plugins (built-in, from installed apps) and the extensions (host-side companions,
+    // which can serve plugins too).
     header: QQC2.ToolBar {
         visible: StoandlClient.daemonUp
         height: visible ? implicitHeight : 0
@@ -297,7 +343,7 @@ Kirigami.ScrollablePage {
             }
             QQC2.Button {
                 Layout.fillWidth: true
-                text: "Extensions · " + page.extensions.length
+                text: "Plugins · " + (page.appPlugins.length + page.extensions.length)
                 checkable: true; autoExclusive: true
                 checked: page.segment === "ext"
                 onClicked: page.segment = "ext"
@@ -307,6 +353,31 @@ Kirigami.ScrollablePage {
 
     ColumnLayout {
         spacing: 0
+
+        // --- Permission requests (plugins on): one banner per app, on every segment ---
+        Repeater {
+            model: StoandlClient.daemonUp ? page.permGroups : []
+            delegate: Kirigami.InlineMessage {
+                required property var modelData
+                Layout.fillWidth: true
+                Layout.margins: Kirigami.Units.smallSpacing
+                visible: true
+                type: Kirigami.MessageType.Warning
+                text: modelData.appName + " asks for: " + modelData.labels.join(", ")
+                actions: [
+                    Kirigami.Action {
+                        text: "Allow"
+                        icon.name: "dialog-ok-apply-symbolic"
+                        onTriggered: page.answer(modelData, true)
+                    },
+                    Kirigami.Action {
+                        text: "Deny"
+                        icon.name: "dialog-cancel-symbolic"
+                        onTriggered: page.answer(modelData, false)
+                    }
+                ]
+            }
+        }
 
         // --- daemon-not-running state --------------------------------------
         DaemonPlaceholder {
@@ -392,6 +463,45 @@ Kirigami.ScrollablePage {
             }
         }
 
+        // --- Plugins (built-in and from installed apps) ----------------------
+        FormCard.FormHeader {
+            visible: StoandlClient.daemonUp && page.extSegment
+            title: "Plugins"
+        }
+        FormCard.FormCard {
+            visible: StoandlClient.daemonUp && page.extSegment
+            FormCard.FormTextDelegate {
+                visible: page.appPlugins.length === 0
+                text: "No plugins"
+                description: "Plugins are off (Settings → Plugins), or none are installed. They give watchfaces and watchapps data and actions from this computer: weather, music, calendar, phone state, or a plugin an app brings."
+            }
+            Repeater {
+                model: page.appPlugins
+                delegate: FormCard.FormTextDelegate {
+                    id: pluginRow
+                    required property var modelData
+                    text: modelData.name
+                    description: page.pluginKindLabel(modelData.kind) + " · "
+                        + (modelData.description !== "" ? modelData.description + " · " : "")
+                        + (modelData.sources.length ? "data: " + modelData.sources.join(", ") : "")
+                        + (modelData.actions.length ? (modelData.sources.length ? " · " : "") + "actions: " + modelData.actions.join(", ") : "")
+                    trailing: QQC2.ToolButton {
+                        visible: pluginRow.modelData.kind === "pbw"
+                        icon.name: "configure-symbolic"
+                        display: QQC2.AbstractButton.IconOnly
+                        QQC2.ToolTip.text: "Settings"
+                        QQC2.ToolTip.visible: hovered
+                        onClicked: page.doConfig({ uuid: pluginRow.modelData.uuid })
+                    }
+                }
+            }
+        }
+
+        FormCard.FormHeader {
+            visible: StoandlClient.daemonUp && page.extSegment && page.extensions.length > 0
+            title: "Extensions"
+        }
+
         // --- Extensions list -----------------------------------------------
         FormCard.FormCard {
             visible: StoandlClient.daemonUp && page.extSegment && page.extensions.length > 0
@@ -413,9 +523,11 @@ Kirigami.ScrollablePage {
                         if (modelData.version && modelData.version !== "")
                             parts.push("v" + modelData.version)
                         const head = parts.join(" · ")
+                        const serves = page.extensionServes(modelData.name)
+                        let text = head
                         if (modelData.description && modelData.description !== "")
-                            return head !== "" ? head + " — " + modelData.description : modelData.description
-                        return head
+                            text = head !== "" ? head + " — " + modelData.description : modelData.description
+                        return serves !== "" ? (text !== "" ? text + " · " + serves : serves) : text
                     }
                     checked: modelData.enabled === true
                     onToggled: page.extToggle(modelData)
@@ -458,7 +570,7 @@ Kirigami.ScrollablePage {
         // Footnote echoing the prototype's host-side companion explainer.
         FormCard.FormTextDelegate {
             visible: StoandlClient.daemonUp && page.extSegment && page.extensions.length > 0
-            text: "Extensions are host-side companions that drive watch notifications with quick replies and actions."
+            text: "Extensions are host-side companions that drive watch notifications with quick replies and actions, and can serve plugin data to watchfaces and watchapps."
         }
     }
 

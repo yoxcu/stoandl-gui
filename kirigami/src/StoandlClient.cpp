@@ -79,7 +79,7 @@ StoandlClient::StoandlClient(QObject *parent)
     m_fwTimer->setInterval(FW_INTERVAL_MS);
     connect(m_fwTimer, &QTimer::timeout, this, &StoandlClient::firmwarePollOnce);
     // What the Watch page is told, after normalisation (QT_LOGGING_RULES="stoandl.debug=true").
-    // The smoke harness prints it unconditionally, like the GTK front-end.
+    // The smoke harness prints it unconditionally.
     connect(this, &StoandlClient::firmwareStatus, this, [](const QString &kind, int percent, const QString &detail) {
         if (smokeMs() > 0)
             qInfo().noquote().nospace() << "stoandl-smoke: firmwareStatus → " << kind << " " << percent << " " << detail;
@@ -112,6 +112,10 @@ StoandlClient::StoandlClient(QObject *parent)
                   this, SLOT(onLanguageProgress(QString, int, QString)));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("ExtensionsChanged"),
                   this, SLOT(onExtensionsChanged()));
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("PluginsChanged"),
+                  this, SLOT(onPluginsChanged()));
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("PermissionRequestsChanged"),
+                  this, SLOT(onPluginsChanged()));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("ExtensionStateChanged"),
                   this, SLOT(onExtensionStateChanged(QString, QString)));
 
@@ -399,10 +403,8 @@ QVariantMap StoandlClient::sideloadApp(const QUrl &fileUrl)
 
 QVariantMap StoandlClient::openConfig(const QString &id)
 {
-    // OpenConfig returns a config URL for a *running* app, or "" if none.
-    // Its exact framing isn't verifiable against a live daemon here, so accept
-    // both a bare URL and the "kind:tail" status convention. v1 opens the URL in
-    // the system browser via xdg-open (QDesktopServices) and skips WebviewClose.
+    // OpenConfig returns "" (no config page) or a loopback URL the daemon serves the
+    // page from; Save on the page goes straight back to the app, so we only open it.
     const QDBusMessage reply =
         m_bus.call(methodCall(QStringLiteral("OpenConfig"), {id}), QDBus::Block, CALL_TIMEOUT_MS);
 
@@ -417,34 +419,11 @@ QVariantMap StoandlClient::openConfig(const QString &id)
         return m;
     }
 
-    const QString raw = reply.arguments().value(0).toString();
-    QString url;
-    QString kind = QStringLiteral("ok");
-    QString msg;
-
-    if (raw.isEmpty()) {
-        kind = QStringLiteral("none");
-    } else if (raw.startsWith(QStringLiteral("http://")) || raw.startsWith(QStringLiteral("https://"))
-               || raw.startsWith(QStringLiteral("file://"))) {
-        url = raw; // bare URL
-    } else {
-        const Status s = parseStatus(raw);
-        if (s.kind == QStringLiteral("ok")) {
-            url = s.tail;
-        } else {
-            kind = s.kind;   // error / notready / notfound / disabled / ...
-            msg = s.tail;
-        }
-    }
-
-    bool opened = false;
-    if (!url.isEmpty())
-        opened = QDesktopServices::openUrl(QUrl(url));
-
-    m[QStringLiteral("kind")]   = kind;
+    const QString url = reply.arguments().value(0).toString();
+    m[QStringLiteral("kind")]   = url.isEmpty() ? QStringLiteral("none") : QStringLiteral("ok");
     m[QStringLiteral("url")]    = url;
-    m[QStringLiteral("msg")]    = msg;
-    m[QStringLiteral("opened")] = opened;
+    m[QStringLiteral("msg")]    = QString();
+    m[QStringLiteral("opened")] = !url.isEmpty() && QDesktopServices::openUrl(QUrl(url));
     return m;
 }
 
@@ -1801,4 +1780,72 @@ void StoandlClient::startDaemon()
             QTimer::singleShot(4000, this, &StoandlClient::recheckDaemon);
         });
     });
+}
+
+// --- Plugins and app permissions ---------------------------------------------
+
+QVariantList StoandlClient::pluginList()
+{
+    QVariantList rows;
+    for (const QVariant &v : list(QStringLiteral("PluginList"))) {
+        const QStringList f = v.toStringList();
+        QVariantMap m;
+        m[QStringLiteral("uuid")]        = f.value(0);
+        m[QStringLiteral("kind")]        = f.value(1);   // builtin | pbw | extension
+        m[QStringLiteral("name")]        = f.value(2);
+        m[QStringLiteral("description")] = f.value(3);
+        m[QStringLiteral("sources")]     = f.value(4).split(QLatin1Char(','), Qt::SkipEmptyParts);
+        m[QStringLiteral("actions")]     = f.value(5).split(QLatin1Char(','), Qt::SkipEmptyParts);
+        rows.append(m);
+    }
+    return rows;
+}
+
+QVariantList StoandlClient::permPending()
+{
+    QVariantList rows;
+    for (const QVariant &v : list(QStringLiteral("PermPending"))) {
+        const QStringList f = v.toStringList();
+        QVariantMap m;
+        m[QStringLiteral("appUuid")]     = f.value(0);
+        m[QStringLiteral("appName")]     = f.value(1);
+        m[QStringLiteral("key")]         = f.value(2);
+        m[QStringLiteral("label")]       = f.value(3);
+        m[QStringLiteral("requestedAt")] = f.value(4).toLongLong();
+        rows.append(m);
+    }
+    return rows;
+}
+
+QVariantList StoandlClient::permList(const QString &app)
+{
+    QVariantList rows;
+    for (const QVariant &v : list(QStringLiteral("PermList"), { app })) {
+        const QStringList f = v.toStringList();
+        QVariantMap m;
+        m[QStringLiteral("key")]      = f.value(0);
+        m[QStringLiteral("status")]   = f.value(1);   // granted | denied | undecided
+        m[QStringLiteral("kind")]     = f.value(2);   // read | write | exfiltrating
+        m[QStringLiteral("label")]    = f.value(3);
+        m[QStringLiteral("lastUsed")] = f.value(4).toLongLong();
+        rows.append(m);
+    }
+    return rows;
+}
+
+QVariantMap StoandlClient::permSet(const QString &app, const QString &key, const QString &decision)
+{
+    return statusMap(callStatus(QStringLiteral("PermSet"), { app, key, decision }));
+}
+
+void StoandlClient::refreshPlugins()
+{
+    Q_EMIT pluginsChanged(m_daemonUp ? pluginList() : QVariantList());
+    Q_EMIT permissionRequestsChanged(m_daemonUp ? permPending() : QVariantList());
+}
+
+void StoandlClient::onPluginsChanged()
+{
+    qCDebug(lcStoandl) << "signal PluginsChanged/PermissionRequestsChanged → refreshPlugins()";
+    refreshPlugins();
 }

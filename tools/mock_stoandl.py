@@ -113,6 +113,9 @@ CONFIG_CHECKS = {
 # lower-cased with '_' for spaces.
 CONFIG_COMBO_TOKENS = {
     "notification.app_name": {"Small line": "small"},
+    "voice.backend": {"Local command": "command", "HTTP service": "http"},
+    "plugins.permission_policy": {"If data could leave this machine": "ask_if_exfiltrating", "Always": "always_ask", "Never": "never_ask"},
+    "calendar.reminder_vibe": {"Watch default": ""},
 }
 
 
@@ -340,7 +343,7 @@ class MockStoandl(dbus.service.Object):
              "allowed": "true|false", "flags": "", "name": "24h clock", "description": ""},
             {"id": "language", "type": "enum", "current": "Custom (Language Pack)",
              "default": "Custom (Language Pack)",
-             "allowed": "Custom (Language Pack)|English|Català|Deutsch|Español|Français|Italiano|Nederlands|Português|Polski",
+             "allowed": "Custom (Language Pack)|English",
              "flags": "", "name": "Language",
              "description": "Built-in firmware language. Choose Custom to use an uploaded language pack."},
             # --- no section of its own (lands in "Other") ---
@@ -382,6 +385,8 @@ class MockStoandl(dbus.service.Object):
                 ("notification.default_mute", "combo", "Default mute for new apps", "Never,Always,Weekdays,Weekends", "How a newly-seen app is muted until you change it", "Notifications", "live", "", "", "", ""),
                 ("notification.app_name", "combo", "App name on the watch", "Small line,Subtitle,Off", "Where the app's name goes on the watch: a small line under the title, the large bold subtitle, or not at all. A source's own subtitle (an extension's) keeps the subtitle. Apps can override this in their notification settings.", "Notifications", "live", "", "", "", ""),
                 ("notification.sync_to_watch", "toggle", "Sync the app list to the watch", "", "Push the per-app list and mute states to the watch's BlobDB. Current firmware surfaces no per-app notification UI, so this normally changes nothing — mute is enforced host-side.", "Notifications", "restart", "", "", "", ""),
+                ("notification.images", "toggle", "Pictures on the watch", "", "Photos and screenshots a notification carries are shown on watches that can (Pebble Time 2 / Round 2, firmware 4.35+). Sender avatars are never sent. Off deletes the stored pictures.", "Notifications", "live", "", "", "", ""),
+                ("notification.sync_dismissals", "toggle", "Clear dismissed notifications from the watch", "", "When a notification is closed on the desktop or phone (or its app withdraws it), it is removed from the watch too. A popup that only times out stays.", "Notifications", "live", "", "", "", ""),
                 ("notification.catch_up_minutes", "int", "Catch up after a disconnect", "", "A reconnecting watch also gets the notifications it missed that are at most this old (never from before the daemon started or the watch was paired). 0 = only ones posted after it reconnected.", "Notifications", "restart", "0", "1440", "min", ""),
                 ("notification.canned_replies", "list", "Canned replies", "", "The watch's Reply list for desktop notifications that take a reply (Plasma with the InvokeReply patch) and for extensions without their own list. Empty = Ok, Yes, No, Call me, Call you later. Whole items up to 512 bytes in total are sent.", "Notifications", "live", "", "", "", "Ok,Yes,No,Call me,Call you later"),
                 # --- stoandl alerts ---
@@ -389,6 +394,7 @@ class MockStoandl(dbus.service.Object):
                 ("alerts.pairing", "toggle", "Pairing problems", "", "Alert when a watch keeps dropping the link (unpaired on the watch) or its pairing was removed on this computer — each with the action that fixes it", "stoandl alerts", "live", "", "", "", ""),
                 ("alerts.bluetooth", "toggle", "Bluetooth blocked", "", "Alert when another app's Bluetooth scan is monopolising the adapter and blocking reconnects", "stoandl alerts", "live", "", "", "", ""),
                 ("alerts.extensions", "toggle", "Extension problems", "", "Alert when an installed extension needs configuring before it can start", "stoandl alerts", "live", "", "", "", ""),
+                ("alerts.permissions", "toggle", "Permission requests", "", "When an app asks for a permission (plugins on), prompt with Allow and Deny on the watch and the desktop", "stoandl alerts", "live", "", "", "", ""),
                 # --- Calls & contacts ---
                 ("call.dialer_apps", "list", "Dialer apps", "", "Apps, by name or desktop-entry id (exact match), whose notifications are held back while a call is up (the watch's native call screen replaces them); their title is a fallback caller name. Their other notifications, such as Missed call, still reach the watch.", "Calls & contacts", "live", "", "", "", "calls"),
                 ("contacts.vcard_paths", "list", "Contact files", "", "vCard files (.vcf, .vcard) or folders, searched recursively, used to turn an incoming number into a name. Default: ~/.local/share/kpeoplevcard (Plasma Mobile's phonebook). No egress.", "Calls & contacts", "live", "", "", "", "~/.local/share/kpeoplevcard"),
@@ -402,9 +408,25 @@ class MockStoandl(dbus.service.Object):
                 ("weather.gps_desktop_id", "text", "GeoClue desktop id", "", "Must match the allow-list entry in /etc/geoclue/geoclue.conf", "Weather", "live", "", "", "", "stoandl"),
                 ("weather.reverse_geocode", "toggle", "Reverse-geocode GPS", "", "Name the GPS location via OSM Nominatim (sends coordinates to a web service)", "Weather", "live", "", "", "", ""),
                 ("weather.pins", "toggle", "Weather timeline pins", "", "Add sunrise/sunset pins for the primary location", "Weather", "live", "", "", "", ""),
+                ("weather.intercept_pkjs", "toggle", "Weather for classic watchfaces", "", "Answer the dead Yahoo / OpenWeatherMap 2.5 weather APIs old watchfaces call, from Open-Meteo (sends the watchface's coordinates or place name to a web service)", "Weather", "live", "", "", "", ""),
                 # --- Calendar ---
                 ("calendar.discover", "toggle", "Auto-discover local calendars", "", "Find the desktop's local .ics calendars (Calindori, ~/.calendars). No egress.", "Calendar", "live", "", "", "", ""),
                 ("calendar.sync_interval", "int", "Re-read interval", "", "How often calendars are re-read (also rolls the timeline window forward)", "Calendar", "live", "5", "1440", "min", ""),
+                ("calendar.reminders", "toggle", "Event reminders", "", "The watch buzzes before an event (its own reminders). Off = pins only.", "Calendar", "live", "", "", "", ""),
+                ("calendar.show_declined", "toggle", "Show declined events", "", "Events you declined still appear on the timeline", "Calendar", "live", "", "", "", ""),
+                ("calendar.reminder_vibe", "combo", "Reminder vibration", "Watch default,No vibration,Standard,Pulses,Double,Triple,Bloom,Pips,Olé,SOS,Ohhh Oh,Five,Two", "The vibration for every calendar reminder", "Calendar", "live", "", "", "", ""),
+                # --- Plugins ---
+                ("plugins.enabled", "toggle", "Plugins", "", "Phone-side data and actions for watchfaces and watchapps: built-in (weather, music, calendar, phone, watch settings), from installed apps, and from extensions. Turns on app permissions too: apps then ask before reading your data or sending it anywhere.", "Plugins", "live", "", "", "", ""),
+                ("plugins.permission_policy", "combo", "When apps ask", "If data could leave this machine,Always,Never", "When an app must ask before using a permission", "Plugins", "live", "", "", "", ""),
+                ("plugins.ask_legacy_apps", "toggle", "Ask older apps too", "", "Apps made before permissions are asked as well, instead of keeping internet access and what they declared", "Plugins", "live", "", "", "", ""),
+                # --- Voice ---
+                ("voice.backend", "combo", "Speech to text", "Off,Local command,HTTP service", "Turns the watch's dictation (voice replies, watchapps) and voice notes into text. Local runs a speech engine on this computer; HTTP sends the audio to an OpenAI-compatible service.", "Voice", "live", "", "", "", ""),
+                ("voice.command", "text", "Local command", "", "A command printing the transcript of {wav} (16 kHz mono WAV) in language {lang} (a code or auto)", "Voice", "live", "", "", "", "parakeet-cli -m ~/.local/share/stoandl/stt/ggml-parakeet-tdt-0.6b-v3-q8_0.bin -t 4 --no-prints -f {wav}"),
+                ("voice.url", "text", "HTTP endpoint", "", "OpenAI-compatible transcription URL (whisper.cpp whisper-server, speaches, LocalAI, a hosted service)", "Voice", "live", "", "", "", "http://127.0.0.1:8080/v1/audio/transcriptions"),
+                ("voice.model", "text", "HTTP model", "", "The model the service should use, if it asks for one", "Voice", "live", "", "", "", "whisper-1"),
+                ("voice.api_key", "secret", "HTTP API key", "", "Sent as a Bearer token; kept in the keyring (or a private file), never in stoandl.conf", "Voice", "live", "", "", "", ""),
+                ("voice.language", "text", "Language", "", "The language you speak: a code such as de or en, or auto", "Voice", "live", "", "", "", "auto"),
+                ("voice.save_audio", "toggle", "Keep recordings", "", "Save each dictation as a WAV in ~/.cache/stoandl/voice (for debugging)", "Voice", "live", "", "", "", ""),
                 # --- Music ---
                 ("music.enabled", "toggle", "Music control", "", "Bridge desktop media players to the watch's Music app", "Music", "live", "", "", "", ""),
                 ("music.volume", "combo", "Volume buttons", "System,Player", "What the watch volume buttons control", "Music", "live", "", "", "", ""),
@@ -448,17 +470,22 @@ class MockStoandl(dbus.service.Object):
         self.config = {
             "notification.per_app": "true", "notification.default_mute": "Never",
             "notification.app_name": "Small line",
-            "notification.sync_to_watch": "false", "notification.catch_up_minutes": "60",
+            "notification.sync_to_watch": "false", "notification.sync_dismissals": "true", "notification.images": "true",
+            "notification.catch_up_minutes": "60",
             "notification.canned_replies": "Ok,Yes,No,Call me,Call you later",
             "alerts.enabled": "true", "alerts.pairing": "true", "alerts.bluetooth": "true",
-            "alerts.extensions": "true",
+            "alerts.extensions": "true", "alerts.permissions": "true",
+            "plugins.enabled": "false", "plugins.permission_policy": "If data could leave this machine", "plugins.ask_legacy_apps": "false",
             "call.dialer_apps": "calls", "contacts.vcard_paths": "~/.local/share/kpeoplevcard",
             "weather.locations": "Berlin:52.52:13.405", "weather.location_source": "Manual",
             "weather.location_command": "", "weather.interval": "30",
             "weather.gps": "false", "weather.gps_name": "Current location",
             "weather.gps_desktop_id": "stoandl", "weather.reverse_geocode": "false",
-            "weather.pins": "true",
+            "weather.pins": "true", "weather.intercept_pkjs": "false",
             "calendar.discover": "false", "calendar.sync_interval": "30",
+            "calendar.reminders": "true", "calendar.show_declined": "false", "calendar.reminder_vibe": "Watch default",
+            "voice.backend": "Off", "voice.command": "", "voice.url": "", "voice.model": "",
+            "voice.api_key": "", "voice.language": "auto", "voice.save_audio": "false",
             "music.enabled": "true", "music.volume": "System",
             "music.volume_up_command": "", "music.volume_down_command": "",
             "health.sync": "true", "health.export": "true", "health.export_samples": "false",
@@ -1069,11 +1096,8 @@ class MockStoandl(dbus.service.Object):
             return ""  # no config / not resolvable
         if "config" not in app["flags"]:
             return ""  # app has no config page
-        return f"ok:https://clay.local/config?uuid={app['uuid']}"
-
-    @dbus.service.method(IFACE, in_signature="s", out_signature="")
-    def WebviewClose(self, settings_json):
-        pass  # v1 GUI skips the round-trip
+        # The daemon serves the page itself and returns a loopback URL (nothing listens here).
+        return f"http://127.0.0.1:9/{app['uuid']}/"
 
     # --- Extensions / plugins ----------------------------------------------
     def _resolve_ext(self, query):
@@ -1720,6 +1744,12 @@ class MockStoandl(dbus.service.Object):
                 v = "false"
             else:
                 return f"error:invalid value '{value}' for {key} (expected true or false)"
+        elif kind == "secret":
+            # Kept out of stoandl.conf (the daemon's secret store); GetConfig shows only "set" or "".
+            if "\n" in v or "\r" in v:
+                return f"error:{key}: must be a single line"
+            self.config[key] = "set" if v else ""
+            return f"ok:{key} {'stored' if v else 'removed'}"
         elif kind == "int":
             try:
                 n = int(v)
@@ -1926,6 +1956,52 @@ class MockStoandl(dbus.service.Object):
         # phase ∈ {downloading,installing,done,idle,failed,notready} (LanguageStatus vocabulary);
         # percent 0–100 while installing else -1; detail = language name / failure reason.
         pass
+
+    @dbus.service.signal(IFACE, signature="")
+    def PluginsChanged(self):
+        # poke: re-call PluginList.
+        pass
+
+    @dbus.service.signal(IFACE, signature="")
+    def PermissionRequestsChanged(self):
+        # poke: re-call PermPending.
+        pass
+
+    # --- Plugins and app permissions ---------------------------------------
+    MOCK_PLUGINS = [
+        ("00000000-0000-0000-0001-000000000002", "builtin", "Weather", "Current conditions and forecast for the user's saved weather locations.", "weather/location,weather/hour", ""),
+        ("00000000-0000-0000-0001-000000000003", "builtin", "Music", "What is playing on the phone, with play/pause and track skipping.", "music/track", "set_playing,next_track,previous_track"),
+        ("2c4b7f10-9a3d-4e6b-8f21-5d0c7e9a1b34", "pbw", "Stocks", "Share prices for the tickers the user picked.", "finance/stock", ""),
+    ]
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def PluginList(self):
+        return [rec(*p) for p in self.MOCK_PLUGINS]
+
+    @dbus.service.method(IFACE, in_signature="sss", out_signature="s")
+    def PluginRead(self, category, item, plugin):
+        return 'ok:{"pluginUuid":"mock","instances":[]}'
+
+    @dbus.service.method(IFACE, in_signature="sss", out_signature="s")
+    def PluginInvoke(self, plugin, action, args):
+        return "ok:Done"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def PermPending(self):
+        if not hasattr(self, "perm_pending"):
+            self.perm_pending = [("2c4b7f10-9a3d-4e6b-8f21-5d0c7e9a1b34", "Stocks", "Internet/query1.finance.yahoo.com", "Send data to query1.finance.yahoo.com", "1760000000000")]
+        return [rec(*r) for r in self.perm_pending]
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="as")
+    def PermList(self, app):
+        return [rec("Internet/query1.finance.yahoo.com", "undecided", "exfiltrating", "Send data to query1.finance.yahoo.com", "0")]
+
+    @dbus.service.method(IFACE, in_signature="sss", out_signature="s")
+    def PermSet(self, app, key, decision):
+        self.PermPending()
+        self.perm_pending = [r for r in self.perm_pending if not (r[0] == app and r[2] == key)]
+        self.PermissionRequestsChanged()
+        return f"ok:{key} {decision}"
 
     @dbus.service.signal(IFACE, signature="")
     def ExtensionsChanged(self):
