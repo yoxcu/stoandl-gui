@@ -458,9 +458,10 @@ Kirigami.ScrollablePage {
         property var app: ({})
         property string appName: ""
 
-        // Fixed sets (handoff spec).
-        readonly property var vibes: ["Standard", "Double", "Long", "Subtle", "Heartbeat"]
-        readonly property var iconOptions: ["Default", "Bell", "Calendar", "Chat"]
+        // Vibrations and icons as the daemon advertises them (NotifStyleChoices), so a pick is always
+        // something NotifSetStyle accepts; "default" drops the override. Read on open.
+        property var vibes: []
+        property var iconOptions: []
         // A curated subset of the watch's TimelineColor palette; `value` is the enum name the daemon
         // stores (NotifSetStyle takes a name, not a hex — NotifList ships no allowed set, so hardcode).
         // `swatch` is the colour's hex ("" = no override: the watch's default, which WatchCardPreview draws).
@@ -490,6 +491,9 @@ Kirigami.ScrollablePage {
         readonly property bool muted: appDialog.app && appDialog.app.muted === true
 
         function openFor(row) {
+            var choices = StoandlClient.notifStyleChoices();
+            appDialog.vibes = [{ text: "Default", value: "default" }].concat(choices.vibes || []);
+            appDialog.iconOptions = [{ text: "Default", value: "default" }].concat(choices.icons || []);
             appDialog.app = row;
             appDialog.appName = row.name;
             appDialog.showChoices();
@@ -506,12 +510,13 @@ Kirigami.ScrollablePage {
             appDialog.showChoices();
         }
 
-        // The app's stored colour and app-name placement into their combos (the preview follows both; a
+        // The app's stored colour, icon and app-name placement into their combos (the preview follows both; a
         // colour name not offered here shows as Default). Set imperatively, not bound: the mobile selection
         // dialog assigns currentIndex itself, which would drop a binding and leave the next app's dialog
         // showing this one's choice.
         function showChoices() {
             colorCombo.currentIndex = Math.max(0, page.optionIndex(appDialog.colorOptions, appDialog.app && appDialog.app.color));
+            iconCombo.currentIndex = Math.max(0, page.optionIndex(appDialog.iconOptions, appDialog.app && appDialog.app.icon));
             appNameCombo.currentIndex = Math.max(0, page.optionIndex(appDialog.appNameOptions,
                                                                      appDialog.app && appDialog.app.appNamePlacement));
         }
@@ -615,12 +620,15 @@ Kirigami.ScrollablePage {
                 model: appDialog.vibes
                 delegate: QQC2.ItemDelegate {
                     id: vibeRow
-                    required property string modelData
+                    required property var modelData
+                    // NotifList reports "" for no override, which is the "default" row.
+                    readonly property bool chosen: appDialog.app
+                        && (appDialog.app.vibe || "default").toLowerCase() === modelData.value.toLowerCase()
                     Layout.fillWidth: true
                     onClicked: {
-                        var r = StoandlClient.notifSetStyle(appDialog.appName, "", "", vibeRow.modelData);
-                        if (r.kind === "ok" || r.ok)
-                            page.toast("Vibration · " + vibeRow.modelData);
+                        var r = StoandlClient.notifSetStyle(appDialog.appName, "", "", vibeRow.modelData.value);
+                        if (r.ok)
+                            page.toast("Vibration · " + vibeRow.modelData.text);
                         else
                             page.toast("Vibration: " + (r.tail || r.kind));
                         appDialog.refreshApp();
@@ -629,14 +637,13 @@ Kirigami.ScrollablePage {
                         spacing: Kirigami.Units.largeSpacing
                         Kirigami.Icon {
                             source: "audio-volume-high-symbolic"
-                            color: (appDialog.app && appDialog.app.vibe === vibeRow.modelData)
-                                   ? Kirigami.Theme.highlightColor : Kirigami.Theme.textColor
+                            color: vibeRow.chosen ? Kirigami.Theme.highlightColor : Kirigami.Theme.textColor
                             implicitWidth: Kirigami.Units.iconSizes.smallMedium
                             implicitHeight: Kirigami.Units.iconSizes.smallMedium
                         }
-                        QQC2.Label { text: vibeRow.modelData; Layout.fillWidth: true }
+                        QQC2.Label { text: vibeRow.modelData.text; Layout.fillWidth: true }
                         Kirigami.Icon {
-                            visible: appDialog.app && appDialog.app.vibe === vibeRow.modelData
+                            visible: vibeRow.chosen
                             source: "checkmark-symbolic"
                             color: Kirigami.Theme.highlightColor
                             implicitWidth: Kirigami.Units.iconSizes.small
@@ -648,19 +655,20 @@ Kirigami.ScrollablePage {
 
             Kirigami.Separator { Layout.fillWidth: true }
 
-            // --- options: custom icon ---
+            // --- options: custom icon (preselected by showChoices(), so only a user's pick writes) ---
             FormCard.FormComboBoxDelegate {
+                id: iconCombo
                 Layout.fillWidth: true
                 text: "Custom icon"
                 description: "Glyph shown on the watch"
+                textRole: "text"
+                valueRole: "value"
                 model: appDialog.iconOptions
-                currentIndex: 0
-                onCurrentValueChanged: {
-                    if (!appDialog.visible)
-                        return;
-                    var r = StoandlClient.notifSetStyle(appDialog.appName, "", currentValue, "");
-                    if (r.kind === "ok" || r.ok)
-                        page.toast("Icon · " + currentValue);
+                onActivated: (index) => {
+                    var o = appDialog.iconOptions[index];
+                    var r = StoandlClient.notifSetStyle(appDialog.appName, "", o.value, "");
+                    if (r.ok)
+                        page.toast("Icon · " + o.text);
                     else
                         page.toast("Icon: " + (r.tail || r.kind));
                     appDialog.refreshApp();

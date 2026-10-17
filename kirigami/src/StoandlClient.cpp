@@ -1446,6 +1446,26 @@ QVariantMap StoandlClient::notifSetStyle(const QString &name, const QString &col
 {
     return statusMap(callStatus(QStringLiteral("NotifSetStyle"), {name, color, icon, vibe}));
 }
+QVariantMap StoandlClient::notifStyleChoices()
+{
+    // Record: kind(vibe|icon) \t value \t label
+    QVariantList vibes, icons;
+    const QVariantList records = list(QStringLiteral("NotifStyleChoices"));
+    for (const QVariant &v : records) {
+        const QStringList f = v.toStringList();
+        QVariantMap o;
+        o[QStringLiteral("value")] = f.value(1);
+        o[QStringLiteral("text")]  = f.value(2);
+        if (f.value(0) == QStringLiteral("vibe"))
+            vibes.append(o);
+        else if (f.value(0) == QStringLiteral("icon"))
+            icons.append(o);
+    }
+    QVariantMap m;
+    m[QStringLiteral("vibes")] = vibes;
+    m[QStringLiteral("icons")] = icons;
+    return m;
+}
 QVariantMap StoandlClient::notifSetAppName(const QString &name, const QString &placement)
 {
     return statusMap(callStatus(QStringLiteral("NotifSetAppName"), {name, placement}));
