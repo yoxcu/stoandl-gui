@@ -125,7 +125,7 @@ Kirigami.ScrollablePage {
     // unmatched (a future libpebble pref) lands in "Other" so nothing is ever dropped.
     readonly property var sectionDefs: [
         { key: "quicklaunch", title: "Quick launch",        match: function (id) { return id.indexOf("ql") === 0; } },
-        { key: "display",     title: "Display & backlight", match: function (id) { return id.indexOf("light") === 0 || id === "textStyle" || id === "displayOrientationLeftHanded"; } },
+        { key: "display",     title: "Display & backlight", match: function (id) { return id.indexOf("light") === 0 || id === "systemTextSize" || id === "displayOrientationLeftHanded"; } },
         { key: "notif",       title: "Notifications",       match: function (id) { return id.indexOf("notif") === 0 || id === "mask" || id.indexOf("timelineQuickView") === 0; } },
         { key: "quiet",       title: "Quiet Time",          match: function (id) { return id.indexOf("dnd") === 0; } },
         { key: "vibe",        title: "Vibration",           match: function (id) { return id.indexOf("vibe") >= 0; } },
