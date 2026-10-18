@@ -1448,7 +1448,7 @@ QVariantMap StoandlClient::notifSetStyle(const QString &name, const QString &col
 }
 QVariantMap StoandlClient::notifStyleChoices()
 {
-    // Record: kind(vibe|icon) \t value \t label
+    // Record: kind(vibe|icon) \t value \t label; a vibe adds \t ms,ms,… \t builtin|custom
     QVariantList vibes, icons;
     const QVariantList records = list(QStringLiteral("NotifStyleChoices"));
     for (const QVariant &v : records) {
@@ -1456,8 +1456,11 @@ QVariantMap StoandlClient::notifStyleChoices()
         QVariantMap o;
         o[QStringLiteral("value")] = f.value(1);
         o[QStringLiteral("text")]  = f.value(2);
-        if (f.value(0) == QStringLiteral("vibe"))
+        if (f.value(0) == QStringLiteral("vibe")) {
+            o[QStringLiteral("pattern")] = f.value(3);
+            o[QStringLiteral("custom")]  = (f.value(4) == QStringLiteral("custom"));
             vibes.append(o);
+        }
         else if (f.value(0) == QStringLiteral("icon"))
             icons.append(o);
     }
@@ -1465,6 +1468,10 @@ QVariantMap StoandlClient::notifStyleChoices()
     m[QStringLiteral("vibes")] = vibes;
     m[QStringLiteral("icons")] = icons;
     return m;
+}
+QVariantMap StoandlClient::notifVibeTest(const QString &spec)
+{
+    return statusMap(callStatus(QStringLiteral("NotifVibeTest"), {spec}));
 }
 QVariantMap StoandlClient::notifSetAppName(const QString &name, const QString &placement)
 {

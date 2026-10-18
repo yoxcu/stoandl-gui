@@ -641,7 +641,16 @@ Kirigami.ScrollablePage {
                             implicitWidth: Kirigami.Units.iconSizes.smallMedium
                             implicitHeight: Kirigami.Units.iconSizes.smallMedium
                         }
-                        QQC2.Label { text: vibeRow.modelData.text; Layout.fillWidth: true }
+                        QQC2.Label { text: vibeRow.modelData.text; Layout.fillWidth: true; elide: Text.ElideRight }
+                        // Buzzes the connected watch without picking the row.
+                        QQC2.ToolButton {
+                            text: "Test"
+                            flat: true
+                            onClicked: {
+                                var r = StoandlClient.notifVibeTest(vibeRow.modelData.value);
+                                page.toast(r.ok ? r.tail : "Test: " + (r.tail || r.kind));
+                            }
+                        }
                         Kirigami.Icon {
                             visible: vibeRow.chosen
                             source: "checkmark-symbolic"

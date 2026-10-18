@@ -187,7 +187,8 @@ public:
     Q_INVOKABLE QVariantMap  notifSetMuteAll(const QString &spec);                      // NotifSetMuteAll(s)
     Q_INVOKABLE QVariantMap  notifSetStyle(const QString &name, const QString &color,
                                            const QString &icon, const QString &vibe);   // NotifSetStyle(s,s,s,s)
-    Q_INVOKABLE QVariantMap  notifStyleChoices();        // -> {vibes:[{text,value}], icons:[{text,value}]}
+    Q_INVOKABLE QVariantMap  notifStyleChoices();        // -> {vibes:[{text,value,pattern,custom}], icons:[{text,value}]}
+    Q_INVOKABLE QVariantMap  notifVibeTest(const QString &spec);                        // NotifVibeTest(s)
     Q_INVOKABLE QVariantMap  notifSetAppName(const QString &name, const QString &placement); // NotifSetAppName(s,s)
     // HOOK (notifications) — regex filters.
     Q_INVOKABLE QVariantList notifListFilters();         // -> [{pattern,action}]
