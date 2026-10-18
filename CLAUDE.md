@@ -66,8 +66,9 @@ color, schedule}` and the `allowed` field is **pipe-(`|`)-separated** for the op
 `WatchPrefsControl.allowed()`). `StoandlClient::listWatchPrefs()` splits on `|`, pre-derives number
 `min/max/unit` (a `"3000 ms"` current is not a plain int — use the leading digits), and a `debug` flag.
 Per type: bool→`FormSwitchDelegate`, enum→`FormComboBoxDelegate` (options = `allowed`, **display names**,
-not Kotlin constant names — fixed daemon-side), quicklaunch→`FormComboBoxDelegate` of **app names**
-(from `ListApps`) + "Off" (NEVER a slider/uuid), number→`FormSpinBoxDelegate` (unit via `textFromValue`,
+not Kotlin constant names — fixed daemon-side), quicklaunch→`FormComboBoxDelegate` of "Off" + the
+firmware system actions (Quiet Time, Backlight, …, read from `allowed` between `off` and the
+`<app name or uuid>` placeholder) + **app names** (from `ListApps`) (NEVER a slider/uuid), number→`FormSpinBoxDelegate` (unit via `textFromValue`,
 **debounce the write** — `onValueChanged` fires every step and `applyPref` rebuilds the list), color→a
 swatch + preset combo (the daemon takes a preset *name* back; `FormColorDelegate` is **avoided** — it
 calls `i18ndc()` and we deliberately link no KF6 C++ / `KLocalizedContext`), schedule (the Quiet Time

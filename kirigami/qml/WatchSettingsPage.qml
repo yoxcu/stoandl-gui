@@ -41,6 +41,10 @@ Kirigami.ScrollablePage {
     // `watch.dndWeekdaySchedule` would otherwise be rewritten in stoandl.conf too), and writes nothing
     // without a valid one to restore.
     function smokeExercise() {
+        var ql = page.prefById("qlBack");
+        if (ql)
+            console.log("stoandl-smoke: quick launch qlBack='" + page.quickLabel(ql.current) + "' options="
+                        + page.quickOptions(ql.current, ql.allowed).join("|"));
         var bad = StoandlClient.normalizeSchedule("25:00-07:00");
         var good = StoandlClient.normalizeSchedule(" 7:5-22:30 ");
         console.log("stoandl-smoke: schedule validator bad='" + bad + "' good='" + good + "'");
@@ -65,14 +69,17 @@ Kirigami.ScrollablePage {
     }
 
     // --- quick-launch helpers ---------------------------------------------
-    // "off" displays as "Off"; everything else (an app name, or a raw uuid for a system target) shows
-    // verbatim. The option list is ["Off", …apps] plus the current value if it isn't already in it
-    // (so a uuid target like the Quiet-Time toggle stays visible and selected).
+    // "off" displays as "Off"; everything else (a system action, an app name, or a raw uuid) shows
+    // verbatim. The option list is ["Off", …system actions, …apps] plus the current value if it isn't
+    // already in it. The daemon names the system actions (Quiet Time, Backlight, …) in `allowed`
+    // between "off" and the "<app name or uuid>" placeholder, and takes those names back.
     function quickLabel(current) {
         return (!current || String(current).toLowerCase() === "off") ? "Off" : current;
     }
-    function quickOptions(current) {
-        var opts = ["Off"].concat(page.appTitles);
+    function quickOptions(current, allowed) {
+        var actions = (allowed || []).filter(function (a) { return a !== "off" && a.charAt(0) !== "<"; });
+        var opts = ["Off"];
+        actions.concat(page.appTitles).forEach(function (o) { if (opts.indexOf(o) < 0) opts.push(o); });
         var lbl = page.quickLabel(current);
         if (opts.indexOf(lbl) < 0) opts.push(lbl);
         return opts;
@@ -144,7 +151,7 @@ Kirigami.ScrollablePage {
         for (var i = 0; i < page.watchPrefs.length; ++i) {
             var p = page.watchPrefs[i];
             if (p.type === "quicklaunch") {
-                p.qlOptions = page.quickOptions(p.current);
+                p.qlOptions = page.quickOptions(p.current, p.allowed);
                 p.qlCurrentLabel = page.quickLabel(p.current);
             } else if (p.type === "color") {
                 p.colorPresetList = page.colorPresets(p.allowed);

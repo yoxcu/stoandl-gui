@@ -119,6 +119,11 @@ CONFIG_COMBO_TOKENS = {
 }
 
 
+
+# WatchPrefsControl.allowed() for a quicklaunch pref: the firmware system actions (QuickLaunchActions,
+# in the official app's order) between "off" and the app placeholder.
+QL_ALLOWED = "off|Quiet Time|Backlight|Motion Backlight|Airplane Mode|Timeline Past|Timeline Future|<app name or uuid>"
+
 class MockStoandl(dbus.service.Object):
     def __init__(self, bus, path):
         super().__init__(bus, path)
@@ -246,19 +251,22 @@ class MockStoandl(dbus.service.Object):
         # schedules are at the end here too, so the GUIs' "hours follow their Enabled switch" ordering
         # is exercised.
         self.prefs = [
-            # --- Quick Launch (quicklaunch: app name or "off") ---
+            # --- Quick Launch (quicklaunch: a system action, an app name or "off") ---
             {"id": "qlUp", "type": "quicklaunch", "current": "Music", "default": "off",
-             "allowed": "off|<app name or uuid>", "flags": "",
+             "allowed": QL_ALLOWED, "flags": "",
              "name": "Quick Launch: Hold Up", "description": "App launched by a long up-press"},
             {"id": "qlDown", "type": "quicklaunch", "current": "off", "default": "off",
-             "allowed": "off|<app name or uuid>", "flags": "",
+             "allowed": QL_ALLOWED, "flags": "",
              "name": "Quick Launch: Hold Down", "description": "App launched by a long down-press"},
             {"id": "qlSelect", "type": "quicklaunch", "current": "off", "default": "off",
-             "allowed": "off|<app name or uuid>", "flags": "",
+             "allowed": QL_ALLOWED, "flags": "",
              "name": "Quick Launch: Hold Select", "description": "App launched by a long select-press"},
             {"id": "qlSingleClickUp", "type": "quicklaunch", "current": "Health", "default": "Health",
-             "allowed": "off|<app name or uuid>", "flags": "",
+             "allowed": QL_ALLOWED, "flags": "",
              "name": "Quick Launch: Tap Up", "description": "App launched by a tap of the up button"},
+            {"id": "qlBack", "type": "quicklaunch", "current": "Quiet Time", "default": "Quiet Time",
+             "allowed": QL_ALLOWED, "flags": "",
+             "name": "Quick Launch: Hold Back", "description": ""},
             # --- Display & Backlight ---
             {"id": "lightEnabled", "type": "bool", "current": "true", "default": "true",
              "allowed": "true|false", "flags": "", "name": "Backlight",
@@ -1436,7 +1444,9 @@ class MockStoandl(dbus.service.Object):
                     return f"error:'{raw}' is not a color (hex RRGGBB or a preset name) for {pref_id}"
                 cur = "0x" + hexv[-6:].upper().rjust(6, "0")
         elif p["type"] == "quicklaunch":
-            cur = "off" if t.lower() in ("", "off", "none", "disabled") else t
+            action = next((a for a in QL_ALLOWED.split("|")[1:-1]
+                           if re.sub(r"[\s_-]", "", a).lower() == re.sub(r"[\s_-]", "", t).lower()), None)
+            cur = "off" if t.lower() in ("", "off", "none", "disabled") else (action or t)
         elif p["type"] == "schedule":
             cur = self._parse_schedule(raw)
             if cur is None:

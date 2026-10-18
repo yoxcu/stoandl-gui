@@ -1137,7 +1137,7 @@ QVariantList StoandlClient::listWatchPrefs()
     // type ∈ {bool, number, enum, quicklaunch, color, schedule} (the daemon's
     // WatchPrefsControl.typeName()). `allowed` is built by WatchPrefsControl.allowed() and is
     // **pipe-separated** for the option types — enum ("Standard - Low|Standard - High|…"),
-    // quicklaunch ("off|<app name or uuid>"), color ("RRGGBB|<preset>|…") — and a "min..max[ unit]"
+    // quicklaunch ("off|Quiet Time|…|<app name or uuid>": the system actions sit between), color ("RRGGBB|<preset>|…") — and a "min..max[ unit]"
     // range for number, "true|false" for bool, the literal "HH:MM-HH:MM" for schedule (whose
     // current/default are a 24 h window such as "22:00-07:00"; an end before the start is overnight).
     // The QML renders one delegate per type, so split on '|' (NOT ','), and pre-derive the number
