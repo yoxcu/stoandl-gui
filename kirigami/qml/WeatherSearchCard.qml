@@ -9,22 +9,19 @@ import org.stoandl.gui
 // result, and the daemon adds it to weather.locations. The lookup is an Open-Meteo request, so it runs
 // only on Enter or the Search button, and the daemon refuses it unless weather.place_search is on.
 // `changed()` asks the page to re-read its config so the Locations row shows the new entry.
+// The page passes weather.place_search in as `searchOn` from the config it already holds.
 ColumnLayout {
     id: card
     spacing: 0
 
     signal changed()
 
+    /** weather.place_search, from the page's config (no GetConfig of its own). */
     property bool searchOn: false
     property var places: []
     property string message: ""
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
-
-    function reload() {
-        var c = StoandlClient.getConfig();
-        card.searchOn = !!(c && c.values && c.values["weather.place_search"] === "true");
-    }
 
     function search() {
         var q = nameRow.value.trim();
@@ -43,8 +40,6 @@ ColumnLayout {
             card.changed();
         }
     }
-
-    Component.onCompleted: reload()
 
     FormCard.FormHeader { title: "Find a location" }
 

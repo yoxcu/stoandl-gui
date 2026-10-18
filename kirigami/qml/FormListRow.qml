@@ -9,6 +9,8 @@ import "ConfList.js" as ConfList
  * A list-valued setting as one editable row per item, with move up/down, remove and an add field.
  * `value` is the daemon's encoded list (ConfList.js), so an item may contain a comma; every edit emits
  * the whole re-encoded list through commit() — the caller writes it and feeds the stored value back.
+ * When that stored value comes back unchanged (the daemon refused the edit), the item rows are rebuilt
+ * from it anyway, so a refused edit doesn't stay in its field.
  */
 FormCard.AbstractFormDelegate {
     id: root
@@ -26,7 +28,11 @@ FormCard.AbstractFormDelegate {
 
     function emitWith(list) {
         var v = ConfList.encode(list);
-        if (v !== root.value) root.commit(v);
+        if (v === root.value) return;
+        var before = root.value;
+        root.commit(v);
+        if (root.value === before)
+            itemRepeater.model = Qt.binding(function () { return ConfList.decode(root.value); });
     }
     function setAt(i, text) { var l = root.items.slice(); l[i] = text; root.emitWith(l); }
     function removeAt(i) { var l = root.items.slice(); l.splice(i, 1); root.emitWith(l); }
@@ -63,6 +69,7 @@ FormCard.AbstractFormDelegate {
         }
 
         Repeater {
+            id: itemRepeater
             model: root.items
             delegate: RowLayout {
                 id: itemRow

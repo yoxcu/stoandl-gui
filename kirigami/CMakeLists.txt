@@ -60,6 +60,7 @@ qt_add_qml_module(stoandl-gui
         qml/FormSpinRow.qml
         qml/FormListRow.qml
         qml/ConfList.js
+        qml/StableRows.js
         qml/DaemonPlaceholder.qml
         qml/WatchPage.qml
         qml/WatchDetailsDialog.qml

@@ -12,8 +12,13 @@ import org.kde.kirigamiaddons.formcard as FormCard
  * settings row on this interface carries one.
  *
  * The debounce is the point of sharing this: a spin box fires valueChanged on every step and on
- * auto-repeat, and both callers respond by re-fetching and rebuilding the very control being dragged.
- * So `commit` is emitted once, ~500 ms after the user stops — never per tick.
+ * auto-repeat, and both callers respond to a commit with a D-Bus write and a re-read. So `commit` is
+ * emitted once, ~500 ms after the user stops — never per tick.
+ *
+ * The row outlives a commit (the callers patch values into stable rows), so it follows `value`: a
+ * re-read that changes it moves the spin box, except while the user's own edit is still pending (that
+ * edit wins and is committed). Right after a commit it shows `value` again, which is the daemon's
+ * stored number by then, so a refused or normalised value doesn't linger.
  */
 FormCard.AbstractFormDelegate {
     id: root
@@ -24,8 +29,12 @@ FormCard.AbstractFormDelegate {
     property int to: 1000000
     /** Appended to the displayed number (e.g. "min", "days"). */
     property string unit: ""
-    /** The value to show. Assign it; the row does not write back to it. */
+    /** The value to show. Bind it; the row does not write back to it. */
     property int value: 0
+
+    onValueChanged: if (!commitTimer.running) sb.show(root.value)
+    onFromChanged: if (!commitTimer.running) sb.show(root.value)
+    onToChanged: if (!commitTimer.running) sb.show(root.value)
 
     /** Emitted ~500 ms after the user stops changing the number, never on the initial set. */
     signal commit(int newValue)
@@ -75,16 +84,22 @@ FormCard.AbstractFormDelegate {
             }
             textFromValue: function (v, locale) { return v + (root.unit ? " " + root.unit : ""); }
             valueFromText: function (text, locale) { return parseInt(text, 10) || 0; }
-            Component.onCompleted: {
-                sb.value = Math.max(root.from, Math.min(root.to, root.value));
+            // A programmatic set (the initial value, a re-read) that must not look like an edit.
+            function show(v) {
+                sb.ready = false;
+                sb.value = Math.max(root.from, Math.min(root.to, v));
                 sb.ready = true;
             }
+            Component.onCompleted: sb.show(root.value)
             onValueChanged: if (sb.ready) commitTimer.restart()
             Timer {
                 id: commitTimer
                 interval: 500
                 repeat: false
-                onTriggered: root.commit(sb.value)
+                onTriggered: {
+                    root.commit(sb.value);
+                    sb.show(root.value);
+                }
             }
         }
     }
