@@ -36,6 +36,8 @@ Kirigami.ScrollablePage {
     // follows. reload() reads it with GetConfig; "" until then (or from a daemon without the key), which
     // hides the row and its preview.
     property string appNameGlobal: ""
+    // notification.images, for the per-app images switch's hint; reload() reads it.
+    property bool imagesGlobal: true
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
@@ -74,6 +76,8 @@ Kirigami.ScrollablePage {
         var c = StoandlClient.getConfig();
         var g = page.optionIndex(page.appNamePlacements, ((c && c.values) ? c.values : {})["notification.app_name"], true);
         page.appNameGlobal = g >= 0 ? page.appNamePlacements[g].value : "";
+        var img = ((c && c.values) ? c.values : {})["notification.images"];
+        page.imagesGlobal = img === undefined || String(img).toLowerCase() !== "false";
         appNameGlobalCombo.currentIndex = g;
     }
 
@@ -519,6 +523,7 @@ Kirigami.ScrollablePage {
             iconCombo.currentIndex = Math.max(0, page.optionIndex(appDialog.iconOptions, appDialog.app && appDialog.app.icon));
             appNameCombo.currentIndex = Math.max(0, page.optionIndex(appDialog.appNameOptions,
                                                                      appDialog.app && appDialog.app.appNamePlacement));
+            imagesSwitch.checked = !(appDialog.app && appDialog.app.imagesOff === true);
         }
 
         ColumnLayout {
@@ -721,6 +726,23 @@ Kirigami.ScrollablePage {
                         page.toast("App name · " + o.text);
                     else
                         page.toast("App name: " + (r.tail || r.kind));
+                    appDialog.refreshApp();
+                }
+            }
+
+            // The official app's per-app images switch; on follows notification.images.
+            FormCard.FormSwitchDelegate {
+                id: imagesSwitch
+                Layout.fillWidth: true
+                text: "Send images"
+                description: page.imagesGlobal ? "Pictures this app attaches, on watches that show them."
+                                               : "Pictures are off for every app (Settings → Daemon configuration → Pictures on the watch)."
+                onToggled: {
+                    var r = StoandlClient.notifSetImages(appDialog.appName, checked ? "on" : "off");
+                    if (r.ok)
+                        page.toast(checked ? "Images on" : "Images off");
+                    else
+                        page.toast("Images: " + (r.tail || r.kind));
                     appDialog.refreshApp();
                 }
             }

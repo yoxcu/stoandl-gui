@@ -1444,8 +1444,9 @@ QVariantList StoandlClient::heartbeatMetrics(const QString &watch)
 
 QVariantList StoandlClient::notifList()
 {
-    // Record: name \t muteLabel \t color \t icon \t vibe \t lastNotifiedEpochSeconds \t appNamePlacement
-    // (the app's notification.app_name override, small|subtitle|off; empty = follows the global setting).
+    // Record: name \t muteLabel \t color \t icon \t vibe \t lastNotifiedEpochSeconds \t appNamePlacement \t images
+    // (the app's notification.app_name override, small|subtitle|off; empty = follows the global setting;
+    // images is `off` when the app's pictures are off, empty = follows notification.images).
     QVariantList rows;
     const QVariantList records = list(QStringLiteral("NotifList"));
     for (const QVariant &v : records) {
@@ -1460,6 +1461,7 @@ QVariantList StoandlClient::notifList()
         m[QStringLiteral("vibe")]         = f.value(4);
         m[QStringLiteral("lastNotified")] = f.value(5);
         m[QStringLiteral("appNamePlacement")] = f.value(6);
+        m[QStringLiteral("imagesOff")]    = (f.value(7) == QStringLiteral("off"));
         rows.append(m);
     }
     return rows;
@@ -1508,6 +1510,10 @@ QVariantMap StoandlClient::notifVibeTest(const QString &spec)
 QVariantMap StoandlClient::notifSetAppName(const QString &name, const QString &placement)
 {
     return statusMap(callStatus(QStringLiteral("NotifSetAppName"), {name, placement}));
+}
+QVariantMap StoandlClient::notifSetImages(const QString &name, const QString &mode)
+{
+    return statusMap(callStatus(QStringLiteral("NotifSetImages"), {name, mode}));
 }
 
 QVariantList StoandlClient::notifListFilters()

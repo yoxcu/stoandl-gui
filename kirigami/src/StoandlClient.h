@@ -189,7 +189,7 @@ public:
     Q_INVOKABLE QVariantList heartbeatMetrics(const QString &watch = QString());
 
     // --- typed wrappers: Notifications screen ------------------------------
-    Q_INVOKABLE QVariantList notifList();                // -> [{name,mute,muted,color,icon,vibe,lastNotified,appNamePlacement}]
+    Q_INVOKABLE QVariantList notifList();                // -> [{name,mute,muted,color,icon,vibe,lastNotified,appNamePlacement,imagesOff}]
     Q_INVOKABLE QVariantMap  notifSetMute(const QString &name, const QString &spec);   // NotifSetMute(s,s)
     Q_INVOKABLE QVariantMap  notifSetMuteAll(const QString &spec);                      // NotifSetMuteAll(s)
     Q_INVOKABLE QVariantMap  notifSetStyle(const QString &name, const QString &color,
@@ -197,6 +197,7 @@ public:
     Q_INVOKABLE QVariantMap  notifStyleChoices();        // -> {vibes:[{text,value,pattern,custom}], icons:[{text,value}]}
     Q_INVOKABLE QVariantMap  notifVibeTest(const QString &spec);                        // NotifVibeTest(s)
     Q_INVOKABLE QVariantMap  notifSetAppName(const QString &name, const QString &placement); // NotifSetAppName(s,s)
+    Q_INVOKABLE QVariantMap  notifSetImages(const QString &name, const QString &mode); // NotifSetImages(s,s)
     // HOOK (notifications) — regex filters.
     Q_INVOKABLE QVariantList notifListFilters();         // -> [{pattern,action}]
     Q_INVOKABLE QVariantMap  notifAddFilter(const QString &pattern, const QString &action);
