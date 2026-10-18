@@ -1999,20 +1999,43 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def PermPending(self):
+        # appUuid, appName, key, label, requestedAtMs, running, seen (PluginControl.pending)
         if not hasattr(self, "perm_pending"):
-            self.perm_pending = [("2c4b7f10-9a3d-4e6b-8f21-5d0c7e9a1b34", "Stocks", "Internet/query1.finance.yahoo.com", "Send data to query1.finance.yahoo.com", "1760000000000")]
+            self.perm_pending = [
+                ["2c4b7f10-9a3d-4e6b-8f21-5d0c7e9a1b34", "Stocks", "Internet/query1.finance.yahoo.com", "Send data to query1.finance.yahoo.com", "1760000000000", "true", "false"],
+                ["7e0d3a52-1b6c-4f8e-9a27-3c5d8e1f0b46", "Hue", "LocalNetwork", "Reach devices on the local network", "1760000100000", "false", "false"],
+            ]
         return [rec(*r) for r in self.perm_pending]
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="as")
     def PermList(self, app):
-        return [rec("Internet/query1.finance.yahoo.com", "undecided", "exfiltrating", "Send data to query1.finance.yahoo.com", "0")]
+        # key, status (granted|denied|auto|waiting|blocked), kind, label, lastUsedMs
+        self.PermPending()
+        if not hasattr(self, "perm_decided"):
+            self.perm_decided = {("2c4b7f10-9a3d-4e6b-8f21-5d0c7e9a1b34", "Location"): "granted"}
+        rows = [(r[2], "waiting", "exfiltrating" if r[2].startswith("Internet") else "write", r[3], "0")
+                for r in self.perm_pending if r[0] == app]
+        rows += [(k, st, "read", "Your location", "1760000200000")
+                 for (a, k), st in self.perm_decided.items() if a == app]
+        rows.append(("Calendar", "auto", "read", "Your calendar", "0"))
+        return [rec(*r) for r in sorted(rows)]
 
     @dbus.service.method(IFACE, in_signature="sss", out_signature="s")
     def PermSet(self, app, key, decision):
-        self.PermPending()
-        self.perm_pending = [r for r in self.perm_pending if not (r[0] == app and r[2] == key)]
+        self.PermPending(); self.PermList(app)
+        if decision == "later":
+            hit = [r for r in self.perm_pending if r[0] == app and (key == "" or r[2] == key)]
+            if not hit:
+                return f"notfound:nothing waiting"
+            for r in hit:
+                r[6] = "true"
+        elif decision in ("allow", "deny"):
+            self.perm_pending = [r for r in self.perm_pending if not (r[0] == app and r[2] == key)]
+            self.perm_decided[(app, key)] = "granted" if decision == "allow" else "denied"
+        elif decision == "reset":
+            self.perm_decided.pop((app, key), None)
         self.PermissionRequestsChanged()
-        return f"ok:{key} {decision}"
+        return f"ok:{key or 'all'} {decision}"
 
     # --- Voice: the daemon's speech-model catalog (VoiceModels.kt), downloads simulated over 6 s ---
     MOCK_SPEECH_MODELS = [

@@ -24,17 +24,23 @@ Kirigami.ScrollablePage {
     // Latest PluginList snapshot (empty while plugins are off) and pending permission requests.
     property var plugins: []
     property var permRequests: []
-    // Requests grouped per app: [{appUuid, appName, keys[], labels[]}].
+    // Requests not put off, grouped per app: [{appUuid, appName, running, keys[], labels[]}]. PermPending
+    // covers apps that aren't running too; "Later" (seen) hides a request here but not from the app's badge.
     readonly property var permGroups: {
         const byApp = {}
         const order = []
-        permRequests.forEach(function (r) {
-            if (!byApp[r.appUuid]) { byApp[r.appUuid] = { appUuid: r.appUuid, appName: r.appName, keys: [], labels: [] }; order.push(r.appUuid) }
+        permRequests.filter(function (r) { return !r.seen }).forEach(function (r) {
+            if (!byApp[r.appUuid]) { byApp[r.appUuid] = { appUuid: r.appUuid, appName: r.appName, running: false, keys: [], labels: [] }; order.push(r.appUuid) }
+            byApp[r.appUuid].running = byApp[r.appUuid].running || r.running
             byApp[r.appUuid].keys.push(r.key)
             byApp[r.appUuid].labels.push(r.label)
         })
         return order.map(function (u) { return byApp[u] })
     }
+    // Apps with any waiting request, put off or not (the badge on their Permissions button).
+    readonly property var permWaitingApps: permRequests.map(function (r) { return r.appUuid })
+    // PluginList is empty exactly while plugins (and so permissions) are off.
+    readonly property bool pluginsOn: plugins.length > 0
     // Plugins not served by an extension (an extension's plugin is part of its own row).
     readonly property var appPlugins: plugins.filter(function (p) { return p.kind !== "extension"; })
 
@@ -56,6 +62,11 @@ Kirigami.ScrollablePage {
             if (!r.ok) failed++;
         });
         page.toast(failed ? "Couldn't answer " + failed + " request(s)" : (allow ? "Allowed " : "Denied ") + group.appName);
+        StoandlClient.refreshPlugins();
+    }
+    function putOff(group) {
+        var r = StoandlClient.permSet(group.appUuid, "", "later");
+        page.toast(r.ok ? "Won't ask about " + group.appName + " for now" : "Couldn't put off: " + (r.tail || r.kind));
         StoandlClient.refreshPlugins();
     }
 
@@ -162,6 +173,19 @@ Kirigami.ScrollablePage {
 
     // Re-fetch on show + after every mutation (no LockerChanged signal yet).
     Component.onCompleted: page.reload()
+
+    // Read-only (it also runs against a real daemon): the request banners, then one app's permission dialog.
+    function smokeExercise() {
+        if (!StoandlClient.daemonUp) return;
+        console.log("stoandl-smoke: perm banners " + page.permGroups.map(function (g) {
+            return g.appName + (g.running ? "" : "(closed)") }).join(", ") + " · waiting apps " + page.permWaitingApps.length);
+        var uuid = page.permWaitingApps.length > 0 ? page.permWaitingApps[0] : (page.apps.length > 0 ? page.apps[0].uuid : "");
+        if (uuid === "") return;
+        permDialog.openFor(uuid, "smoke", page.pluginsOn);
+        console.log("stoandl-smoke: perms " + permDialog.rows.map(function (r) { return r.key + "=" + r.status }).join(", ")
+                    + " · unseen waiting " + permDialog.unseenWaiting);
+        permDialog.close();
+    }
 
     // Segment-aware primary action (§4-0): install .pbw for faces/apps,
     // install an archive for extensions.
@@ -274,6 +298,26 @@ Kirigami.ScrollablePage {
                 tint: Kirigami.Theme.positiveTextColor
             }
 
+            // The app's permissions (plugins on, or while it has a request waiting), badged while one waits.
+            QQC2.ToolButton {
+                id: permButton
+                readonly property bool waiting: page.permWaitingApps.indexOf(row.appData.uuid) >= 0
+                visible: page.pluginsOn || waiting
+                icon.name: "security-medium-symbolic"
+                display: QQC2.AbstractButton.IconOnly
+                QQC2.ToolTip.text: waiting ? "Permissions · waiting for your answer" : "Permissions"
+                QQC2.ToolTip.visible: hovered
+                onClicked: permDialog.openFor(row.appData.uuid, row.appData.title, page.pluginsOn)
+                Rectangle {
+                    visible: permButton.waiting
+                    width: Kirigami.Units.smallSpacing * 2
+                    height: width
+                    radius: width / 2
+                    color: Kirigami.Theme.neutralTextColor
+                    anchors { top: parent.top; right: parent.right; margins: Kirigami.Units.smallSpacing }
+                }
+            }
+
             // Open the app's config webview (config-capable apps only).
             QQC2.ToolButton {
                 visible: row.appData.config === true
@@ -364,6 +408,7 @@ Kirigami.ScrollablePage {
                 visible: true
                 type: Kirigami.MessageType.Warning
                 text: modelData.appName + " asks for: " + modelData.labels.join(", ")
+                      + (modelData.running ? "" : " (asked earlier, while it was open)")
                 actions: [
                     Kirigami.Action {
                         text: "Allow"
@@ -374,6 +419,17 @@ Kirigami.ScrollablePage {
                         text: "Deny"
                         icon.name: "dialog-cancel-symbolic"
                         onTriggered: page.answer(modelData, false)
+                    },
+                    Kirigami.Action {
+                        text: "Later"
+                        icon.name: "appointment-soon-symbolic"
+                        tooltip: "Stop asking for now, without deciding"
+                        onTriggered: page.putOff(modelData)
+                    },
+                    Kirigami.Action {
+                        text: "Review"
+                        icon.name: "security-medium-symbolic"
+                        onTriggered: permDialog.openFor(modelData.appUuid, modelData.appName, page.pluginsOn)
                     }
                 ]
             }
@@ -573,6 +629,8 @@ Kirigami.ScrollablePage {
             text: "Extensions are host-side companions that drive watch notifications with quick replies and actions, and can serve plugin data to watchfaces and watchapps."
         }
     }
+
+    AppPermissionsDialog { id: permDialog }
 
     // --- remove app/face confirmation --------------------------------------
     Kirigami.PromptDialog {

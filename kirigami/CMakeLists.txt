@@ -62,6 +62,7 @@ qt_add_qml_module(stoandl-gui
         qml/BatteryPage.qml
         qml/HealthPage.qml
         qml/AppsPage.qml
+        qml/AppPermissionsDialog.qml
         qml/NotificationsPage.qml
         qml/WatchCardPreview.qml
         qml/SettingsPage.qml

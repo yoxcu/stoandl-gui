@@ -116,9 +116,9 @@ public:
 
     // --- Plugins and app permissions ---
     Q_INVOKABLE QVariantList pluginList();               // PluginList() -> [{uuid,kind,name,description,sources[],actions[]}]
-    Q_INVOKABLE QVariantList permPending();              // PermPending() -> [{appUuid,appName,key,label,requestedAt}]
+    Q_INVOKABLE QVariantList permPending();              // PermPending() -> [{appUuid,appName,key,label,requestedAt,running,seen}]
     Q_INVOKABLE QVariantList permList(const QString &app); // PermList(s) -> [{key,status,kind,label,lastUsed}]
-    Q_INVOKABLE QVariantMap  permSet(const QString &app, const QString &key, const QString &decision); // PermSet(s,s,s)
+    Q_INVOKABLE QVariantMap  permSet(const QString &app, const QString &key, const QString &decision); // PermSet(s,s,s): allow|deny|reset|later
     Q_INVOKABLE void         refreshPlugins();           // re-fetch + pluginsChanged + permissionRequestsChanged
 
     // --- Voice (speech-to-text models, Settings → Voice) ---

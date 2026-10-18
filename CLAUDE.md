@@ -97,7 +97,8 @@ own `smokeExercise()` (`WatchSettingsPage` round-trips a Quiet Time window, `Deb
 watch-card preview through each `notification.app_name` placement and writes the stored value back
 unchanged, then opens the per-app dialog, writes its app-name placement back unchanged and logs its
 preview for that override and for Default (each preview as `stoandl-smoke: preview <placement>:
-title=… | small=… | …`); `WatchPage` hands the pairing dialog the
+title=… | small=… | …`); `AppsPage` logs the permission request banners (`stoandl-smoke: perm banners …`)
+and one app's permission dialog rows (`stoandl-smoke: perms key=status, …`), read-only; `WatchPage` hands the pairing dialog the
 daemon's search states (the bare `pending:` and a pause note) and pushes `BatteryPage` even with no
 watch connected; with the daemon down the tick presses "Start daemon". The Quiet Time round trip
 writes the watch's own window back afterwards (the hook also runs against a real daemon). With

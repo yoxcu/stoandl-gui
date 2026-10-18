@@ -1839,6 +1839,8 @@ QVariantList StoandlClient::permPending()
         m[QStringLiteral("key")]         = f.value(2);
         m[QStringLiteral("label")]       = f.value(3);
         m[QStringLiteral("requestedAt")] = f.value(4).toLongLong();
+        m[QStringLiteral("running")]     = f.value(5) != QStringLiteral("false"); // only running apps are prompted
+        m[QStringLiteral("seen")]        = f.value(6) == QStringLiteral("true");  // put off with "later"
         rows.append(m);
     }
     return rows;
@@ -1851,7 +1853,7 @@ QVariantList StoandlClient::permList(const QString &app)
         const QStringList f = v.toStringList();
         QVariantMap m;
         m[QStringLiteral("key")]      = f.value(0);
-        m[QStringLiteral("status")]   = f.value(1);   // granted | denied | undecided
+        m[QStringLiteral("status")]   = f.value(1);   // granted | denied | auto | waiting | blocked
         m[QStringLiteral("kind")]     = f.value(2);   // read | write | exfiltrating
         m[QStringLiteral("label")]    = f.value(3);
         m[QStringLiteral("lastUsed")] = f.value(4).toLongLong();
