@@ -137,6 +137,7 @@ CONFIG_CHECKS = {
 CONFIG_COMBO_TOKENS = {
     "notification.app_name": {"Small line": "small"},
     "voice.backend": {"Local model": "local", "Custom command": "command", "HTTP service": "http"},
+    "voice.fallback_backend": {"None": "off", "Local model": "local", "Custom command": "command", "HTTP service": "http"},
     "plugins.permission_policy": {"If data could leave this machine": "ask_if_exfiltrating", "Always": "always_ask", "Never": "never_ask"},
     "calendar.reminder_vibe": {"Watch default": ""},
 }
@@ -420,16 +421,20 @@ class MockStoandl(dbus.service.Object):
                 ("notification.default_mute", "combo", "Default mute for new apps", "Never,Always,Weekdays,Weekends", "How a newly-seen app is muted until you change it", "Notifications", "live", "", "", "", ""),
                 ("notification.app_name", "combo", "App name on the watch", "Small line,Subtitle,Off", "Where the app's name goes on the watch: a small line under the title, the large bold subtitle, or not at all. A source's own subtitle (an extension's) keeps the subtitle. Apps can override this in their notification settings.", "Notifications", "live", "", "", "", ""),
                 ("notification.sync_to_watch", "toggle", "Sync the app list to the watch", "", "Push the per-app list and mute states to the watch's BlobDB. Current firmware surfaces no per-app notification UI, so this normally changes nothing — mute is enforced host-side.", "Notifications", "restart", "", "", "", ""),
+                ("notification.only_when_locked", "toggle", "Only while the screen is off or locked", "", "Hold notifications back while you're using the phone or computer (display on and session unlocked). Urgent ones (alarms, incoming calls) and allow-filter matches still reach the watch; calls ring as usual.", "Notifications", "live", "", "", "", ""),
                 ("notification.images", "toggle", "Pictures on the watch", "", "Photos and screenshots a notification carries are shown on watches that can (Pebble Time 2 / Round 2, firmware 4.35+). Sender avatars are never sent. Off deletes the stored pictures.", "Notifications", "live", "", "", "", ""),
                 ("notification.sync_dismissals", "toggle", "Clear dismissed notifications from the watch", "", "When a notification is closed on the desktop or phone (or its app withdraws it), it is removed from the watch too. A popup that only times out stays.", "Notifications", "live", "", "", "", ""),
+                ("notification.open_action", "toggle", "Open on the phone or computer", "", "An \"Open\" action on the watch for a notification that opens its app when clicked: it opens the app as a click on the popup would. Plasma only; GNOME doesn't let another program do this.", "Notifications", "live", "", "", "", ""),
                 ("notification.catch_up_minutes", "int", "Catch up after a disconnect", "", "A reconnecting watch also gets the notifications it missed that are at most this old (never from before the daemon started or the watch was paired). 0 = only ones posted after it reconnected.", "Notifications", "restart", "0", "1440", "min", ""),
                 ("notification.canned_replies", "list", "Canned replies", "", "The watch's Reply list for desktop notifications that take a reply (Plasma with the InvokeReply patch) and for extensions without their own list. Empty = Ok, Yes, No, Call me, Call you later. Whole items up to 512 bytes in total are sent.", "Notifications", "live", "", "", "", "Ok,Yes,No,Call me,Call you later"),
                 # --- stoandl alerts ---
-                ("alerts.enabled", "toggle", "Alerts from stoandl", "", "Master switch for the desktop alerts stoandl raises about itself (pairing, Bluetooth, extensions). Forwarded app notifications are unaffected.", "stoandl alerts", "live", "", "", "", ""),
+                ("alerts.enabled", "toggle", "Alerts from stoandl", "", "Master switch for the alerts stoandl raises about itself (pairing, Bluetooth, extensions, permission requests, full battery, pairing scan). Most show on the desktop only; permission prompts and the full-battery alert also show on the watch. Forwarded app notifications are unaffected.", "stoandl alerts", "live", "", "", "", ""),
                 ("alerts.pairing", "toggle", "Pairing problems", "", "Alert when a watch keeps dropping the link (unpaired on the watch) or its pairing was removed on this computer — each with the action that fixes it", "stoandl alerts", "live", "", "", "", ""),
                 ("alerts.bluetooth", "toggle", "Bluetooth blocked", "", "Alert when another app's Bluetooth scan is monopolising the adapter and blocking reconnects", "stoandl alerts", "live", "", "", "", ""),
                 ("alerts.extensions", "toggle", "Extension problems", "", "Alert when an installed extension needs configuring before it can start", "stoandl alerts", "live", "", "", "", ""),
                 ("alerts.permissions", "toggle", "Permission requests", "", "When an app asks for a permission (plugins on), prompt with Allow and Deny on the watch and the desktop", "stoandl alerts", "live", "", "", "", ""),
+                ("alerts.battery_full", "toggle", "Watch fully charged", "", "Alert on the watch and the desktop when a watch on the charger reaches 100 %. Classic-era watches report their charge once an hour, so theirs can come up to an hour late.", "stoandl alerts", "live", "", "", "", ""),
+                ("alerts.scan_failed", "toggle", "Pairing scan failed", "", "Alert when a pairing window can't search for watches because Bluetooth discovery keeps failing to start (once per window). `stoandl watch pair` reports it either way.", "stoandl alerts", "live", "", "", "", ""),
                 # --- Calls & contacts ---
                 ("call.dialer_apps", "list", "Dialer apps", "", "Apps, by name or desktop-entry id (exact match), whose notifications are held back while a call is up (the watch's native call screen replaces them); their title is a fallback caller name. Their other notifications, such as Missed call, still reach the watch.", "Calls & contacts", "live", "", "", "", "calls"),
                 ("contacts.vcard_paths", "list", "Contact files", "", "vCard files (.vcf, .vcard) or folders, searched recursively, used to turn an incoming number into a name. Default: ~/.local/share/kpeoplevcard (Plasma Mobile's phonebook). No egress.", "Calls & contacts", "live", "", "", "", "~/.local/share/kpeoplevcard"),
@@ -450,13 +455,16 @@ class MockStoandl(dbus.service.Object):
                 ("calendar.sync_interval", "int", "Re-read interval", "", "How often calendars are re-read (also rolls the timeline window forward)", "Calendar", "live", "5", "1440", "min", ""),
                 ("calendar.reminders", "toggle", "Event reminders", "", "The watch buzzes before an event (its own reminders). Off = pins only.", "Calendar", "live", "", "", "", ""),
                 ("calendar.show_declined", "toggle", "Show declined events", "", "Events you declined still appear on the timeline", "Calendar", "live", "", "", "", ""),
-                ("calendar.reminder_vibe", "combo", "Reminder vibration", "Watch default,No vibration,Standard,Pulses,Double,Triple,Bloom,Pips,Olé,SOS,Ohhh Oh,Five,Two", "The vibration for every calendar reminder", "Calendar", "live", "", "", "", ""),
+                ("calendar.reminder_vibe", "combo", "Reminder vibration", "Watch default,No vibration,Standard,Pulses,Double,Triple,Bloom,Pips,Olé,SOS,Ohhh Oh,Five,Two", "The vibration for every calendar reminder: a built-in one or one of yours (stoandl notif vibe-add)", "Calendar", "live", "", "", "", ""),
+                # --- Apps & faces ---
+                ("apps.order_faces_by_last_used", "toggle", "Recently used faces first", "", "Move a watchface to the top of the locker order whenever it becomes the active face. Off keeps the order you set.", "Apps & faces", "live", "", "", "", ""),
                 # --- Plugins ---
                 ("plugins.enabled", "toggle", "Plugins", "", "Phone-side data and actions for watchfaces and watchapps: built-in (weather, music, calendar, phone, watch settings), from installed apps, and from extensions. Turns on app permissions too: apps then ask before reading your data or sending it anywhere.", "Plugins", "live", "", "", "", ""),
                 ("plugins.permission_policy", "combo", "When apps ask", "If data could leave this machine,Always,Never", "When an app must ask before using a permission", "Plugins", "live", "", "", "", ""),
                 ("plugins.ask_legacy_apps", "toggle", "Ask older apps too", "", "Apps made before permissions are asked as well, instead of keeping internet access and what they declared", "Plugins", "live", "", "", "", ""),
                 # --- Voice ---
                 ("voice.backend", "combo", "Speech to text", "Off,Local model,Custom command,HTTP service", "Turns the watch's dictation (voice replies, watchapps) and voice notes into text. Local model runs a downloaded model on this computer; HTTP sends the audio to an OpenAI-compatible service.", "Voice", "live", "", "", "", ""),
+                ("voice.fallback_backend", "combo", "Fallback", "None,Local model,Custom command,HTTP service", "Tried when speech to text isn't ready, fails, hears nothing or takes too long; it uses the settings below. For a dictation the first backend then gets 7 of the watch's 14 seconds. HTTP sends the audio to the service.", "Voice", "live", "", "", "", ""),
                 ("voice.local_model", "combo", "Model", "No model installed", "The downloaded model the Local model backend runs (download one below)", "Voice", "live", "", "", "", ""),
                 ("voice.command", "text", "Custom command", "", "A command printing the transcript of {wav} (16 kHz mono WAV) in language {lang} (a code or auto)", "Voice", "live", "", "", "", "parakeet-cli -m ~/.local/share/stoandl/stt/ggml-parakeet-tdt-0.6b-v3-q8_0.bin -t 4 -ng --no-prints -f {wav}"),
                 ("voice.url", "text", "HTTP endpoint", "", "OpenAI-compatible transcription URL (whisper.cpp whisper-server, speaches, LocalAI, a hosted service)", "Voice", "live", "", "", "", "http://127.0.0.1:8080/v1/audio/transcriptions"),
@@ -469,6 +477,7 @@ class MockStoandl(dbus.service.Object):
                 ("music.volume", "combo", "Volume buttons", "System,Player", "What the watch volume buttons control", "Music", "live", "", "", "", ""),
                 ("music.volume_up_command", "text", "Volume-up command", "", "Overrides the auto-detected System-volume backend. Both commands must be set to take effect.", "Music", "live", "", "", "", "wpctl set-volume @DEFAULT_SINK@ 5%+"),
                 ("music.volume_down_command", "text", "Volume-down command", "", "Overrides the auto-detected System-volume backend. Both commands must be set to take effect.", "Music", "live", "", "", "", "wpctl set-volume @DEFAULT_SINK@ 5%-"),
+                ("music.seek_when_available", "toggle", "Seek instead of skip for podcasts", "", "In a player that can seek but has no next/previous track (podcasts, audiobooks), the watch's next/previous jump 15 s forward/back. Off = they always skip.", "Music", "live", "", "", "", ""),
                 # --- Health ---
                 ("health.sync", "toggle", "Health sync", "", "Pull steps/sleep/HR from the watch on connect", "Health", "live", "", "", "", ""),
                 ("health.export", "toggle", "Health export", "", "Project synced health data to NDJSON files", "Health", "live", "", "", "", ""),
@@ -513,6 +522,10 @@ class MockStoandl(dbus.service.Object):
             "notification.canned_replies": "Ok,Yes,No,Call me,Call you later",
             "alerts.enabled": "true", "alerts.pairing": "true", "alerts.bluetooth": "true",
             "alerts.extensions": "true", "alerts.permissions": "true",
+            "alerts.battery_full": "true", "alerts.scan_failed": "true",
+            "notification.only_when_locked": "false", "notification.open_action": "true",
+            "apps.order_faces_by_last_used": "false", "music.seek_when_available": "true",
+            "voice.fallback_backend": "None", "connection.disconnect_persists": "true",
             "plugins.enabled": "false", "plugins.permission_policy": "If data could leave this machine", "plugins.ask_legacy_apps": "false",
             "call.dialer_apps": "calls", "contacts.vcard_paths": "~/.local/share/kpeoplevcard",
             "weather.locations": "Berlin:52.52:13.405", "weather.location_source": "Manual",
