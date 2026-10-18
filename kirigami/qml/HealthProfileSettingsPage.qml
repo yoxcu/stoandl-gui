@@ -19,8 +19,20 @@ Kirigami.ScrollablePage {
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
     function reload() {
-        if (!StoandlClient.daemonUp) { page.profile = ({}); return; }
+        if (!StoandlClient.daemonUp) { page.profile = ({}); page.applyAllowed({}); return; }
         page.profile = StoandlClient.healthProfile();
+        page.applyAllowed(page.profile);
+    }
+
+    // The intervals the daemon accepts right now (GetHealthProfile's third field: 5min only with a
+    // watch on fw 4.39.0+ connected, or when it is already set). An older daemon sends none: offer
+    // the four every firmware takes. Reassigned only on a change, so an open popup isn't reset.
+    readonly property var baseIntervals: ["10min", "30min", "1h", "off"]
+    property var intervalOptions: baseIntervals
+    function applyAllowed(p) {
+        var a = ((p || {})._allowed || {})["hrm_interval"];
+        var next = (a && a.length) ? a : page.baseIntervals;
+        if (JSON.stringify(next) !== JSON.stringify(page.intervalOptions)) page.intervalOptions = next;
     }
 
     // Set one field, then re-read so the shown values stay authoritative (the daemon may normalise).
@@ -32,16 +44,23 @@ Kirigami.ScrollablePage {
 
     function val(key) { return (page.profile || {})[key] || ""; }
     function boolVal(key) { return page.val(key) === "on"; }
-    function comboIndex(options, key) { var i = options.indexOf(page.val(key)); return i >= 0 ? i : 0; }
+    // [fallback] is the entry to show while the value is unknown (the profile is empty before the daemon is ready).
+    function comboIndex(options, key, fallback) {
+        var i = options.indexOf(page.val(key));
+        if (i < 0) i = options.indexOf(fallback);
+        return i >= 0 ? i : 0;
+    }
 
     Connections {
         target: StoandlClient
         function onDaemonUpChanged() { if (StoandlClient.daemonUp) page.reload(); }
+        // A watch connecting or leaving changes which intervals the daemon accepts. Only the choices
+        // are refreshed, so a half-typed field isn't overwritten.
+        function onWatchesChanged(rows) { if (StoandlClient.daemonUp) page.applyAllowed(StoandlClient.healthProfile()); }
     }
 
     Component.onCompleted: page.reload()
 
-    readonly property var intervalOptions: ["10min", "30min", "1h", "off"]
     readonly property var unitOptions: ["metric", "imperial"]
     readonly property var genderOptions: ["female", "male", "other"]
 
@@ -224,7 +243,7 @@ Kirigami.ScrollablePage {
                 text: "Measurement interval"
                 enabled: hrmSwitch.checked
                 model: page.intervalOptions
-                currentIndex: page.comboIndex(page.intervalOptions, "hrm_interval")
+                currentIndex: page.comboIndex(page.intervalOptions, "hrm_interval", "10min")
                 onActivated: page.apply("hrm_interval", currentValue)
             }
             FormCard.FormDelegateSeparator {}

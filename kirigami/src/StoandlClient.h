@@ -144,7 +144,7 @@ public:
     Q_INVOKABLE QVariantMap  addWeatherLocation(const QString &name, double lat, double lon); // AddWeatherLocation(s,d,d)
     Q_INVOKABLE QVariantMap  syncCalendar();             // SyncCalendar()
     Q_INVOKABLE QVariantMap  syncHealth();               // SyncHealth()
-    Q_INVOKABLE QVariantMap  healthProfile();            // GetHealthProfile() -> {key: value, ...}
+    Q_INVOKABLE QVariantMap  healthProfile();            // GetHealthProfile() -> {key: value, ..., _allowed: {key: [values]}}
     Q_INVOKABLE QVariantMap  setHealthProfile(const QString &key, const QString &value); // SetHealthProfile(s,s)
     Q_INVOKABLE QVariantList listCalendars();            // -> [{id,name,enabled,accountId}]
     Q_INVOKABLE QVariantMap  setCalendarEnabled(const QString &id, bool enabled); // SetCalendarEnabled(s,b)

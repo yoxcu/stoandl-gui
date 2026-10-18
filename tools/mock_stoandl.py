@@ -1885,13 +1885,34 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def GetHealthProfile(self):
-        # The watch's own health-tracking config as key\tvalue records.
-        return [rec(k, v) for k, v in self.health_profile.items()]
+        # The watch's own health-tracking config as key\tvalue records; hrm_interval adds the
+        # intervals SetHealthProfile accepts right now as a third, |-joined field.
+        def row(k, v):
+            if k != "hrm_interval":
+                return rec(k, v)
+            allowed = [i for i in ("5min", "10min", "30min", "1h", "off") if self._interval_refusal(i) is None]
+            return rec(k, v, "|".join(allowed))
+        return [row(k, v) for k, v in self.health_profile.items()]
+
+    def _interval_refusal(self, value):
+        # The daemon's intervalRefusal(): switching to 5min needs a connected watch on 4.39.0+.
+        if value != "5min" or self.health_profile["hrm_interval"] == "5min":
+            return None
+        name = self._connected_name()
+        if name is None:
+            return "Connect the watch first: 5min needs firmware 4.39.0 or newer"
+        fw = self.watches[name]["firmware"]
+        if tuple(int(p) for p in fw.lstrip("v").split("-")[0].split(".")[:3]) < (4, 39, 0):
+            return f"{name} runs firmware {fw}; the 5-minute interval needs 4.39.0 or newer"
+        return None
 
     @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
     def SetHealthProfile(self, key, value):
         if key not in self.health_profile:
             return f"notfound:no health-profile key '{key}'"
+        refusal = self._interval_refusal(value) if key == "hrm_interval" else None
+        if refusal is not None:
+            return f"error:{refusal}"
         self.health_profile[key] = value
         return f"ok:{key} = {value}"
 

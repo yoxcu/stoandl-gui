@@ -545,14 +545,20 @@ QVariantMap StoandlClient::syncHealth()   { return statusMap(callStatus(QStringL
 
 QVariantMap StoandlClient::healthProfile()
 {
-    // GetHealthProfile() -> [ [key, value], ... ]  →  { key: value, ... }
+    // GetHealthProfile() -> [ [key, value(, allowed)], ... ]  →  { key: value, ..., _allowed: { key: [values] } }
+    // A third field is the |-joined values SetHealthProfile accepts for that key right now.
     const QVariantList rows = list(QStringLiteral("GetHealthProfile"));
     QVariantMap m;
+    QVariantMap allowed;
     for (const QVariant &r : rows) {
         const QStringList f = r.toStringList();
         if (f.size() >= 2)
             m[f.value(0)] = f.value(1);
+        if (f.size() >= 3 && !f.value(2).isEmpty())
+            allowed[f.value(0)] = f.value(2).split(QLatin1Char('|'));
     }
+    if (!allowed.isEmpty())
+        m[QStringLiteral("_allowed")] = allowed;
     return m;
 }
 
