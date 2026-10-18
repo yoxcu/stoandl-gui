@@ -60,26 +60,36 @@ Kirigami.ScrollablePage {
         return -1;
     }
 
+    // Asynchronous (one round of parallel reads); the latest call wins.
     function reload() {
         if (!StoandlClient.daemonUp)
             return;
-        // Master forward state lives in the sync-status table.
-        var ss = StoandlClient.getSyncStatus();
-        var fwd = false;
-        for (var i = 0; i < ss.length; ++i) {
-            if (ss[i].service === "notifications") { fwd = ss[i].enabled === true; break; }
-        }
-        page.forward = fwd;
-        page.apps = StoandlClient.notifList();
-        page.filters = StoandlClient.notifListFilters();
-        // The combo is set imperatively, not bound, like the per-app combos (see appDialog.showChoices()).
-        var c = StoandlClient.getConfig();
-        var g = page.optionIndex(page.appNamePlacements, ((c && c.values) ? c.values : {})["notification.app_name"], true);
-        page.appNameGlobal = g >= 0 ? page.appNamePlacements[g].value : "";
-        var img = ((c && c.values) ? c.values : {})["notification.images"];
-        page.imagesGlobal = img === undefined || String(img).toLowerCase() !== "false";
-        appNameGlobalCombo.currentIndex = g;
+        StoandlClient.fetch(page, [["getSyncStatus"], ["notifList"], ["notifListFilters"], ["getConfig"]], function (r) {
+            // Master forward state lives in the sync-status table.
+            var ss = r[0];
+            var fwd = false;
+            for (var i = 0; i < ss.length; ++i) {
+                if (ss[i].service === "notifications") { fwd = ss[i].enabled === true; break; }
+            }
+            page.forward = fwd;
+            // Set, not only bound: FormSwitchDelegate drops its `checked` binding on the first change, and
+            // this page is kept across tab visits (Main.qml), so a change made elsewhere (Settings → Sync,
+            // the CLI) or a refused toggle would otherwise leave the switch showing the old state.
+            forwardSwitch.checked = fwd;
+            page.apps = r[1];
+            page.filters = r[2];
+            // The combo is set imperatively, not bound, like the per-app combos (see appDialog.showChoices()).
+            var values = (r[3] && r[3].values) ? r[3].values : {};
+            var g = page.optionIndex(page.appNamePlacements, values["notification.app_name"], true);
+            page.appNameGlobal = g >= 0 ? page.appNamePlacements[g].value : "";
+            var img = values["notification.images"];
+            page.imagesGlobal = img === undefined || String(img).toLowerCase() !== "false";
+            appNameGlobalCombo.currentIndex = g;
+        });
     }
+
+    // Kept while another tab shows (Main.qml): re-read when it comes back.
+    function refreshOnShow() { page.reload(); }
 
     // The same key as Settings → Daemon configuration's row, written as its label. The preview follows
     // the pick before the write lands.
@@ -110,6 +120,7 @@ Kirigami.ScrollablePage {
 
     Connections {
         target: StoandlClient
+        enabled: page.visible
         function onDaemonUpChanged() { if (StoandlClient.daemonUp) page.reload(); }
     }
 

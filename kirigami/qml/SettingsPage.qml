@@ -27,14 +27,18 @@ Kirigami.ScrollablePage {
     // and therefore every schema-driven widget kind — actually run under `QT_QPA_PLATFORM=offscreen`,
     // then run a sub-page's own smokeExercise() for state only a button reaches (Debug → Heartbeat).
     // The sub-pages are page-scoped Components, so Main.qml drives this through the page, not directly.
+    // A sub-page whose loads are asynchronous is exercised once they are in (Main.smokeWhenIdle).
     function smokeExercise() {
         var pages = [syncPage, calendarsPage, watchPage, healthProfilePage, generalPage, backupPage, debugPage];
+        var win = applicationWindow();
         for (var i = 0; i < pages.length; ++i) {
             var sub = page.open(pages[i]);
             if (sub && typeof sub.smokeExercise === "function")
-                sub.smokeExercise();
+                win.smokeWhenIdle(sub.smokeExercise.bind(sub));
         }
-        console.log("stoandl-smoke: exercised " + pages.length + " settings sub-pages");
+        win.smokeWhenIdle(function () {
+            console.log("stoandl-smoke: exercised " + pages.length + " settings sub-pages");
+        });
     }
 
     ColumnLayout {

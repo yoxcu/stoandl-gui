@@ -52,19 +52,25 @@ Kirigami.ScrollablePage {
             page.stepBarData = []; page.sleepBarData = []; page.heartBarData = [];
             return;
         }
-        page.summary = StoandlClient.healthSummary(page.periodType, page.periodOffset);
-        // Steps always has a graph: hourly buckets (day) or per-day bars (week/month).
-        page.stepBarData = StoandlClient.stepsBars(page.periodType, page.periodOffset);
-        if (page.isDay) {
-            page.sleepSegments = StoandlClient.sleepTimeline(page.periodType, page.periodOffset);
-            page.heartSamples = page.hrAvailable ? StoandlClient.heartSamples(page.periodType, page.periodOffset) : [];
-            page.sleepBarData = []; page.heartBarData = [];
-        } else {
-            page.sleepBarData = StoandlClient.sleepBars(page.periodType, page.periodOffset);
-            page.heartBarData = page.hrAvailable ? StoandlClient.heartBars(page.periodType, page.periodOffset) : [];
-            page.sleepSegments = []; page.heartSamples = [];
-        }
+        // One asynchronous round: the summary, steps (hourly buckets for a day, per-day bars for a
+        // week/month), sleep and heart rate together. The heart series is asked for alongside and only
+        // shown when the summary says the watch has an HRM.
+        var pt = page.periodType, off = page.periodOffset, day = page.isDay;
+        StoandlClient.fetch(page, [["healthSummary", pt, off], ["stepsBars", pt, off],
+                                   [day ? "sleepTimeline" : "sleepBars", pt, off],
+                                   [day ? "heartSamples" : "heartBars", pt, off]], function (r) {
+            page.summary = r[0];
+            page.stepBarData = r[1];
+            var heart = page.hrAvailable ? r[3] : [];
+            page.sleepSegments = day ? r[2] : [];
+            page.heartSamples = day ? heart : [];
+            page.sleepBarData = day ? [] : r[2];
+            page.heartBarData = day ? [] : heart;
+        });
     }
+
+    // Kept while another tab shows (Main.qml): re-read when it comes back.
+    function refreshOnShow() { page.reload(); }
 
     function maxOffsetFor(t) { return t === "day" ? 30 : t === "week" ? 12 : 11; }
 
@@ -166,6 +172,7 @@ Kirigami.ScrollablePage {
 
     Connections {
         target: StoandlClient
+        enabled: page.visible
         function onDaemonUpChanged() { if (StoandlClient.daemonUp) page.reload(); }
     }
 

@@ -16,9 +16,11 @@ Kirigami.ScrollablePage {
     // Chart/history window, in seconds (the header switcher). 24 h by default.
     property int rangeSeconds: 24 * 3600
     property var insights: null       // batteryInsights() map, or null
-    // Latest ListWatches verdict. The daemon resolves these methods among CONNECTED watches only, so
-    // with none connected it answers `unknown:` whatever it stored: "no watch connected", not "no data".
-    property bool watchConnected: true
+    // The watch list: the Watch page's at push, then each watchesChanged. The daemon resolves these
+    // methods among CONNECTED watches only, so with none connected it answers `unknown:` whatever it
+    // stored: "no watch connected", not "no data".
+    property var watchRows: []
+    readonly property bool watchConnected: page.watchRows.some(function (w) { return w.connected; })
     property var history: []          // [{ts, level, source, voltage}] oldest first
     property var activity: []         // [{ts, drop, notif, notifDnd}] oldest first (drop-per-interval)
     property double maxDrop: 0        // largest interval drop in the window (bar-chart y-scale)
@@ -55,21 +57,21 @@ Kirigami.ScrollablePage {
             { frac: 0.5, text: page.fmtAxis(page.rangeStart + 0.5 * span) },
             { frac: 1.0, text: "now" },
         ];
-        var rows = StoandlClient.listWatches();
-        var found = false;
-        for (var w = 0; w < rows.length; ++w) if (rows[w].connected) { found = true; break; }
-        page.watchConnected = found;
-        page.insights = StoandlClient.batteryInsights("");
-        page.history = StoandlClient.batteryHistory("", Math.floor(page.rangeStart));
-        // Set maxDrop before activity so the bar Canvas (repaints on activityChanged) has a current scale.
-        var acts = StoandlClient.batteryActivity("", Math.floor(page.rangeStart));
-        var md = 0;
-        for (var i = 0; i < acts.length; ++i) md = Math.max(md, acts[i].drop);
-        page.maxDrop = md;
-        page.activity = acts;
-        var pw = StoandlClient.batteryPower("", Math.floor(page.rangeStart));
-        for (var j = 0; j < pw.length; ++j) pw[j].color = page.sliceColor(pw[j].category, j);
-        page.power = pw;
+        var since = Math.floor(page.rangeStart);
+        StoandlClient.fetch(page, [["batteryInsights", ""], ["batteryHistory", "", since],
+                                   ["batteryActivity", "", since], ["batteryPower", "", since]], function (r) {
+            page.insights = r[0];
+            page.history = r[1];
+            // Set maxDrop before activity so the bar Canvas (repaints on activityChanged) has a current scale.
+            var acts = r[2];
+            var md = 0;
+            for (var i = 0; i < acts.length; ++i) md = Math.max(md, acts[i].drop);
+            page.maxDrop = md;
+            page.activity = acts;
+            var pw = r[3];
+            for (var j = 0; j < pw.length; ++j) pw[j].color = page.sliceColor(pw[j].category, j);
+            page.power = pw;
+        });
     }
 
     function setRange(secs) {
@@ -119,7 +121,7 @@ Kirigami.ScrollablePage {
 
     Connections {
         target: StoandlClient
-        function onWatchesChanged(rows) { page.reload(); }          // battery change pokes WatchesChanged
+        function onWatchesChanged(rows) { page.watchRows = rows; page.reload(); } // battery change pokes WatchesChanged
         function onDaemonUpChanged() { if (StoandlClient.daemonUp) page.reload(); }
     }
     Component.onCompleted: page.reload()

@@ -8,7 +8,9 @@
 #include <QVariantMap>
 #include <QStringList>
 #include <QHash>
+#include <QSet>
 #include <QUrl>
+#include <QJSValue>
 
 #include <functional>
 
@@ -51,6 +53,9 @@ class StoandlClient : public QObject
     Q_PROPERTY(QVariantMap firmwareInfo READ firmwareInfo NOTIFY firmwareInfoChanged)
     // A CheckFirmware call is in flight (the daemon may download a release list first: seconds).
     Q_PROPERTY(bool firmwareChecking READ firmwareChecking NOTIFY firmwareInfoChanged)
+    // Asynchronous reads in flight (fetch(), the refresh*() reloads, app icons; not the firmware check).
+    // The smoke harness waits for 0 before it exercises a page whose loads are asynchronous.
+    Q_PROPERTY(int callsInFlight READ callsInFlight NOTIFY callsInFlightChanged)
 
 public:
     explicit StoandlClient(QObject *parent = nullptr);
@@ -60,8 +65,13 @@ public:
     QString linkPause() const { return m_linkPause; }
     static int smokeMs() { return qEnvironmentVariableIntValue("STOANDL_SMOKE_MS"); }
     static bool smokeFlash() { return smokeMs() > 0 && qEnvironmentVariableIntValue("STOANDL_SMOKE_FLASH") == 1; }
+    // Smoke harness: objects the QML engine is still creating asynchronously (the settings pages'
+    // row Loaders). The smoke waits for 0 (and callsInFlight 0) before it exercises or destroys a page:
+    // destroying rows mid-incubation can leave Qt's in-progress-creation count behind.
+    Q_INVOKABLE int incubatingObjects() const;
     QVariantMap firmwareInfo() const { return m_fwInfo; }
     bool firmwareChecking() const { return m_fwCheckInFlight; }
+    int callsInFlight() const { return m_callsInFlight; }
 
     // Parsed status string: "kind:tail", tail tab-split into fields.
     struct Status {
@@ -76,6 +86,13 @@ public:
     Q_INVOKABLE QVariantMap call(const QString &method, const QVariantList &args = {});
     // as-returning call -> [ [f0, f1, ...], ... ] (one QStringList per record)
     Q_INVOKABLE QVariantList list(const QString &method, const QVariantList &args = {});
+    // A typed read without blocking, for page loads: `reads` is one read, named like its Q_INVOKABLE
+    // with its arguments after it (["healthSummary", "day", 0]), or a list of them ([["configSchema"],
+    // ["getConfig"]]). The calls run in parallel; `callback` gets what the synchronous call returns (or
+    // the values in order, for a list) once all of them are in. Scoped to `owner`: nothing is delivered
+    // after it is destroyed, and a newer fetch for the same owner drops one still in flight (latest
+    // wins). The reads available are the ones readSpec() in the .cpp lists.
+    Q_INVOKABLE void fetch(QObject *owner, const QVariantList &reads, const QJSValue &callback);
 
     // --- typed wrappers: Watch screen --------------------------------------
     Q_INVOKABLE QVariantList listWatches();              // -> [{name,state,battery,transport,connected}]
@@ -108,9 +125,11 @@ public:
 
     // --- typed wrappers: Apps & Faces screen (Milestone 2) -----------------
     Q_INVOKABLE QVariantList listApps();                 // -> [{uuid,type,order,title,developer,flags[],active,system,config,sideloaded,isFace}]
-    // GetAppIcon(uuid) -> a local "file://" URL to the app's extracted menu-icon PNG, or "" when the
-    // daemon has no icon for it (none:/notready:/error:). Fetched lazily per row by the delegate; the
-    // QML falls back to a generic icon when this is empty. Co-located daemon, so the path is local.
+    // The app's menu-icon PNG as a local "file://" URL (co-located daemon), or "" when the daemon has
+    // none (none:/notready:/error:) or the answer isn't in yet. Answers are cached per uuid until the
+    // next LockerChanged; a miss asks GetAppIcon asynchronously and announces the answer through
+    // appIconChanged. A "none" is trusted for a minute (the daemon can fetch a .pbw after the
+    // LockerChanged that listed it). The QML falls back to a generic icon on "".
     Q_INVOKABLE QString      appIcon(const QString &uuid);
     Q_INVOKABLE QVariantMap  launchApp(const QString &id);   // LaunchApp(s)
     Q_INVOKABLE QVariantMap  removeApp(const QString &id);   // RemoveApp(s) (system refused daemon-side)
@@ -118,7 +137,7 @@ public:
     Q_INVOKABLE QVariantMap  restoreSystemAppOrder();                    // RestoreSystemAppOrder()
     Q_INVOKABLE QVariantMap  sideloadApp(const QUrl &fileUrl); // SideloadApp(absolute daemon-side path)
     Q_INVOKABLE QVariantMap  openConfig(const QString &id);  // OpenConfig(s) -> open the daemon-served page via xdg-open
-    Q_INVOKABLE void         refreshApps();              // re-fetch + appsChanged (on show + after any mutation)
+    Q_INVOKABLE void         refreshApps();              // async re-fetch → appsChanged (on show + after any mutation)
 
     // --- typed wrappers: Extensions (Apps screen, 3rd segment) -------------
     Q_INVOKABLE QVariantList extList();                  // -> [{name,installed,enabled,running,config,description}]
@@ -127,14 +146,14 @@ public:
     Q_INVOKABLE QVariantMap  extRestart(const QString &name);  // ExtRestart(s)
     Q_INVOKABLE QVariantMap  extUninstall(const QString &name, bool keepConfig); // ExtUninstall(s,b)
     Q_INVOKABLE QVariantMap  extInstall(const QUrl &archiveUrl); // ExtInstall(absolute daemon-side path)
-    Q_INVOKABLE void         refreshExtensions();        // re-fetch + extensionsChanged (on show + after any mutation)
+    Q_INVOKABLE void         refreshExtensions();        // async re-fetch → extensionsChanged (on show + after any mutation)
 
     // --- Plugins and app permissions ---
     Q_INVOKABLE QVariantList pluginList();               // PluginList() -> [{uuid,kind,name,description,sources[],actions[]}]
     Q_INVOKABLE QVariantList permPending();              // PermPending() -> [{appUuid,appName,key,label,requestedAt,running,seen}]
     Q_INVOKABLE QVariantList permList(const QString &app); // PermList(s) -> [{key,status,kind,label,lastUsed}]
     Q_INVOKABLE QVariantMap  permSet(const QString &app, const QString &key, const QString &decision); // PermSet(s,s,s): allow|deny|reset|later
-    Q_INVOKABLE void         refreshPlugins();           // re-fetch + pluginsChanged + permissionRequestsChanged
+    Q_INVOKABLE void         refreshPlugins();           // async re-fetch → pluginsChanged + permissionRequestsChanged
 
     // --- Voice (speech-to-text models, Settings → Voice) ---
     Q_INVOKABLE QVariantMap  voiceStatus();              // VoiceStatus() -> {kind: off|ready|unavailable, tail}
@@ -268,7 +287,8 @@ public:
     // reset clears a tripped StartLimitBurst, which otherwise makes the start fail. A start that
     // fails (or a systemctl that can't run, e.g. inside the flatpak) emits daemonStartFailed.
     Q_INVOKABLE void startDaemon();
-    Q_INVOKABLE void recheckDaemon();    // NameHasOwner probe
+    // NameHasOwner probe: at start and after startDaemon(); NameOwnerChanged tracks the name otherwise.
+    Q_INVOKABLE void recheckDaemon();
 
 Q_SIGNALS:
     void daemonUpChanged();
@@ -291,6 +311,8 @@ Q_SIGNALS:
     void cliResult(const QString &op, bool ok, const QString &message);
     void daemonStartFailed(const QString &message);  // startDaemon() could not start the service
     void firmwareInfoChanged();                      // firmwareInfo / firmwareChecking
+    void callsInFlightChanged();
+    void appIconChanged(const QString &uuid, const QString &url); // an appIcon() miss was answered
 
 private Q_SLOTS:
     void onNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
@@ -314,6 +336,17 @@ private Q_SLOTS:
 private:
     QDBusMessage methodCall(const QString &method, const QVariantList &args) const;
     Status       callStatus(const QString &method, const QVariantList &args = {});
+    // The typed reads fetch() can run (readSpec() in the .cpp: each one's D-Bus call and parser). The
+    // synchronous Q_INVOKABLE of that name runs it through read(), so both paths share one description.
+    QVariant     read(const QString &name, const QVariantList &args = {});
+    // read() without blocking: `done` gets the value, unless `context` (when given) died first.
+    void         readAsync(const QString &name, const QVariantList &args, QObject *context,
+                           const std::function<void(const QVariant &)> &done);
+    // One D-Bus call without blocking, counted in callsInFlight; `done` is skipped if `context` died.
+    void         callAsync(const QDBusMessage &message, QObject *context,
+                           const std::function<void(const QDBusMessage &)> &done);
+    // ExtList rows with the ExtensionStateChanged overrides merged in (and stale overrides pruned).
+    QVariantList withExtState(QVariantList rows);
     void         startFirmwarePoll();
     // Stop the firmware poll and clear its activity/recovery state (every terminal outcome).
     void         endFirmwareOp();
@@ -376,6 +409,19 @@ private:
     int     m_langElapsedMs = 0;
     bool    m_langSeenActivity = false;
     bool    m_langFirstPoll = true;
+
+    int     m_callsInFlight = 0;
+    // fetch(): the latest fetch per owner (an older one's answer is dropped).
+    QHash<QObject *, quint64> m_fetchSeq;
+    quint64 m_fetchCounter = 0;
+    // refresh*(): the latest reload of each list, so a slow older answer can't overwrite a newer one.
+    quint64 m_appsSeq = 0;
+    quint64 m_extSeq = 0;
+    quint64 m_pluginsSeq = 0;
+    // appIcon(): uuid → {file URL or "" for none, when it was answered}; uuids being asked.
+    struct IconEntry { QString url; qint64 answeredMs = 0; };
+    QHash<QString, IconEntry> m_icons;
+    QSet<QString> m_iconPending;
 
     // Per-extension runtime state from ExtensionStateChanged (name → ready|exited|quarantined).
     // Merged into the extList() rows so a quarantined/exited extension isn't shown as a stale

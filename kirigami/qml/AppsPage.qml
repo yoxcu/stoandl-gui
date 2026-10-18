@@ -48,11 +48,15 @@ Kirigami.ScrollablePage {
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
+    // Asynchronous: the lists arrive through the signals below.
     function reload() {
         StoandlClient.refreshApps();
         StoandlClient.refreshExtensions();
         StoandlClient.refreshPlugins();
     }
+
+    // Kept while another tab shows (Main.qml): re-read when it comes back.
+    function refreshOnShow() { page.reload(); }
 
     // --- Permissions ---------------------------------------------------------
     function answer(group, allow) {
@@ -91,14 +95,14 @@ Kirigami.ScrollablePage {
             page.toast("Launch failed: " + (r.tail || r.kind));
         else
             page.toast("Launched " + app.title);
-        StoandlClient.refreshApps(); // launching a face changes the active flag
+        // A face launch changes the active flag: the daemon's LockerChanged re-reads the list.
     }
 
     function doRemove(app) {
         var r = StoandlClient.removeApp(app.uuid);
         if (!r.ok)
             page.toast("Remove failed: " + (r.tail || r.kind));
-        StoandlClient.refreshApps(); // re-fetch after mutation
+        // The removal changes the locker: the daemon's LockerChanged re-reads the list.
     }
 
     function doConfig(app) {
@@ -161,17 +165,23 @@ Kirigami.ScrollablePage {
 
     Connections {
         target: StoandlClient
-        function onAppsChanged(rows) { page.apps = rows; }
+        // An unchanged list (the re-read on show, a LockerChanged that only confirms a refresh) keeps
+        // the rows instead of rebuilding them.
+        function onAppsChanged(rows) { if (JSON.stringify(rows) !== JSON.stringify(page.apps)) page.apps = rows; }
         function onExtensionsChanged(rows) { page.extensions = rows; }
         function onPluginsChanged(rows) { page.plugins = rows; }
         function onPermissionRequestsChanged(rows) { page.permRequests = rows; }
+    }
+    Connections {
+        target: StoandlClient
+        enabled: page.visible   // a hidden page re-reads in refreshOnShow()
         function onDaemonUpChanged() {
             if (StoandlClient.daemonUp)
                 page.reload();
         }
     }
 
-    // Re-fetch on show + after every mutation (no LockerChanged signal yet).
+    // Re-fetch on show + after every mutation the daemon doesn't announce with LockerChanged.
     Component.onCompleted: page.reload()
 
     // Read-only (it also runs against a real daemon): the request banners, then one app's permission dialog.
@@ -227,10 +237,15 @@ Kirigami.ScrollablePage {
         property int rowIndex: 0
         property int rowCount: 0
 
-        // The app's extracted menu-icon PNG (file:// URL), fetched lazily from the daemon's local
-        // cache. Empty until resolved or when the daemon has no icon — then we show a generic glyph.
+        // The app's extracted menu-icon PNG (file:// URL), from StoandlClient's cache or, on a miss,
+        // asked asynchronously (appIconChanged). Empty until resolved or when the daemon has no icon —
+        // then we show a generic glyph.
         property string iconUrl: ""
         Component.onCompleted: row.iconUrl = StoandlClient.appIcon(row.appData.uuid)
+        Connections {
+            target: StoandlClient
+            function onAppIconChanged(uuid, url) { if (uuid === row.appData.uuid) row.iconUrl = url; }
+        }
 
         onClicked: page.doLaunch(appData)
 
@@ -491,7 +506,7 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.largeSpacing
 
             Repeater {
-                model: page.faces
+                model: page.segment === "faces" ? page.faces : []   // rows only for the segment shown
                 delegate: AppRow {
                     required property var modelData
                     required property int index
@@ -508,7 +523,7 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.largeSpacing
 
             Repeater {
-                model: page.others
+                model: page.segment === "apps" ? page.others : []
                 delegate: AppRow {
                     required property var modelData
                     required property int index

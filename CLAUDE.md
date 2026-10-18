@@ -29,6 +29,33 @@ front-end used to ship alongside; it was retired on 2026-10-15.)
   (`CheckFirmwareForce`, falling back to `CheckFirmware` on `UnknownMethod`). With `firmware.github`
   on and the release list uncached, the daemon takes ~8 s on a phone: a blocking call there froze the
   first frame past Plasma Mobile’s 8 s launch splash, which then looked like a crash.
+- **Tab pages are kept.** `Main.qml` builds each tab's root page on its first visit and then reuses it
+  (`tabPages`; WatchPage is declared in the hidden `tabPark` item and is the `initialPage`). Kirigami's
+  `PageRow.replace()` puts an item it didn't create back under its original parent instead of
+  destroying it, so a hidden tab page waits, invisible, in `tabPark`. A page that comes back gets its
+  optional `refreshOnShow()` after the frame that shows it (500 ms timer fallback); handlers that only
+  matter while a tab shows (`onDaemonUpChanged` reloads, WatchPage's `onWatchesChanged`) are
+  `enabled: page.visible`. `visible` stays true while a sub-page is pushed over the tab, so the
+  WatchPage's 20 s poll stops when its tab goes and restarts in `refreshOnShow()`. Pushed sub-pages are
+  still created from Components and destroyed when popped. A kept page no longer starts from a fresh
+  read, so a control whose bound value its own clicks overwrite (a `FormSwitchDelegate`'s `checked`, see
+  below) is set again in the reload callback (the Alerts page's Forward switch).
+- **Page loads don't block.** `StoandlClient.fetch(owner, reads, callback)` runs typed reads over
+  `QDBusPendingCallWatcher`: one read (`["healthSummary", "day", 0]`) or several in parallel
+  (`[["configSchema"], ["getConfig"]]`, callback gets the values in order), named like their
+  synchronous `Q_INVOKABLE`. Each read is described once in `readSpec()` (the D-Bus method, a leading
+  argument such as GetHealthSeries' metric, the argument types, the parser); the synchronous wrapper
+  runs the same entry through `read()`, so a read is fetchable once it has a row there. Latest wins per
+  owner, and nothing is delivered after the owner died. Health, Battery (from the rows the Watch page
+  passes, then `watchesChanged`), Alerts, Watch settings and Daemon configuration load this way, and
+  `refreshApps/Extensions/Plugins()` are asynchronous too (their signals arrive later). A settings
+  edit still re-reads synchronously, so its handler can put the control back at once. Per-refresh
+  `NameHasOwner` is gone: `NameOwnerChanged` tracks the daemon after the start-up probe.
+- **App icons** are cached in `StoandlClient` (uuid → URL, `""` for none) until `LockerChanged`; a
+  miss returns `""`, asks `GetAppIcon` asynchronously and announces it with `appIconChanged(uuid,url)`
+  (a `none` is re-asked after a minute: the daemon can fetch a `.pbw` after the LockerChanged that
+  listed it). The Apps page builds rows only for the segment shown and keeps them when `appsChanged`
+  carries an unchanged list.
 
 ## Navigation — 5 tabs (current)
 **Watch · Health · Apps · Notifications · Settings** in `Kirigami.NavigationTabBar` (KDE HIG: ≤5
@@ -106,6 +133,10 @@ data (quick-launch options, color presets) in a page-scope getter and have the d
 `STOANDL_SMOKE_MS=<ms>` makes the app step through every tab one per tick, call `smokeExercise()` on any
 page that defines one, and quit — so `QT_QPA_PLATFORM=offscreen tools/run-with-mock.sh` proves
 QML → `StoandlClient` → D-Bus → mock → render end-to-end and self-terminates. The env var is read via `StoandlClient.smokeMs`.
+Exercises and the quit go through `Main.smokeWhenIdle(fn)`: queued in order and run once
+`StoandlClient.callsInFlight` and `incubatingObjects()` are both 0, so a hook sees the data its page's
+asynchronous loads fetched and the rows built from it. A hook that pushes a page and then reads it
+(SettingsPage's sub-pages, the WatchPage's BatteryPage) goes through it as well.
 
 **Add a `smokeExercise()` to any page whose interesting state is only reachable by navigation or by a
 button press** — otherwise it is not covered. `SettingsPage` pushes all seven sub-pages and runs their
@@ -161,7 +192,8 @@ list; the mock prints each check as `mock: CheckFirmware #n`, so a smoke log sho
   records it in a name→state map and merges it into the `ExtList` rows (so a quarantined/exited ext
   isn't shown as a stale "running"). UI never polls directly.
 - **After any mutating call, still re-fetch that screen's list.** The signal is a best-effort poke,
-  not a guarantee — the re-fetch is authoritative.
+  not a guarantee — the re-fetch is authoritative. (Exception: removing an app and launching a face
+  rely on `LockerChanged` alone; the daemon pokes it for every locker uuid or active-face change.)
 - Returns are either `kind:message` (split on first `:`) or tab-separated `as` records. Parse in
   `StoandlClient`, never in QML. Handle `notready` as the "no watch / not ready" empty state.
 - The daemon is NOT D-Bus-activated. If the bus name is unowned → show "daemon not running", offer

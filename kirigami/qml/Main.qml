@@ -19,14 +19,24 @@ Kirigami.ApplicationWindow {
     // 5 destinations -> Kirigami.NavigationTabBar (KDE HIG: <=5 = tabs, not a drawer).
     // Watch · Health · Apps · Notifications · Settings.
     readonly property var pageComponents: [
-        watchComponent, healthComponent, appsComponent, notificationsComponent, settingsComponent
+        null, healthComponent, appsComponent, notificationsComponent, settingsComponent
     ]
 
-    Component { id: watchComponent;         WatchPage {} }
     Component { id: healthComponent;        HealthPage {} }
     Component { id: appsComponent;          AppsPage {} }
     Component { id: notificationsComponent; NotificationsPage {} }
     Component { id: settingsComponent;      SettingsPage {} }
+
+    // The tab pages are built on their first visit and then kept: a tab switch used to build the page
+    // again and repeat its loads. A kept page waits in tabPark while another tab shows (PageRow puts an
+    // item it didn't create back under its own parent instead of destroying it), is invisible there,
+    // and refreshes through its refreshOnShow() after the frame that shows it again.
+    property var tabPages: [watchPage, null, null, null, null]
+    Item {
+        id: tabPark
+        visible: false
+        WatchPage { id: watchPage }
+    }
 
     function showTab(index) {
         // Re-tapping the active tab returns to its root (pops any pushed sub-page, e.g. a Settings
@@ -39,7 +49,53 @@ Kirigami.ApplicationWindow {
         currentTab = index;
         while (pageStack.depth > 1)
             pageStack.pop();
-        pageStack.replace(pageComponents[index]);
+        var kept = tabPages[index];
+        if (!kept)
+            tabPages[index] = pageComponents[index].createObject(tabPark);   // loads in its onCompleted
+        pageStack.replace(tabPages[index]);
+        if (kept)
+            root.shownPage = kept;
+    }
+
+    // A kept tab page that came back, until the frame that shows it (the timer covers a window that
+    // doesn't render).
+    property Item shownPage: null
+    function refreshShownPage() {
+        var p = root.shownPage;
+        root.shownPage = null;
+        if (p && p.visible && typeof p.refreshOnShow === "function")
+            p.refreshOnShow();
+    }
+    Connections {
+        target: root
+        enabled: root.shownPage !== null
+        function onFrameSwapped() { Qt.callLater(root.refreshShownPage); }
+    }
+    Timer {
+        running: root.shownPage !== null
+        interval: 500
+        onTriggered: root.refreshShownPage()
+    }
+
+    // Smoke harness: run fn once no asynchronous read is in flight and nothing is being created
+    // asynchronously, so a page's smokeExercise() sees the data its loads fetch (they no longer block)
+    // and the rows built from it. Queued in order; checked every 50 ms.
+    property var smokeQueue: []
+    function smokeWhenIdle(fn) {
+        root.smokeQueue.push(fn);
+        smokeIdleTimer.start();
+    }
+    Timer {
+        id: smokeIdleTimer
+        interval: 50
+        repeat: true
+        onTriggered: {
+            while (root.smokeQueue.length > 0
+                   && StoandlClient.callsInFlight === 0 && StoandlClient.incubatingObjects() === 0)
+                root.smokeQueue.shift()();
+            if (root.smokeQueue.length === 0)
+                stop();
+        }
     }
 
     // Headless verification harness (sandbox only, gated on STOANDL_SMOKE_MS). Steps through every
@@ -59,16 +115,21 @@ Kirigami.ApplicationWindow {
                 StoandlClient.startDaemon();
             }
             if (smokeTimer.step >= root.pageComponents.length) {
-                console.log("stoandl-smoke: cycled all " + root.pageComponents.length + " pages, quitting");
                 smokeTimer.running = false;
-                Qt.quit();
+                // Once every exercise ran and the settings rows are built: destroy the pushed pages now
+                // (a pop only animates them away) and quit. (The kept tab pages go back to tabPark.)
+                root.smokeWhenIdle(function () {
+                    console.log("stoandl-smoke: cycled all " + root.pageComponents.length + " pages, quitting");
+                    root.pageStack.clear();
+                    Qt.quit();
+                });
                 return;
             }
             root.showTab(smokeTimer.step);
             console.log("stoandl-smoke: page " + smokeTimer.step);
             var cur = root.pageStack.currentItem;
             if (cur && typeof cur.smokeExercise === "function")
-                cur.smokeExercise();
+                root.smokeWhenIdle(function () { cur.smokeExercise(); });
             smokeTimer.step += 1;
         }
     }
@@ -88,13 +149,11 @@ Kirigami.ApplicationWindow {
     globalDrawer: null
     contextDrawer: null
 
-    // Inline initial page (not the watchComponent Component). Assigning a *Component* to initialPage
-    // makes Kirigami createObject() it with a transient null parent → Qt6 warns "QML WatchPage: Created
-    // graphical object was not placed in the graphics scene" (verified: deferring via onCompleted/
-    // Qt.callLater doesn't help — it's the Component indirection, not the timing). An inline page is
-    // parented into the window tree at construction, so it's silent. watchComponent is still used by
-    // showTab()'s replace() for tab navigation.
-    pageStack.initialPage: WatchPage {}
+    // The kept WatchPage instance (declared in tabPark), not a Component: assigning a *Component* to
+    // initialPage makes Kirigami createObject() it with a transient null parent → Qt6 warns "QML
+    // WatchPage: Created graphical object was not placed in the graphics scene". A page that already
+    // has a parent in the window tree is silent.
+    pageStack.initialPage: watchPage
 
     footer: Kirigami.NavigationTabBar {
         id: tabBar
