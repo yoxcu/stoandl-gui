@@ -228,6 +228,14 @@ Kirigami.ScrollablePage {
                 onActivated: page.apply("hrm_interval", currentValue)
             }
             FormCard.FormDelegateSeparator {}
+            FormCard.FormSwitchDelegate {
+                text: "HR during activities"
+                description: "Continuously track heart rate during detected walks and runs. Uses more battery."
+                enabled: hrmSwitch.checked && page.boolVal("tracking")
+                checked: page.boolVal("hrm_activity")
+                onToggled: page.apply("hrm_activity", checked ? "on" : "off")
+            }
+            FormCard.FormDelegateSeparator {}
             FormTextRow {
                 label: "Resting HR (bpm)"
                 value: page.val("resting_hr")

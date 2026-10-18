@@ -532,6 +532,7 @@ class MockStoandl(dbus.service.Object):
             "sleep_insights": "on",
             "hrm": "on",
             "hrm_interval": "10min",
+            "hrm_activity": "off",
             "resting_hr": "58",
             "max_hr": "189",
         }
