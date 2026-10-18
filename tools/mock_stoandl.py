@@ -444,6 +444,7 @@ class MockStoandl(dbus.service.Object):
                 ("weather.reverse_geocode", "toggle", "Reverse-geocode GPS", "", "Name the GPS location via OSM Nominatim (sends coordinates to a web service)", "Weather", "live", "", "", "", ""),
                 ("weather.pins", "toggle", "Weather timeline pins", "", "Add sunrise/sunset pins for the primary location", "Weather", "live", "", "", "", ""),
                 ("weather.intercept_pkjs", "toggle", "Weather for classic watchfaces", "", "Answer the dead Yahoo / OpenWeatherMap 2.5 weather APIs old watchfaces call, from Open-Meteo (sends the watchface's coordinates or place name to a web service)", "Weather", "live", "", "", "", ""),
+                ("weather.place_search", "toggle", "Find locations by name", "", "Look a city up by name to add it to the locations (`stoandl weather search`, or the search under this section). Sends the typed name to Open-Meteo's geocoder; works only while weather sync is on.", "Weather", "live", "", "", "", ""),
                 # --- Calendar ---
                 ("calendar.discover", "toggle", "Auto-discover local calendars", "", "Find the desktop's local .ics calendars (Calindori, ~/.calendars). No egress.", "Calendar", "live", "", "", "", ""),
                 ("calendar.sync_interval", "int", "Re-read interval", "", "How often calendars are re-read (also rolls the timeline window forward)", "Calendar", "live", "5", "1440", "min", ""),
@@ -518,7 +519,7 @@ class MockStoandl(dbus.service.Object):
             "weather.location_command": "", "weather.interval": "30",
             "weather.gps": "false", "weather.gps_name": "Current location",
             "weather.gps_desktop_id": "stoandl", "weather.reverse_geocode": "false",
-            "weather.pins": "true", "weather.intercept_pkjs": "false",
+            "weather.pins": "true", "weather.intercept_pkjs": "false", "weather.place_search": "false",
             "calendar.discover": "false", "calendar.sync_interval": "30",
             "calendar.reminders": "true", "calendar.show_declined": "false", "calendar.reminder_vibe": "Watch default",
             "voice.backend": "Off", "voice.command": "", "voice.url": "", "voice.http_model": "", "voice.local_model": "No model installed",
@@ -1310,6 +1311,35 @@ class MockStoandl(dbus.service.Object):
             return "error:weather is not enabled in config"
         self.sync["weather"]["lastSync"] = "just now"
         return "ok:weather pushed"
+
+    # Canned geocoder answers; the daemon asks Open-Meteo (gated like here).
+    MOCK_PLACES = [("Berlin", 52.5244, 13.4105, "Land Berlin", "Germany"),
+                   ("Berlin", 39.9209, -74.9407, "New Jersey", "United States")]
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def SearchWeatherPlace(self, query):
+        if not self.sync["weather"]["enabled"]:
+            return "disabled:Weather sync is off (weather.enabled)"
+        if self.config.get("weather.place_search") != "true":
+            return "disabled:Place search is off: it sends the name to Open-Meteo's geocoder. Turn on weather.place_search"
+        q = str(query).strip()
+        if not q:
+            return "error:Type a place name to search for"
+        hits = [p for p in self.MOCK_PLACES if q.lower() in p[0].lower()]
+        if not hits:
+            return "none:No place called \"" + q + "\" found (or Open-Meteo couldn't be reached)"
+        return "ok:" + "\n".join(rec(*p) for p in hits)
+
+    @dbus.service.method(IFACE, in_signature="sdd", out_signature="s")
+    def AddWeatherLocation(self, name, lat, lon):
+        label = " ".join(str(name).replace(",", " ").replace("#", " ").split())
+        if not label:
+            return "error:The location needs a name"
+        entries = [e for e in self.config.get("weather.locations", "").split(",") if e.strip()]
+        kept = [e for e in entries if e.rpartition(":")[0].rpartition(":")[0].lower() != label.lower()]
+        verb = "Updated" if len(kept) < len(entries) else "Added"
+        self.config["weather.locations"] = ",".join(kept + [f"{label}:{float(lat)!r}:{float(lon)!r}"])
+        return f"ok:{verb} {label} ({lat}, {lon})"
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def SyncCalendar(self):

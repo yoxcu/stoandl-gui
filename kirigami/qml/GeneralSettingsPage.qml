@@ -10,8 +10,9 @@ import "ConfList.js" as ConfList
 // GetConfig / SetConfig). Schema-driven: each key declares a type (toggle | combo | text | int | list),
 // the section to file it under, whether it applies live or needs a daemon restart, and — for numbers —
 // its range and unit. New keys the daemon adds therefore appear here automatically, with the right
-// widget, and nothing in this file names a config key. The one addition is the Voice section's model
-// manager (VoiceModelsCard), shown under that section's keys.
+// widget, and nothing in this file names a config key. The additions are the Voice section's model
+// manager (VoiceModelsCard) and the Weather section's city search (WeatherSearchCard), each shown under
+// that section's keys.
 Kirigami.ScrollablePage {
     id: page
     objectName: "generalSettings"
@@ -38,6 +39,22 @@ Kirigami.ScrollablePage {
         // with the reason, so a rejected edit is explained rather than silently reverted by the re-fetch.
         if (!r.ok) page.toast("Config: " + (r.tail || r.kind));
         page.reload();
+    }
+
+    // Smoke hook (SettingsPage drives it): the city search's D-Bus round trip and record parsing,
+    // read-only — it adds nothing, and a daemon with weather.place_search off answers disabled:.
+    function smokeExercise() {
+        var r = StoandlClient.searchWeatherPlace("Berlin");
+        var p = (r.places || [])[0];
+        console.log("stoandl-smoke: weather search " + r.kind + ", " + (r.places || []).length + " places"
+            + (p ? " (first " + p.name + " " + p.lat + "," + p.lon + ")" : ""));
+        // The list codec must match the daemon's ConfList.kt: commas inside an item survive a round trip
+        // and a plain (pre-escaping) list still splits on its commas.
+        var items = ["Sure, see you", "C:\\x\\", "Ok"];
+        var enc = ConfList.encode(items);
+        var same = JSON.stringify(ConfList.decode(enc)) === JSON.stringify(items)
+            && JSON.stringify(ConfList.decode(" Ok, Yes ,,C:\\p")) === JSON.stringify(["Ok", "Yes", "C:\\p"]);
+        console.log("stoandl-smoke: list codec " + (same ? "ok" : "MISMATCH") + " (" + enc + ")");
     }
 
     function currentValue(key) { return (page.cfgValues || {})[key] || ""; }
@@ -237,6 +254,13 @@ Kirigami.ScrollablePage {
                     Layout.fillWidth: true
                     active: groupItem.modelData.title === "Voice"
                     sourceComponent: VoiceModelsCard { onChanged: page.reload() }
+                }
+
+                // City search: adds a found place to weather.locations, then re-reads the config.
+                Loader {
+                    Layout.fillWidth: true
+                    active: groupItem.modelData.title === "Weather"
+                    sourceComponent: WeatherSearchCard { onChanged: page.reload() }
                 }
             }
         }

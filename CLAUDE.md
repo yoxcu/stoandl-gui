@@ -92,8 +92,9 @@ QML → `StoandlClient` → D-Bus → mock → render end-to-end and self-termin
 
 **Add a `smokeExercise()` to any page whose interesting state is only reachable by navigation or by a
 button press** — otherwise it is not covered. `SettingsPage` pushes all seven sub-pages and runs their
-own `smokeExercise()` (`WatchSettingsPage` round-trips a Quiet Time window, `DebugSettingsPage` pushes
-`HeartbeatPage`, which filters); `NotificationsPage` fires the send-test, steps the Alerts page's
+own `smokeExercise()` (`WatchSettingsPage` logs `qlBack`'s quick-launch options and round-trips a Quiet Time window, `DebugSettingsPage` pushes
+`HeartbeatPage`, which filters, `GeneralSettingsPage` runs a read-only city search and logs
+`stoandl-smoke: weather search <kind>, N places` — `disabled` until `weather.place_search` is on); `NotificationsPage` fires the send-test, steps the Alerts page's
 watch-card preview through each `notification.app_name` placement and writes the stored value back
 unchanged, then opens the per-app dialog, writes its app-name placement back unchanged and logs its
 preview for that override and for Default (each preview as `stoandl-smoke: preview <placement>:

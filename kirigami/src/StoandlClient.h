@@ -140,6 +140,8 @@ public:
 
     // --- typed wrappers: Sync services (Settings screen) -------------------
     Q_INVOKABLE QVariantMap  syncWeather();              // SyncWeather() ; error: if disabled in config
+    Q_INVOKABLE QVariantMap  searchWeatherPlace(const QString &query); // SearchWeatherPlace(s) -> {kind,ok,tail,places:[{name,lat,lon,region,country}]}
+    Q_INVOKABLE QVariantMap  addWeatherLocation(const QString &name, double lat, double lon); // AddWeatherLocation(s,d,d)
     Q_INVOKABLE QVariantMap  syncCalendar();             // SyncCalendar()
     Q_INVOKABLE QVariantMap  syncHealth();               // SyncHealth()
     Q_INVOKABLE QVariantMap  healthProfile();            // GetHealthProfile() -> {key: value, ...}

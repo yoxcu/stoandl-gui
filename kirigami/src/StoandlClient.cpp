@@ -509,6 +509,37 @@ void StoandlClient::refreshExtensions()
 // --- typed wrappers: Sync --------------------------------------------------
 
 QVariantMap StoandlClient::syncWeather()  { return statusMap(callStatus(QStringLiteral("SyncWeather"))); }
+
+// `ok:` carries one `name\tlat\tlon\tregion\tcountry` record per line, so the tail is split by line here
+// rather than by statusMap's single-record `fields`.
+QVariantMap StoandlClient::searchWeatherPlace(const QString &query)
+{
+    const Status st = callStatus(QStringLiteral("SearchWeatherPlace"), {query});
+    QVariantMap m = statusMap(st);
+    QVariantList places;
+    if (st.ok()) {
+        const QStringList lines = st.tail.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const QString &line : lines) {
+            const QStringList f = line.split(QLatin1Char('\t'));
+            if (f.size() < 3)
+                continue;
+            QVariantMap p;
+            p[QStringLiteral("name")]    = f.at(0);
+            p[QStringLiteral("lat")]     = f.at(1).toDouble();
+            p[QStringLiteral("lon")]     = f.at(2).toDouble();
+            p[QStringLiteral("region")]  = f.value(3);
+            p[QStringLiteral("country")] = f.value(4);
+            places.append(p);
+        }
+    }
+    m[QStringLiteral("places")] = places;
+    return m;
+}
+
+QVariantMap StoandlClient::addWeatherLocation(const QString &name, double lat, double lon)
+{
+    return statusMap(callStatus(QStringLiteral("AddWeatherLocation"), {name, lat, lon}));
+}
 QVariantMap StoandlClient::syncCalendar() { return statusMap(callStatus(QStringLiteral("SyncCalendar"))); }
 QVariantMap StoandlClient::syncHealth()   { return statusMap(callStatus(QStringLiteral("SyncHealth"))); }
 
