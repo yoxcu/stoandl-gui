@@ -1917,11 +1917,31 @@ class MockStoandl(dbus.service.Object):
         return f"ok:{key} = {value}"
 
     # --- Firmware ----------------------------------------------------------
-    @dbus.service.method(IFACE, in_signature="", out_signature="s")
-    def CheckFirmware(self):
+    @dbus.service.method(IFACE, in_signature="", out_signature="s",
+                         async_callbacks=("reply", "error"))
+    def CheckFirmware(self, reply, error):
+        self._check_firmware("CheckFirmware", reply)
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s",
+                         async_callbacks=("reply", "error"))
+    def CheckFirmwareForce(self, reply, error):
+        # The daemon's cache bypass (a GUI "check now"); the mock has no cache, so the same answer.
+        self._check_firmware("CheckFirmwareForce", reply)
+
+    def _check_firmware(self, method, reply):
         # HOOK: changelog URL appended as a 7th field for the "What's new" link.
         # ok:<board>\t<current>\t<latest>\t<asset>\t<yes|no>\t<source>\t<changelogUrl>
-        return rec("ok:snowy_s3", "4.4.2", "4.4.3", "core-fw.pbz", "yes", "github", CHANGELOG_URL)
+        result = rec("ok:snowy_s3", "4.4.2", "4.4.3", "core-fw.pbz", "yes", "github", CHANGELOG_URL)
+        # MOCK_FW_CHECK_MS=<ms>: answer that late, as the daemon does while it downloads the GitHub
+        # release list (8 s on a phone, uncached). The mock keeps serving other calls meanwhile, like
+        # the daemon's worker pool, so the GUI must not wait for it.
+        delay = int(os.environ.get("MOCK_FW_CHECK_MS", "0") or 0)
+        self.fw_checks = getattr(self, "fw_checks", 0) + 1
+        print(f"mock: {method} #{self.fw_checks} (answers in {delay} ms)", flush=True)
+        if delay <= 0:
+            reply(result)
+        else:
+            GLib.timeout_add(delay, lambda: (reply(result), False)[1])
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def UpdateFirmware(self):

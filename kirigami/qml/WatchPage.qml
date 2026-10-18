@@ -16,23 +16,44 @@ Kirigami.ScrollablePage {
 
     // Firmware: the CheckFirmware result drives the update banner; the inline
     // flash poll (UpdateFirmware -> FirmwareStatus) lives here now — no detour
-    // to a separate screen (handoff §4d).
-    property var fwInfo: null
+    // to a separate screen (handoff §4d). The check itself is asynchronous and cached in
+    // StoandlClient (it can take seconds daemon-side), so this page never waits for it.
+    readonly property var fwInfo: StoandlClient.firmwareInfo
     property string fwPhase: ""     // "" = idle; else downloading/waiting/inprogress/notready/prf
     property int fwPercent: -1
     property string fwDetail: ""    // prf: the version the watch is being downgraded to
     readonly property bool fwBusy: fwPhase !== ""
-    readonly property bool updateAvailable: fwInfo && fwInfo.kind === "ok" && fwInfo.updateAvailable === true
+    readonly property bool updateAvailable: fwInfo.kind === "ok" && fwInfo.updateAvailable === true
     // LinkPause: the user's Disconnect, and/or the Quiet Time pause (power.quiet_time_link_off).
     readonly property bool pausedByHand: StoandlClient.linkPause.split(",").indexOf("manual") >= 0
     readonly property bool pausedForQuietTime: StoandlClient.linkPause.split(",").indexOf("quiet_time") >= 0
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
-    // name:state of every watch at the last firmware check: a watch that connects, reboots after a flash
-    // or comes up in recovery gets a fresh CheckFirmware, so the update banner reflects what it runs now.
-    property string fwCheckedFor: ""
+    // The initial loads (watch list + firmware check) wait for the window's first frame, so the
+    // window maps before any D-Bus round trip; see the Connections/Timer below.
+    property bool loadsStarted: false
 
+    function startLoads() {
+        if (page.loadsStarted)
+            return;
+        page.loadsStarted = true;
+        // 20 s safety-net poll runs only while this tab shows (live updates arrive via the
+        // WatchesChanged signal; this is the BluetoothStatus carrier + missed-signal fallback).
+        StoandlClient.startWatchPoll();
+    }
+
+    // The page is kept while another tab shows (Main.qml): the poll stops when it goes and restarts,
+    // with an immediate refresh, when Main brings it back. A page pushed over it keeps it visible.
+    onVisibleChanged: if (!page.visible) StoandlClient.stopWatchPoll()
+    function refreshOnShow() {
+        if (page.loadsStarted)
+            StoandlClient.startWatchPoll();
+    }
+
+    // The only firmware-check trigger. The key is the name:state of every watch: a watch that connects,
+    // reboots after a flash or comes up in recovery gets a fresh CheckFirmware, so the update banner
+    // reflects what it runs now; an unchanged key reuses StoandlClient's cached answer.
     function applyWatches(rows) {
         page.watches = rows;
         var found = null;
@@ -42,17 +63,16 @@ Kirigami.ScrollablePage {
             states.push(rows[i].name + ":" + rows[i].state);
         }
         page.connectedWatch = found;
-        var key = states.join(",");
-        if (key !== page.fwCheckedFor) {
-            page.fwCheckedFor = key;
-            page.checkFirmware();
-        }
+        StoandlClient.requestFirmwareCheck(states.join(","));
     }
 
-    function checkFirmware() {
-        if (StoandlClient.daemonUp)
-            page.fwInfo = StoandlClient.checkFirmware();
-    }
+    // The Battery page starts from this page's watch list (and follows watchesChanged after that).
+    function openBattery() { return applicationWindow().pageStack.push(batteryPageComponent, { watchRows: page.watches }); }
+
+    // The three dialogs are built on first use, not with the page (a Loader each, below).
+    function detailsDialogItem() { detailsLoader.active = true; return detailsLoader.item; }
+    function pairDialogItem() { pairLoader.active = true; return pairLoader.item; }
+    function forgetDialogItem() { forgetLoader.active = true; return forgetLoader.item; }
 
     function connectTo(name) {
         var r = StoandlClient.connectWatch(name);
@@ -90,31 +110,45 @@ Kirigami.ScrollablePage {
         return "Working…";
     }
 
+    // The watch list (and the firmware check a changed one starts) follows only while this tab shows;
+    // refreshOnShow() catches up.
     Connections {
         target: StoandlClient
+        enabled: page.visible
         function onWatchesChanged(rows) { page.applyWatches(rows); }
-        function onPairStatus(kind, msg) { pairDialog.handleStatus(kind, msg); }
+        function onDaemonUpChanged() {
+            if (StoandlClient.daemonUp && page.loadsStarted)
+                StoandlClient.refreshWatches();   // → applyWatches → the firmware check
+        }
+    }
+    Connections {
+        target: StoandlClient
+        function onPairStatus(kind, msg) { if (pairLoader.item) pairLoader.item.handleStatus(kind, msg); }
         function onFindWatchResult(ok) {
             page.toast(ok ? "Ringing watch…" : "No watch ready to ring");
         }
         function onFirmwareStatus(kind, percent, detail) {
-            if (kind === "success") { page.toast("Firmware flashed — watch is rebooting"); page.fwPhase = ""; page.fwPercent = -1; page.fwInfo = null; }
+            if (kind === "success") { page.toast("Firmware flashed — watch is rebooting"); page.fwPhase = ""; page.fwPercent = -1; } // StoandlClient drops the stale firmwareInfo
             else if (kind === "failed") { page.toast("Flash failed: " + detail); page.fwPhase = ""; page.fwPercent = -1; }
             else if (kind === "timeout") { page.toast("Flash timed out"); page.fwPhase = ""; page.fwPercent = -1; }
             else if (kind === "idle") { page.fwPhase = ""; page.fwPercent = -1; } // terminal: no flash in flight → hide the banner
             else { page.fwPhase = kind; page.fwPercent = percent; page.fwDetail = detail; }
         }
-        function onDaemonUpChanged() {
-            if (StoandlClient.daemonUp) {
-                StoandlClient.refreshWatches();
-                page.checkFirmware();
-            }
-        }
     }
 
-    // 20 s safety-net poll runs only while this page is alive (live updates arrive via
-    // the WatchesChanged signal; this is the BluetoothStatus carrier + missed-signal fallback).
-    Component.onCompleted: { StoandlClient.startWatchPoll(); page.checkFirmware(); }
+    // Window before data: start the loads once the window has put a frame on screen. A page recreated
+    // by a tab switch gets one too (the switch repaints); the timer covers a window that doesn't
+    // render (not exposed yet, minimised).
+    Connections {
+        target: page.Window.window
+        enabled: !page.loadsStarted
+        function onFrameSwapped() { Qt.callLater(page.startLoads); }
+    }
+    Timer {
+        running: !page.loadsStarted
+        interval: 500
+        onTriggered: page.startLoads()
+    }
     Component.onDestruction: StoandlClient.stopWatchPoll()
 
     // Headless smoke (STOANDL_SMOKE_MS): the pairing dialog's status line is only reached through a
@@ -122,15 +156,30 @@ Kirigami.ScrollablePage {
     // the Battery page, which the card only offers with a watch connected, so a MOCK_NO_WATCH run
     // reaches its "No watch connected" state.
     function smokeExercise() {
-        pairDialog.handleStatus("pending", "");
-        var bare = pairDialog.statusMsg;
-        pairDialog.handleStatus("pending", "Discovery paused — Bluetooth is off. Turn it on to pair.");
-        console.log("stoandl-smoke: pair status bare='" + bare + "' note='" + pairDialog.statusMsg + "'");
-        pairDialog.statusKind = "";
-        pairDialog.statusMsg = "";
-        var bp = applicationWindow().pageStack.push(batteryPageComponent);
-        console.log("stoandl-smoke: battery kind=" + (bp.insights ? bp.insights.kind : "none")
-                    + " watchConnected=" + bp.watchConnected + " hasInsights=" + bp.hasInsights);
+        console.log("stoandl-smoke: firmware checking=" + StoandlClient.firmwareChecking
+                    + " kind=" + (page.fwInfo.kind || "none") + " update=" + page.updateAvailable);
+        var pd = page.pairDialogItem();
+        pd.handleStatus("pending", "");
+        var bare = pd.statusMsg;
+        pd.handleStatus("pending", "Discovery paused — Bluetooth is off. Turn it on to pair.");
+        console.log("stoandl-smoke: pair status bare='" + bare + "' note='" + pd.statusMsg + "'");
+        pd.statusKind = "";
+        pd.statusMsg = "";
+        // The details dialog (built on first use) shows the cached firmware answer; the hero card
+        // that opens it is only there with a watch connected.
+        if (StoandlClient.daemonUp && page.connectedWatch !== null) {
+            var dd = page.detailsDialogItem();
+            dd.openFor();
+            console.log("stoandl-smoke: details dialog firmware='" + dd.fwState + "'");
+            dd.close();
+            StoandlClient.forceFirmwareCheck();   // Sync now / Check for updates: re-asks past the cache
+            console.log("stoandl-smoke: firmware forced checking=" + StoandlClient.firmwareChecking);
+        }
+        var bp = page.openBattery();
+        applicationWindow().smokeWhenIdle(function () {
+            console.log("stoandl-smoke: battery kind=" + (bp.insights ? bp.insights.kind : "none")
+                        + " watchConnected=" + bp.watchConnected + " hasInsights=" + bp.hasInsights);
+        });
         // Disconnect → paused banner → Connect (the round trip MOCK_LINK_PAUSE=manual starts halfway).
         var before = "byHand=" + page.pausedByHand + " quietTime=" + page.pausedForQuietTime;
         if (!page.pausedByHand) { StoandlClient.disconnectWatch(); StoandlClient.refreshWatches(); }
@@ -153,7 +202,7 @@ Kirigami.ScrollablePage {
             icon.name: "list-add"
             text: "Pair new watch"
             enabled: StoandlClient.daemonUp && StoandlClient.bluetoothOn
-            onTriggered: pairDialog.openForPair()
+            onTriggered: page.pairDialogItem().openForPair()
         },
         Kirigami.Action {
             icon.name: "find-location-symbolic"
@@ -177,7 +226,7 @@ Kirigami.ScrollablePage {
             icon.name: "view-refresh-symbolic"
             text: "Sync now"
             enabled: StoandlClient.daemonUp
-            onTriggered: { StoandlClient.refreshWatches(); page.checkFirmware(); page.toast("Refreshed"); }
+            onTriggered: { StoandlClient.refreshWatches(); StoandlClient.forceFirmwareCheck(); page.toast("Refreshed"); }
         }
     ]
 
@@ -245,7 +294,7 @@ Kirigami.ScrollablePage {
             helpfulAction: Kirigami.Action {
                 icon.name: "list-add"
                 text: "Pair new watch"
-                onTriggered: pairDialog.openForPair()
+                onTriggered: page.pairDialogItem().openForPair()
             }
         }
 
@@ -285,6 +334,28 @@ Kirigami.ScrollablePage {
             }
         }
 
+        // --- firmware: check in flight (only once it has taken a moment) ----
+        Kirigami.InlineMessage {
+            visible: StoandlClient.daemonUp && !page.fwBusy && page.connectedWatch !== null
+                     && StoandlClient.firmwareChecking && fwCheckDelay.elapsed
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.largeSpacing
+            Layout.leftMargin: Kirigami.Units.largeSpacing
+            Layout.rightMargin: Kirigami.Units.largeSpacing
+            type: Kirigami.MessageType.Information
+            icon.source: "view-refresh-symbolic"
+            text: "Checking for firmware updates…"
+        }
+        // A check the daemon answers at once (firmware sources off, no watch) shows no banner.
+        Timer {
+            id: fwCheckDelay
+            property bool elapsed: false
+            interval: 400
+            running: StoandlClient.firmwareChecking
+            onRunningChanged: if (running) elapsed = false
+            onTriggered: elapsed = true
+        }
+
         // --- firmware: update-available banner -----------------------------
         Kirigami.InlineMessage {
             visible: StoandlClient.daemonUp && !page.fwBusy && page.updateAvailable
@@ -294,7 +365,7 @@ Kirigami.ScrollablePage {
             Layout.rightMargin: Kirigami.Units.largeSpacing
             type: Kirigami.MessageType.Information
             icon.source: "update-low-symbolic"
-            text: page.fwInfo ? ("PebbleOS " + page.fwInfo.latest + " available") : ""
+            text: page.updateAvailable ? ("PebbleOS " + page.fwInfo.latest + " available") : ""
             actions: [
                 Kirigami.Action {
                     icon.name: "install-symbolic"
@@ -309,7 +380,7 @@ Kirigami.ScrollablePage {
                 Kirigami.Action {
                     icon.name: "globe-symbolic"
                     text: "What’s new"
-                    enabled: page.fwInfo && page.fwInfo.changelogUrl !== ""
+                    enabled: (page.fwInfo.changelogUrl || "") !== ""
                     onTriggered: Qt.openUrlExternally(page.fwInfo.changelogUrl)
                 }
             ]
@@ -325,7 +396,7 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp && page.connectedWatch !== null
 
             FormCard.AbstractFormDelegate {
-                onClicked: detailsDialog.openFor()
+                onClicked: page.detailsDialogItem().openFor()
 
                 contentItem: RowLayout {
                     spacing: Kirigami.Units.largeSpacing
@@ -396,7 +467,7 @@ Kirigami.ScrollablePage {
                 icon.name: "battery-symbolic"
                 text: "Battery insights"
                 description: "Charge trend, voltage, time remaining"
-                onClicked: applicationWindow().pageStack.push(batteryPageComponent)
+                onClicked: page.openBattery()
             }
         }
 
@@ -474,7 +545,7 @@ Kirigami.ScrollablePage {
                             display: QQC2.AbstractButton.IconOnly
                             QQC2.ToolTip.text: "Forget watch"
                             QQC2.ToolTip.visible: hovered
-                            onClicked: forgetDialog.openFor(watchRow.modelData.name)
+                            onClicked: page.forgetDialogItem().openFor(watchRow.modelData.name)
                         }
                     }
                 }
@@ -483,142 +554,149 @@ Kirigami.ScrollablePage {
     }
 
     // --- Watch details dialog (§4d) ----------------------------------------
-    WatchDetailsDialog {
-        id: detailsDialog
-        onForgetRequested: function(name) { forgetDialog.openFor(name); }
+    Loader {
+        id: detailsLoader
+        active: false
+        sourceComponent: WatchDetailsDialog {
+            onForgetRequested: function(name) { page.forgetDialogItem().openFor(name); }
+        }
     }
 
     // Battery insights sub-page (pushed from the "Battery insights" row above).
     Component { id: batteryPageComponent; BatteryPage {} }
 
     // --- pairing dialog (Pair + Repair) ------------------------------------
-    Kirigami.PromptDialog {
-        id: pairDialog
-        title: "Pair watch"
-        standardButtons: QQC2.Dialog.Cancel
-        showCloseButton: true
+    Loader {
+        id: pairLoader
+        active: false
+        sourceComponent: Kirigami.PromptDialog {
+            id: pairDialog
+            title: "Pair watch"
+            standardButtons: QQC2.Dialog.Cancel
+            showCloseButton: true
 
-        property string statusKind: ""
-        property string statusMsg: ""
-        property string code: ""
+            property string statusKind: ""
+            property string statusMsg: ""
+            property string code: ""
 
-        function openForPair() {
-            title = "Pair watch";
-            statusKind = "";
-            code = "";
-            statusMsg = "Opening pairing window…";
-            open();
-            var r = StoandlClient.pair();
-            if (r.ok) {
-                StoandlClient.startPairPoll();
-            } else {
-                statusKind = r.kind;
-                statusMsg = r.tail || ("Could not start pairing (" + r.kind + ")");
-            }
-        }
-
-        function openForRepair(name) {
-            title = "Re-pair " + name;
-            statusKind = "";
-            code = "";
-            statusMsg = "Re-opening pairing window…";
-            open();
-            var r = StoandlClient.repair(name);
-            if (r.ok) {
-                StoandlClient.startPairPoll();
-            } else {
-                statusKind = r.kind;
-                statusMsg = r.tail || ("Could not start re-pairing (" + r.kind + ")");
-            }
-        }
-
-        function handleStatus(kind, msg) {
-            statusKind = kind;
-            // confirm:<code> — show the code and the Accept/Decline buttons; the user verifies it
-            // matches the code on the watch before accepting.
-            if (kind === "confirm") {
-                code = msg;
-                statusMsg = "Does this code match the one shown on the watch?";
-                return;
-            }
-            // Every other message is the daemon's own words (a found watch, or why the window can't
-            // discover right now), shown as it changes. A bare `pending:` is "open, nothing found yet".
-            statusMsg = msg !== "" ? msg
-                      : kind === "pending" ? "Searching for a watch in pairing mode…"
-                      : kind;
-            if (kind === "ok") {
-                // "Paired and connected", "Paired", or "Watch already connected" (no window opened).
-                page.toast(msg !== "" ? msg : "Watch paired");
-                StoandlClient.refreshWatches();
-                close();
-            }
-        }
-
-        onClosed: StoandlClient.stopPairPoll()
-
-        ColumnLayout {
-            spacing: Kirigami.Units.largeSpacing
-
-            QQC2.Label {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                text: pairDialog.statusKind === "confirm"
-                    ? "Verify this code matches the one shown on the watch, then Accept."
-                    : "Put the watch in pairing mode."
+            function openForPair() {
+                title = "Pair watch";
+                statusKind = "";
+                code = "";
+                statusMsg = "Opening pairing window…";
+                open();
+                var r = StoandlClient.pair();
+                if (r.ok) {
+                    StoandlClient.startPairPoll();
+                } else {
+                    statusKind = r.kind;
+                    statusMsg = r.tail || ("Could not start pairing (" + r.kind + ")");
+                }
             }
 
-            QQC2.Label {
-                visible: pairDialog.statusKind === "confirm"
-                Layout.alignment: Qt.AlignHCenter
-                text: pairDialog.code
-                font.family: "monospace"
-                font.bold: true
-                font.pointSize: Kirigami.Theme.defaultFont.pointSize * 2
+            function openForRepair(name) {
+                title = "Re-pair " + name;
+                statusKind = "";
+                code = "";
+                statusMsg = "Re-opening pairing window…";
+                open();
+                var r = StoandlClient.repair(name);
+                if (r.ok) {
+                    StoandlClient.startPairPoll();
+                } else {
+                    statusKind = r.kind;
+                    statusMsg = r.tail || ("Could not start re-pairing (" + r.kind + ")");
+                }
             }
 
-            RowLayout {
+            function handleStatus(kind, msg) {
+                statusKind = kind;
+                // confirm:<code> — show the code and the Accept/Decline buttons; the user verifies it
+                // matches the code on the watch before accepting.
+                if (kind === "confirm") {
+                    code = msg;
+                    statusMsg = "Does this code match the one shown on the watch?";
+                    return;
+                }
+                // Every other message is the daemon's own words (a found watch, or why the window can't
+                // discover right now), shown as it changes. A bare `pending:` is "open, nothing found yet".
+                statusMsg = msg !== "" ? msg
+                          : kind === "pending" ? "Searching for a watch in pairing mode…"
+                          : kind;
+                if (kind === "ok") {
+                    // "Paired and connected", "Paired", or "Watch already connected" (no window opened).
+                    page.toast(msg !== "" ? msg : "Watch paired");
+                    StoandlClient.refreshWatches();
+                    close();
+                }
+            }
+
+            onClosed: StoandlClient.stopPairPoll()
+
+            ColumnLayout {
                 spacing: Kirigami.Units.largeSpacing
-                QQC2.BusyIndicator {
-                    visible: pairDialog.statusKind === "" || pairDialog.statusKind === "pending"
-                    running: visible
-                    implicitWidth: Kirigami.Units.iconSizes.medium
-                    implicitHeight: Kirigami.Units.iconSizes.medium
-                }
-                Kirigami.Icon {
-                    visible: pairDialog.statusKind === "error" || pairDialog.statusKind === "timeout"
-                    source: "dialog-error-symbolic"
-                    implicitWidth: Kirigami.Units.iconSizes.medium
-                    implicitHeight: Kirigami.Units.iconSizes.medium
-                }
+
                 QQC2.Label {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
-                    text: pairDialog.statusMsg
+                    text: pairDialog.statusKind === "confirm"
+                        ? "Verify this code matches the one shown on the watch, then Accept."
+                        : "Put the watch in pairing mode."
                 }
-            }
 
-            // Numeric-comparison Accept/Decline (only while a code is awaiting a decision).
-            RowLayout {
-                visible: pairDialog.statusKind === "confirm"
-                Layout.fillWidth: true
-                QQC2.Button {
-                    text: "Decline"
-                    icon.name: "dialog-cancel-symbolic"
-                    onClicked: {
-                        StoandlClient.confirmPairing(false);
-                        pairDialog.statusKind = "pending";
-                        pairDialog.statusMsg = "Declining…";
+                QQC2.Label {
+                    visible: pairDialog.statusKind === "confirm"
+                    Layout.alignment: Qt.AlignHCenter
+                    text: pairDialog.code
+                    font.family: "monospace"
+                    font.bold: true
+                    font.pointSize: Kirigami.Theme.defaultFont.pointSize * 2
+                }
+
+                RowLayout {
+                    spacing: Kirigami.Units.largeSpacing
+                    QQC2.BusyIndicator {
+                        visible: pairDialog.statusKind === "" || pairDialog.statusKind === "pending"
+                        running: visible
+                        implicitWidth: Kirigami.Units.iconSizes.medium
+                        implicitHeight: Kirigami.Units.iconSizes.medium
+                    }
+                    Kirigami.Icon {
+                        visible: pairDialog.statusKind === "error" || pairDialog.statusKind === "timeout"
+                        source: "dialog-error-symbolic"
+                        implicitWidth: Kirigami.Units.iconSizes.medium
+                        implicitHeight: Kirigami.Units.iconSizes.medium
+                    }
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: pairDialog.statusMsg
                     }
                 }
-                Item { Layout.fillWidth: true }
-                QQC2.Button {
-                    text: "Accept"
-                    icon.name: "dialog-ok-symbolic"
-                    highlighted: true
-                    onClicked: {
-                        StoandlClient.confirmPairing(true);
-                        pairDialog.statusKind = "pending";
-                        pairDialog.statusMsg = "Completing pairing…";
+
+                // Numeric-comparison Accept/Decline (only while a code is awaiting a decision).
+                RowLayout {
+                    visible: pairDialog.statusKind === "confirm"
+                    Layout.fillWidth: true
+                    QQC2.Button {
+                        text: "Decline"
+                        icon.name: "dialog-cancel-symbolic"
+                        onClicked: {
+                            StoandlClient.confirmPairing(false);
+                            pairDialog.statusKind = "pending";
+                            pairDialog.statusMsg = "Declining…";
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                    QQC2.Button {
+                        text: "Accept"
+                        icon.name: "dialog-ok-symbolic"
+                        highlighted: true
+                        onClicked: {
+                            StoandlClient.confirmPairing(true);
+                            pairDialog.statusKind = "pending";
+                            pairDialog.statusMsg = "Completing pairing…";
+                        }
                     }
                 }
             }
@@ -626,36 +704,40 @@ Kirigami.ScrollablePage {
     }
 
     // --- forget (unpair) confirmation --------------------------------------
-    Kirigami.PromptDialog {
-        id: forgetDialog
-        title: "Forget watch"
-        standardButtons: QQC2.Dialog.NoButton
+    Loader {
+        id: forgetLoader
+        active: false
+        sourceComponent: Kirigami.PromptDialog {
+            id: forgetDialog
+            title: "Forget watch"
+            standardButtons: QQC2.Dialog.NoButton
 
-        property string watchName: ""
+            property string watchName: ""
 
-        function openFor(name) {
-            watchName = name;
-            subtitle = "Forget \"" + name + "\"? This unpairs the watch from this host. You can pair it again later.";
-            open();
-        }
-
-        customFooterActions: [
-            Kirigami.Action {
-                text: "Forget"
-                icon.name: "edit-delete-remove-symbolic"
-                onTriggered: {
-                    var r = StoandlClient.unpair(forgetDialog.watchName);
-                    if (!r.ok)
-                        page.toast("Unpair failed: " + (r.tail || r.kind));
-                    StoandlClient.refreshWatches();
-                    forgetDialog.close();
-                }
-            },
-            Kirigami.Action {
-                text: "Cancel"
-                icon.name: "dialog-cancel-symbolic"
-                onTriggered: forgetDialog.close()
+            function openFor(name) {
+                watchName = name;
+                subtitle = "Forget \"" + name + "\"? This unpairs the watch from this host. You can pair it again later.";
+                open();
             }
-        ]
+
+            customFooterActions: [
+                Kirigami.Action {
+                    text: "Forget"
+                    icon.name: "edit-delete-remove-symbolic"
+                    onTriggered: {
+                        var r = StoandlClient.unpair(forgetDialog.watchName);
+                        if (!r.ok)
+                            page.toast("Unpair failed: " + (r.tail || r.kind));
+                        StoandlClient.refreshWatches();
+                        forgetDialog.close();
+                    }
+                },
+                Kirigami.Action {
+                    text: "Cancel"
+                    icon.name: "dialog-cancel-symbolic"
+                    onTriggered: forgetDialog.close()
+                }
+            ]
+        }
     }
 }

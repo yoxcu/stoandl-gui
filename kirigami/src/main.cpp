@@ -3,8 +3,13 @@
 #include <QQuickStyle>
 #include <QIcon>
 
+#include "SingleInstance.h"
+
 int main(int argc, char *argv[])
 {
+    // This launch's Wayland activation token, for handing to an instance that is already running.
+    const QString activationToken = qEnvironmentVariable("XDG_ACTIVATION_TOKEN");
+
     // QApplication (not QGuiApplication) so the org.kde.desktop QtQuick Controls
     // style and Breeze theming work on the convergent desktop target.
     QApplication app(argc, argv);
@@ -17,6 +22,11 @@ int main(int argc, char *argv[])
     // bus name de.yoxcu.stoandl. Sets the Wayland app_id / X11 WM_CLASS so the
     // compositor matches the window to de.yoxcu.stoandl.gui.desktop (data/) and its Icon=.
     QApplication::setDesktopFileName(QStringLiteral("de.yoxcu.stoandl.gui"));
+
+    // One instance per session: a second launch raises the first one's window and exits.
+    SingleInstance instance;
+    if (!instance.claimOrActivate(activationToken))
+        return 0;
 
     // Prefer the Breeze "by-the-book" look; honour an explicit override if set.
     if (qEnvironmentVariableIsEmpty("QT_QUICK_CONTROLS_STYLE"))

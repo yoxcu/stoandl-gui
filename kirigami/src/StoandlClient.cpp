@@ -6,6 +6,7 @@
 #include <QDesktopServices>
 #include <QStandardPaths>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QDir>
 #include <QDBusMessage>
 #include <QDBusPendingCall>
@@ -35,6 +36,13 @@ constexpr auto DBUS_IFACE   = "org.freedesktop.DBus";
 constexpr int CALL_TIMEOUT_MS = 10000;  // ordinary request/response
 constexpr int FIND_TIMEOUT_MS = 20000;  // FindWatch may linger daemon-side
 constexpr int NAME_TIMEOUT_MS = 3000;
+// CheckFirmware runs asynchronously, so it can outwait the daemon's own HTTP timeouts (15 s connect,
+// 30 s request) instead of giving up at the ordinary 10 s and leaving the download running.
+constexpr int FW_CHECK_TIMEOUT_MS = 60000;
+// How long a failed check (a daemon error: answer or a D-Bus error such as the timeout above) is
+// reused for an unchanged watch key: the daemon keeps a failed lookup that long too (ERROR_TTL_MS),
+// so a re-ask after it reaches the source again, and a failure at boot (network not up yet) heals.
+constexpr qint64 FW_ERROR_REUSE_MS = 60000;
 
 // Pair/Repair poll: 1.5 s cadence, 145 s ceiling (the daemon's dbus-interface.md §Long-running operations).
 constexpr int PAIR_INTERVAL_MS = 1500;
@@ -63,6 +71,88 @@ constexpr int LANG_TIMEOUT_MS  = 180000;
 //   QT_LOGGING_RULES="stoandl.debug=true"
 Q_LOGGING_CATEGORY(lcStoandl, "stoandl", QtWarningMsg)
 
+// --- parsing (pure, file-local) --------------------------------------------
+
+namespace {
+using Status = StoandlClient::Status;
+
+Status parseStatus(const QString &s)
+{
+    // Split on the FIRST ':' only — the tail can itself contain colons.
+    const int i = s.indexOf(QLatin1Char(':'));
+    Status st;
+    if (i < 0) {
+        st.kind = s;
+    } else {
+        st.kind = s.left(i);
+        st.tail = s.mid(i + 1);
+    }
+    if (!st.tail.isEmpty())
+        st.fields = st.tail.split(QLatin1Char('\t'));
+    return st;
+}
+
+QVariantMap statusMap(const Status &s)
+{
+    QVariantMap m;
+    m[QStringLiteral("kind")]     = s.kind;
+    m[QStringLiteral("tail")]     = s.tail;
+    m[QStringLiteral("fields")]   = s.fields;
+    m[QStringLiteral("ok")]       = s.ok();
+    m[QStringLiteral("notready")] = (s.kind == QStringLiteral("notready"));
+    return m;
+}
+
+// The leading run of digits as an int ("42%" -> 42, "3000 ms" -> 3000), -1 when there is none.
+int parsePercent(const QString &s)
+{
+    QString num;
+    bool started = false;
+    for (const QChar c : s) {
+        if (c.isDigit()) { num.append(c); started = true; }
+        else if (started) break;
+    }
+    return num.isEmpty() ? -1 : num.toInt();
+}
+
+// A reply as a Status; failures (D-Bus errors, daemon error/failed/timeout kinds) are logged.
+Status statusFromReply(const QString &method, const QDBusMessage &reply)
+{
+    if (reply.type() == QDBusMessage::ErrorMessage) {
+        qCWarning(lcStoandl).noquote().nospace()
+            << "D-Bus " << method << " failed: " << reply.errorName()
+            << " — " << reply.errorMessage();
+        return { QStringLiteral("error"), reply.errorMessage(), {} };
+    }
+    const Status st = parseStatus(reply.arguments().value(0).toString());
+    // Daemon-reported failures (a valid reply whose status kind is an error) also
+    // go to the terminal so the popup isn't the only trace.
+    if (st.kind == QStringLiteral("error") || st.kind == QStringLiteral("failed")
+        || st.kind == QStringLiteral("timeout"))
+        qCWarning(lcStoandl).noquote().nospace() << method << " -> " << st.kind << ": " << st.tail;
+    else
+        qCDebug(lcStoandl).noquote().nospace() << method << " -> " << st.kind;
+    return st;
+}
+
+// An `as` reply as records, one QStringList per tab-split row; a D-Bus error is logged and gives none.
+QVariantList recordsFromReply(const QString &method, const QDBusMessage &reply)
+{
+    QVariantList out;
+    if (reply.type() == QDBusMessage::ErrorMessage) {
+        qCWarning(lcStoandl).noquote().nospace()
+            << "D-Bus " << method << " failed: " << reply.errorName()
+            << " — " << reply.errorMessage();
+        return out;
+    }
+    const QStringList rows = reply.arguments().value(0).toStringList();
+    for (const QString &row : rows)
+        out.append(QVariant(row.split(QLatin1Char('\t'))));
+    return out;
+}
+} // namespace
+
+
 StoandlClient::StoandlClient(QObject *parent)
     : QObject(parent)
     , m_bus(QDBusConnection::sessionBus())
@@ -85,6 +175,13 @@ StoandlClient::StoandlClient(QObject *parent)
             qInfo().noquote().nospace() << "stoandl-smoke: firmwareStatus → " << kind << " " << percent << " " << detail;
         else
             qCDebug(lcStoandl).noquote().nospace() << "firmwareStatus → " << kind << " " << percent << " " << detail;
+    });
+    // A finished flash makes the cached CheckFirmware answer describe the old firmware: drop it (the
+    // banner goes) but keep its watch key, so the check comes again when the rebooted watch's state
+    // changes, as before, not while the old link is still listed.
+    connect(this, &StoandlClient::firmwareStatus, this, [this](const QString &kind, int, const QString &) {
+        if (kind == QStringLiteral("success"))
+            clearFirmwareInfo(false);
     });
 
     m_langTimer = new QTimer(this);
@@ -122,35 +219,6 @@ StoandlClient::StoandlClient(QObject *parent)
     recheckDaemon();
 }
 
-// --- parsing ---------------------------------------------------------------
-
-StoandlClient::Status StoandlClient::parseStatus(const QString &s)
-{
-    // Split on the FIRST ':' only — the tail can itself contain colons.
-    const int i = s.indexOf(QLatin1Char(':'));
-    Status st;
-    if (i < 0) {
-        st.kind = s;
-    } else {
-        st.kind = s.left(i);
-        st.tail = s.mid(i + 1);
-    }
-    if (!st.tail.isEmpty())
-        st.fields = st.tail.split(QLatin1Char('\t'));
-    return st;
-}
-
-QVariantMap StoandlClient::statusMap(const Status &s)
-{
-    QVariantMap m;
-    m[QStringLiteral("kind")]     = s.kind;
-    m[QStringLiteral("tail")]     = s.tail;
-    m[QStringLiteral("fields")]   = s.fields;
-    m[QStringLiteral("ok")]       = s.ok();
-    m[QStringLiteral("notready")] = (s.kind == QStringLiteral("notready"));
-    return m;
-}
-
 // --- low-level D-Bus -------------------------------------------------------
 
 QDBusMessage StoandlClient::methodCall(const QString &method, const QVariantList &args) const
@@ -165,22 +233,7 @@ StoandlClient::Status StoandlClient::callStatus(const QString &method, const QVa
 {
     // Build the message by hand (no QDBusInterface) so a missing daemon can't
     // block us on introspection — an unowned name just yields an error reply.
-    const QDBusMessage reply = m_bus.call(methodCall(method, args), QDBus::Block, CALL_TIMEOUT_MS);
-    if (reply.type() == QDBusMessage::ErrorMessage) {
-        qCWarning(lcStoandl).noquote().nospace()
-            << "D-Bus " << method << " failed: " << reply.errorName()
-            << " — " << reply.errorMessage();
-        return { QStringLiteral("error"), reply.errorMessage(), {} };
-    }
-    const Status st = parseStatus(reply.arguments().value(0).toString());
-    // Daemon-reported failures (a valid reply whose status kind is an error) also
-    // go to the terminal so the popup isn't the only trace.
-    if (st.kind == QStringLiteral("error") || st.kind == QStringLiteral("failed")
-        || st.kind == QStringLiteral("timeout"))
-        qCWarning(lcStoandl).noquote().nospace() << method << " -> " << st.kind << ": " << st.tail;
-    else
-        qCDebug(lcStoandl).noquote().nospace() << method << " -> " << st.kind;
-    return st;
+    return statusFromReply(method, m_bus.call(methodCall(method, args), QDBus::Block, CALL_TIMEOUT_MS));
 }
 
 // --- generic ---------------------------------------------------------------
@@ -192,18 +245,7 @@ QVariantMap StoandlClient::call(const QString &method, const QVariantList &args)
 
 QVariantList StoandlClient::list(const QString &method, const QVariantList &args)
 {
-    QVariantList out;
-    const QDBusMessage reply = m_bus.call(methodCall(method, args), QDBus::Block, CALL_TIMEOUT_MS);
-    if (reply.type() == QDBusMessage::ErrorMessage) {
-        qCWarning(lcStoandl).noquote().nospace()
-            << "D-Bus " << method << " failed: " << reply.errorName()
-            << " — " << reply.errorMessage();
-        return out;
-    }
-    const QStringList rows = reply.arguments().value(0).toStringList();
-    for (const QString &row : rows)
-        out.append(QVariant(row.split(QLatin1Char('\t'))));
-    return out;
+    return recordsFromReply(method, m_bus.call(methodCall(method, args), QDBus::Block, CALL_TIMEOUT_MS));
 }
 
 // --- typed wrappers: Watch -------------------------------------------------
@@ -632,20 +674,8 @@ QVariantMap StoandlClient::removeCalendarSource(const QString &id)
 
 // --- typed wrappers: System / firmware -------------------------------------
 
-int StoandlClient::parsePercent(const QString &s)
+QVariantMap StoandlClient::firmwareInfoMap(const Status &s)
 {
-    QString num;
-    bool started = false;
-    for (const QChar c : s) {
-        if (c.isDigit()) { num.append(c); started = true; }
-        else if (started) break;
-    }
-    return num.isEmpty() ? -1 : num.toInt();
-}
-
-QVariantMap StoandlClient::checkFirmware()
-{
-    const Status s = callStatus(QStringLiteral("CheckFirmware"));
     QVariantMap m = statusMap(s);
     if (s.kind == QStringLiteral("ok")) {
         // ok:<board>\t<current>\t<latest>\t<asset>\t<yes|no>\t<source>\t<changelogUrl>
@@ -659,6 +689,85 @@ QVariantMap StoandlClient::checkFirmware()
         m[QStringLiteral("changelogUrl")]    = s.fields.value(6);
     }
     return m;
+}
+
+void StoandlClient::requestFirmwareCheck(const QString &watchKey)
+{
+    m_fwWantedKey = watchKey;
+    // A call in flight answers for its own key; the reply handler issues the next one if the key moved.
+    if (!m_daemonUp || m_fwCheckInFlight)
+        return;
+    if (m_fwHaveInfo && m_fwInfoKey == watchKey
+        && !(m_fwInfo.value(QStringLiteral("kind")).toString() == QLatin1String("error")
+             && m_fwInfoAge.hasExpired(FW_ERROR_REUSE_MS)))
+        return;
+    startFirmwareCheck(false);
+}
+
+void StoandlClient::forceFirmwareCheck()
+{
+    if (!m_daemonUp)
+        return;
+    if (m_fwCheckInFlight) {
+        m_fwForceQueued = true;
+        return;
+    }
+    startFirmwareCheck(true);
+}
+
+void StoandlClient::startFirmwareCheck(bool force)
+{
+    // An explicit check also bypasses the daemon's own cache (3 h per source/board/firmware), when the
+    // daemon has CheckFirmwareForce; an older one only has CheckFirmware.
+    const bool useForce = force && !m_fwForceUnsupported;
+    const QString method = useForce ? QStringLiteral("CheckFirmwareForce") : QStringLiteral("CheckFirmware");
+    const QString key = m_fwWantedKey;
+    const quint64 generation = m_fwGeneration;
+    m_fwCheckInFlight = true;
+    m_fwForceQueued = false;
+    Q_EMIT firmwareInfoChanged();
+
+    const QDBusPendingCall pc = m_bus.asyncCall(methodCall(method, {}), FW_CHECK_TIMEOUT_MS);
+    auto *w = new QDBusPendingCallWatcher(pc, this);
+    connect(w, &QDBusPendingCallWatcher::finished, this,
+            [this, method, key, generation, useForce](QDBusPendingCallWatcher *self) {
+        self->deleteLater();
+        m_fwCheckInFlight = false;
+        const QDBusMessage reply = self->reply();
+        if (useForce && reply.type() == QDBusMessage::ErrorMessage
+            && reply.errorName() == QLatin1String("org.freedesktop.DBus.Error.UnknownMethod")) {
+            m_fwForceUnsupported = true;
+            if (generation == m_fwGeneration && m_daemonUp) {
+                startFirmwareCheck(false);
+                return;
+            }
+        }
+        // A reply from before the cache was dropped (daemon restart, a finished flash) is stale.
+        if (generation == m_fwGeneration) {
+            m_fwInfo = firmwareInfoMap(statusFromReply(method, reply));
+            m_fwInfoKey = key;
+            m_fwHaveInfo = true;
+            m_fwInfoAge.start();
+        }
+        const bool again = m_daemonUp
+            && (m_fwForceQueued || !m_fwHaveInfo || m_fwInfoKey != m_fwWantedKey);
+        if (again)
+            startFirmwareCheck(m_fwForceQueued);
+        else
+            Q_EMIT firmwareInfoChanged();
+    });
+}
+
+void StoandlClient::clearFirmwareInfo(bool forgetKey)
+{
+    ++m_fwGeneration;
+    m_fwInfo.clear();
+    m_fwForceQueued = false;
+    if (forgetKey) {
+        m_fwHaveInfo = false;
+        m_fwInfoKey.clear();
+    }
+    Q_EMIT firmwareInfoChanged();
 }
 
 QVariantMap StoandlClient::updateFirmware()
@@ -1744,10 +1853,19 @@ void StoandlClient::recheckDaemon()
     m.setArguments({ QString::fromLatin1(SERVICE) });
     const QDBusMessage r = m_bus.call(m, QDBus::Block, NAME_TIMEOUT_MS);
     const bool up = (r.type() != QDBusMessage::ErrorMessage) && r.arguments().value(0).toBool();
-    if (up != m_daemonUp) {
-        m_daemonUp = up;
-        Q_EMIT daemonUpChanged();
-    }
+    setDaemonUp(up);
+}
+
+void StoandlClient::setDaemonUp(bool up)
+{
+    if (up == m_daemonUp)
+        return;
+    m_daemonUp = up;
+    m_fwForceUnsupported = false;   // a restarted daemon may be a newer one
+    // A daemon that went away (or a new one) owes us a fresh firmware answer.
+    if (m_fwHaveInfo || !m_fwInfo.isEmpty() || m_fwCheckInFlight)
+        clearFirmwareInfo(true);
+    Q_EMIT daemonUpChanged();
 }
 
 void StoandlClient::onNameOwnerChanged(const QString &name, const QString &, const QString &newOwner)
@@ -1755,10 +1873,7 @@ void StoandlClient::onNameOwnerChanged(const QString &name, const QString &, con
     if (name != QLatin1String(SERVICE))
         return;
     const bool up = !newOwner.isEmpty();
-    if (up != m_daemonUp) {
-        m_daemonUp = up;
-        Q_EMIT daemonUpChanged();
-    }
+    setDaemonUp(up);
 }
 
 // --- reactive signals (de.yoxcu.stoandl.Control) ---------------------------

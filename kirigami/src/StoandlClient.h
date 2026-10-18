@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QElapsedTimer>
 #include <QQmlEngine>
 #include <QDBusConnection>
 #include <QVariantList>
@@ -43,6 +44,13 @@ class StoandlClient : public QObject
     // that doesn't exist, so the GUI-started firmware path runs end to end against the mock, which walks
     // any path (MOCK_FW_DOWNGRADE=1|drop picks the walk). A real daemon refuses the missing file.
     Q_PROPERTY(bool smokeFlash READ smokeFlash CONSTANT)
+    // The last CheckFirmware result for the watches the Watch page last asked about (see
+    // requestFirmwareCheck): {kind, tail, ok, notready, board, current, latest, asset,
+    // updateAvailable, source, changelogUrl}, or {} before the first answer. Owned here, not by the
+    // page, so a Watch page recreated by a tab switch shows it at once instead of checking again.
+    Q_PROPERTY(QVariantMap firmwareInfo READ firmwareInfo NOTIFY firmwareInfoChanged)
+    // A CheckFirmware call is in flight (the daemon may download a release list first: seconds).
+    Q_PROPERTY(bool firmwareChecking READ firmwareChecking NOTIFY firmwareInfoChanged)
 
 public:
     explicit StoandlClient(QObject *parent = nullptr);
@@ -52,6 +60,8 @@ public:
     QString linkPause() const { return m_linkPause; }
     static int smokeMs() { return qEnvironmentVariableIntValue("STOANDL_SMOKE_MS"); }
     static bool smokeFlash() { return smokeMs() > 0 && qEnvironmentVariableIntValue("STOANDL_SMOKE_FLASH") == 1; }
+    QVariantMap firmwareInfo() const { return m_fwInfo; }
+    bool firmwareChecking() const { return m_fwCheckInFlight; }
 
     // Parsed status string: "kind:tail", tail tab-split into fields.
     struct Status {
@@ -213,8 +223,15 @@ public:
     Q_INVOKABLE QVariantList heartBars(const QString &periodType, int offset);     // week/month -> [{label,value(avgBpm),hasValue}]
 
     // --- typed wrappers: System screen (Milestone 5) -----------------------
-    // Firmware (flash is async -> firmwareStatus poll, 0.8 s, 600 s ceiling).
-    Q_INVOKABLE QVariantMap  checkFirmware();            // CheckFirmware() -> {kind, board,current,latest,asset,updateAvailable,source}
+    // Firmware check: asynchronous, never on the UI thread (with firmware.github on, the daemon can take
+    // 8+ s to answer). The result lands in firmwareInfo. `watchKey` is the name:state of every listed
+    // watch: an unchanged key reuses the cached answer (or joins the call in flight), a changed one (a
+    // watch connects, reboots after a flash, comes up in recovery) checks again.
+    Q_INVOKABLE void         requestFirmwareCheck(const QString &watchKey);
+    // An explicit "check now" (Sync now, Check for updates): re-asks the daemon for the last key even
+    // when an answer is cached, through CheckFirmwareForce (past the daemon's own cache too).
+    Q_INVOKABLE void         forceFirmwareCheck();
+    // Firmware flash (async -> firmwareStatus poll, 0.8 s, 600 s ceiling).
     Q_INVOKABLE QVariantMap  updateFirmware();           // UpdateFirmware() ; on ok starts the firmware poll
     Q_INVOKABLE QVariantMap  sideloadFirmware(const QUrl &fileUrl); // SideloadFirmware(.pbz abs path) ; starts poll
     Q_INVOKABLE void         stopFirmwarePoll();
@@ -273,6 +290,7 @@ Q_SIGNALS:
     void languageStatus(const QString &kind, int percent, const QString &detail);
     void cliResult(const QString &op, bool ok, const QString &message);
     void daemonStartFailed(const QString &message);  // startDaemon() could not start the service
+    void firmwareInfoChanged();                      // firmwareInfo / firmwareChecking
 
 private Q_SLOTS:
     void onNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
@@ -296,9 +314,6 @@ private Q_SLOTS:
 private:
     QDBusMessage methodCall(const QString &method, const QVariantList &args) const;
     Status       callStatus(const QString &method, const QVariantList &args = {});
-    static Status parseStatus(const QString &s);
-    static QVariantMap statusMap(const Status &s);
-    static int   parsePercent(const QString &s);
     void         startFirmwarePoll();
     // Stop the firmware poll and clear its activity/recovery state (every terminal outcome).
     void         endFirmwareOp();
@@ -314,6 +329,12 @@ private:
     // disconnected, failed→failed identically. (The first-poll stale-terminal skip stays in
     // languagePollOnce — it guards a stale poll snapshot; the signal is always live.)
     void         emitLanguageStatus(const QString &phase, int percent, const QString &detail);
+    // Issue one asynchronous CheckFirmware for m_fwWantedKey (nothing else in flight).
+    void         startFirmwareCheck(bool force);
+    // Forget the cached firmware answer (daemon gone, a flash finished): the next request re-asks.
+    void         clearFirmwareInfo(bool forgetKey);
+    static QVariantMap firmwareInfoMap(const Status &s);
+    void         setDaemonUp(bool up);
     void         runCli(const QString &op, const QStringList &args);
     // Run `systemctl --user <args>` asynchronously; `done` gets (exit 0, first stderr line / reason).
     void         runSystemctl(const QStringList &args,
@@ -336,6 +357,20 @@ private:
     // (activity + timeout restart there), cleared at the terminal state.
     bool    m_fwViaRecovery = false;
     QString m_fwPrfVersion;
+
+    // CheckFirmware cache: m_fwInfo answers m_fwInfoKey; m_fwWantedKey is what the page asked for last.
+    // One call at a time: a request for another key (or a forced one) while a call is in flight is
+    // queued and issued when it returns, so a slow daemon never stacks downloads. A good answer is kept
+    // until the key changes; a failed one (kind error) only for FW_ERROR_REUSE_MS of m_fwInfoAge.
+    QVariantMap m_fwInfo;
+    QString     m_fwInfoKey;
+    QString     m_fwWantedKey;
+    bool        m_fwHaveInfo = false;
+    QElapsedTimer m_fwInfoAge;                  // since m_fwInfo arrived
+    bool        m_fwCheckInFlight = false;
+    bool        m_fwForceQueued = false;
+    bool        m_fwForceUnsupported = false;   // the daemon predates CheckFirmwareForce
+    quint64     m_fwGeneration = 0;   // bumped by clearFirmwareInfo: a reply from before is dropped
 
     QTimer *m_langTimer = nullptr;
     int     m_langElapsedMs = 0;

@@ -17,6 +17,8 @@ include(GNUInstallDirs)
 
 qt_add_executable(stoandl-gui
     src/main.cpp
+    src/SingleInstance.h
+    src/SingleInstance.cpp
 )
 
 # Embed a subset of the app-icon PNGs so the window icon is present even when the

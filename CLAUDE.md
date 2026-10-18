@@ -12,6 +12,23 @@ front-end used to ship alongside; it was retired on 2026-10-15.)
   daemon repo's `docs/dbus-interface.md` (the one copy; `docs/dbus-interface.md` here links to it). No
   code shared with the daemon — we are just another client.
 - Builds musl-native (Alpine/postmarketOS) and glibc (desktop). No JVM.
+- **One instance per session** (`src/SingleInstance.*`, plain QtDBus, no KF6 DBusAddons): the first
+  process owns the bus name `de.yoxcu.stoandl.gui` (the app id, which a Flatpak may own by default) and
+  exports `de.yoxcu.stoandl.Gui.Activate(s token)` at `/de/yoxcu/stoandl/gui`; a later launch calls it
+  with its `XDG_ACTIVATION_TOKEN` and exits 0, and the owner raises + `requestActivate()`s its window
+  (Qt's Wayland plugin reads that variable there).
+- **Window before data.** `WatchPage` (the launch page) starts its loads on the window's first
+  `frameSwapped` (a 500 ms timer as the fallback) and builds its three dialogs on first use (a
+  `Loader` each, reached through `detailsDialogItem()`/`pairDialogItem()`/`forgetDialogItem()`).
+  **`CheckFirmware` is asynchronous** and owned by `StoandlClient`, never called from QML directly:
+  `applyWatches` passes the watches' name:state key to `requestFirmwareCheck(key)` (an unchanged key
+  reuses the cached answer or joins the call in flight, so the Watch tab coming back doesn't
+  re-ask; an `error:` answer or a timeout only for a minute, like the daemon's failed lookups), the
+  answer lands in the `firmwareInfo`/`firmwareChecking` properties the banner and
+  `WatchDetailsDialog` bind to, and Sync now / Check for updates call `forceFirmwareCheck()`
+  (`CheckFirmwareForce`, falling back to `CheckFirmware` on `UnknownMethod`). With `firmware.github`
+  on and the release list uncached, the daemon takes ~8 s on a phone: a blocking call there froze the
+  first frame past Plasma Mobile’s 8 s launch splash, which then looked like a crash.
 
 ## Navigation — 5 tabs (current)
 **Watch · Health · Apps · Notifications · Settings** in `Kirigami.NavigationTabBar` (KDE HIG: ≤5
@@ -99,7 +116,9 @@ watch-card preview through each `notification.app_name` placement and writes the
 unchanged, then opens the per-app dialog, writes its app-name placement back unchanged and logs its
 preview for that override and for Default (each preview as `stoandl-smoke: preview <placement>:
 title=… | small=… | …`); `AppsPage` logs the permission request banners (`stoandl-smoke: perm banners …`)
-and one app's permission dialog rows (`stoandl-smoke: perms key=status, …`), read-only; `WatchPage` hands the pairing dialog the
+and one app's permission dialog rows (`stoandl-smoke: perms key=status, …`), read-only; `WatchPage` logs the firmware answer (`stoandl-smoke: firmware
+checking=… kind=… update=…`), opens the details dialog and logs its firmware state, forces a re-check
+(both only with a watch connected), hands the pairing dialog the
 daemon's search states (the bare `pending:` and a pause note) and pushes `BatteryPage` even with no
 watch connected; with the daemon down the tick presses "Start daemon". The Quiet Time round trip
 writes the watch's own window back afterwards (the hook also runs against a real daemon). With
@@ -119,7 +138,9 @@ layout), `MOCK_FW_DOWNGRADE=1` (every sideload is a downgrade through recovery; 
 comes back on its normal firmware and the daemon reports the dropped downgrade as `failed:`),
 `MOCK_FW_AUTOSTART=<s>` (a flash the GUI didn't start, seen only through `FirmwareProgress`) and
 `MOCK_LINK_PAUSE=manual|quiet_time` (the Watch page starts with that link-paused banner; the smoke walks
-Disconnect → Connect either way).
+Disconnect → Connect either way) and `MOCK_FW_CHECK_MS=<ms>` (`CheckFirmware`/`CheckFirmwareForce` answer
+that late without blocking the mock's other calls, like the daemon fetching an uncached GitHub release
+list; the mock prints each check as `mock: CheckFirmware #n`, so a smoke log shows how often the GUI asked).
 
 ## Hard rules
 - **The interface has SEVEN signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/

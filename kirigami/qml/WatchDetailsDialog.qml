@@ -23,6 +23,13 @@ Kirigami.Dialog {
     // Language-install progress: langBusy shows the bar; langPercent < 0 = indeterminate (no % yet).
     property bool langBusy: false
     property int langPercent: -1
+    // Firmware: StoandlClient's cached, asynchronous CheckFirmware answer (the Watch page keeps it
+    // current), shown beside the version; "Check for updates" asks again and toasts the outcome.
+    readonly property var fw: StoandlClient.firmwareInfo
+    readonly property string fwState: StoandlClient.firmwareChecking ? "checking…"
+        : fw.kind === "ok" ? (fw.updateAvailable ? fw.latest + " available" : "up to date")
+        : ""
+    property bool fwCheckRequested: false
 
     title: view === "language" ? "Watch language"
          : (details.name ? (details.name + (details.code ? " · " + details.code : "")) : "Watch")
@@ -54,6 +61,16 @@ Kirigami.Dialog {
 
     Connections {
         target: StoandlClient
+        function onFirmwareInfoChanged() {
+            if (!dialog.fwCheckRequested || StoandlClient.firmwareChecking)
+                return;
+            dialog.fwCheckRequested = false;
+            if (dialog.fw.kind === "ok")
+                dialog.toast(dialog.fw.updateAvailable ? ("PebbleOS " + dialog.fw.latest + " available")
+                                                       : "Firmware up to date");
+            else if (dialog.fw.kind)
+                dialog.toast("Firmware: " + (dialog.fw.tail || dialog.fw.kind));
+        }
         function onLanguageStatus(kind, percent, detail) {
             if (kind === "success") { dialog.langBusy = false; dialog.langPercent = -1; dialog.toast("Language pack installed"); dialog.loadLanguages(); }
             else if (kind === "failed") { dialog.langBusy = false; dialog.langPercent = -1; dialog.toast("Language install failed: " + detail); }
@@ -135,15 +152,22 @@ Kirigami.Dialog {
                     QQC2.Label { text: "Firmware"; opacity: 0.7 }
                     Item { Layout.fillWidth: true }
                     QQC2.Label { text: dialog.details.firmware || "—"; font.bold: true }
+                    QQC2.Label {
+                        visible: dialog.fwState !== ""
+                        text: dialog.fwState
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.7
+                    }
                     QQC2.ToolButton {
                         text: "What’s new"
                         icon.name: "globe-symbolic"
                         display: QQC2.AbstractButton.TextBesideIcon
                         flat: true
                         onClicked: {
-                            var fw = StoandlClient.checkFirmware();
-                            if (fw.kind === "ok" && fw.changelogUrl)
-                                Qt.openUrlExternally(fw.changelogUrl);
+                            if (dialog.fw.kind === "ok" && dialog.fw.changelogUrl)
+                                Qt.openUrlExternally(dialog.fw.changelogUrl);
+                            else if (StoandlClient.firmwareChecking)
+                                dialog.toast("Still checking for updates…");
                             else
                                 dialog.toast("No changelog available");
                         }
@@ -219,14 +243,12 @@ Kirigami.Dialog {
                 }
             }
             ActionRow {
-                text: "Check for updates"; iconName: "view-refresh-symbolic"
+                text: StoandlClient.firmwareChecking ? "Checking for updates…" : "Check for updates"
+                iconName: "view-refresh-symbolic"
+                enabled: StoandlClient.daemonUp && !dialog.fwCheckRequested
                 onClicked: {
-                    var fw = StoandlClient.checkFirmware();
-                    if (fw.kind === "ok")
-                        dialog.toast(fw.updateAvailable ? ("PebbleOS " + fw.latest + " available")
-                                                        : "Firmware up to date");
-                    else
-                        dialog.toast("Firmware: " + (fw.tail || fw.kind));
+                    dialog.fwCheckRequested = true;   // the answer is toasted by onFirmwareInfoChanged
+                    StoandlClient.forceFirmwareCheck();
                 }
             }
             ActionRow {
