@@ -759,6 +759,12 @@ Kirigami.ScrollablePage {
                     // Exposed for collect(): the field's key + current value.
                     readonly property string fieldKey: modelData.key
                     property var fieldValue: extConfigDialog.values[modelData.key]
+                    // A secret lives in the daemon's keyring and always reads "": posting "" keeps it,
+                    // null removes it. `_secrets` names the stored ones.
+                    readonly property bool isSecret: modelData.type === "string" && modelData.secret === true
+                    readonly property bool secretStored: isSecret && !secretCleared &&
+                        ("" + (extConfigDialog.values["_secrets"] || "")).split(",").indexOf(modelData.key) >= 0
+                    property bool secretCleared: false
 
                     background: null
                     hoverEnabled: false
@@ -777,14 +783,33 @@ Kirigami.ScrollablePage {
                             onToggled: fieldRow.fieldValue = checked
                         }
 
-                        // string -> text field (password echo when secret)
+                        // string -> text field
                         FormTextRow {
-                            visible: fieldRow.modelData.type === "string"
+                            visible: fieldRow.modelData.type === "string" && !fieldRow.isSecret
                             Layout.fillWidth: true
                             label: fieldRow.modelData.label
                             value: fieldRow.fieldValue !== undefined ? "" + fieldRow.fieldValue : ""
-                            echoMode: fieldRow.modelData.secret ? TextInput.Password : TextInput.Normal
                             onValueChanged: fieldRow.fieldValue = value
+                        }
+
+                        // secret string -> password field, blank unless retyped, plus Clear when stored
+                        FormTextRow {
+                            visible: fieldRow.isSecret
+                            Layout.fillWidth: true
+                            label: fieldRow.modelData.label
+                            description: fieldRow.secretStored ? "Stored in the keyring; type to replace it"
+                                : fieldRow.secretCleared ? "Will be removed on Save" : "Not set"
+                            echoMode: TextInput.Password
+                            placeholderText: fieldRow.secretStored ? "••••••••" : ""
+                            onValueChanged: fieldRow.fieldValue = (value === "" && fieldRow.secretCleared) ? null : value
+                        }
+                        FormCard.FormButtonDelegate {
+                            visible: fieldRow.secretStored
+                            text: "Clear " + fieldRow.modelData.label
+                            onClicked: {
+                                fieldRow.secretCleared = true;
+                                fieldRow.fieldValue = null;
+                            }
                         }
 
                         // int -> spin box
