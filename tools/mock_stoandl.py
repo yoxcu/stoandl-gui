@@ -69,11 +69,34 @@ CONFIG_COLS = ("key", "type", "label", "options", "desc", "group", "apply",
                "min", "max", "unit", "placeholder")
 
 
+def _list_decode(raw):
+    """The daemon's ConfList.decode: split on ',', with '\\,' a comma and '\\\\' a backslash inside an
+    item (any other backslash literal); items trimmed, blank ones dropped."""
+    items, cur, i = [], "", 0
+    while i < len(raw):
+        c, nxt = raw[i], raw[i + 1] if i + 1 < len(raw) else ""
+        if c == "\\" and nxt in (",", "\\"):
+            cur += nxt
+            i += 1
+        elif c == ",":
+            items.append(cur)
+            cur = ""
+        else:
+            cur += c
+        i += 1
+    items.append(cur)
+    return [x.strip() for x in items if x.strip()]
+
+
+def _list_encode(items):
+    return ",".join(x.strip().replace("\\", "\\\\").replace(",", "\\,") for x in items if x.strip())
+
+
 def _weather_locations(v):
     """The daemon's StoandlConfig.parseWeatherLocations: `(error, normalised)`. GetConfig reads each
     entry back with lat/lon printed like a Kotlin Double ("Home:48:11" -> "Home:48.0:11.0")."""
     out = []
-    for entry in (e.strip() for e in v.split(",") if e.strip()):
+    for entry in _list_decode(v):
         name, _, lon = entry.rpartition(":")
         name, _, lat = name.rpartition(":")
         try:
@@ -83,7 +106,7 @@ def _weather_locations(v):
         if not name.strip():
             return "expected comma-separated Name:lat:lon entries (e.g. Berlin:52.52:13.405)", None
         out.append(f"{name.strip()}:{lat!r}:{lon!r}")
-    return None, ",".join(out)
+    return None, _list_encode(out)
 
 
 def _github_repo_err(v):
@@ -1807,7 +1830,7 @@ class MockStoandl(dbus.service.Object):
             if "#" in v:
                 return f"error:{key}: cannot contain '#' (it starts a comment in stoandl.conf)"
             if kind == "list":
-                v = ",".join(p.strip() for p in v.split(",") if p.strip())
+                v = _list_encode(_list_decode(v))
             check = CONFIG_CHECKS.get(key)
             err, readback = check(v) if check else (None, v)
             if err:

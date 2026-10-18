@@ -4,6 +4,7 @@ import QtQuick.Controls as QQC2
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
+import "ConfList.js" as ConfList
 
 // Daemon configuration — the stoandl.conf keys the daemon exposes over D-Bus (GetConfigSchema /
 // GetConfig / SetConfig). Schema-driven: each key declares a type (toggle | combo | text | int | list),
@@ -125,7 +126,8 @@ Kirigami.ScrollablePage {
                                            : modelData.type === "combo"  ? cfgCombo
                                            : modelData.type === "int"    ? cfgInt
                                            : modelData.type === "secret" ? cfgSecret
-                                           : cfgText   // text, list, and any future kind
+                                           : modelData.type === "list"   ? cfgList
+                                           : cfgText   // text and any future kind
 
                             Component {
                                 id: cfgToggle
@@ -194,9 +196,21 @@ Kirigami.ScrollablePage {
                                 }
                             }
 
-                            // Text and list (comma-separated), via the shared FormTextRow (which exists
-                            // because FormTextFieldDelegate has no `description` and calls i18ndc()).
-                            // The schema's placeholder documents the expected shape (e.g. Name:lat:lon).
+                            // A list: one row per item (add, remove, reorder); items may contain commas.
+                            Component {
+                                id: cfgList
+                                FormListRow {
+                                    label: cfgLoader.modelData.label
+                                    description: cfgLoader.modelData.description
+                                    value: cfgLoader.modelData.value
+                                    placeholderText: cfgLoader.modelData.placeholder
+                                    onCommit: (newValue) => page.applyConfig(cfgLoader.modelData.key, newValue)
+                                }
+                            }
+
+                            // Text, via the shared FormTextRow (which exists because FormTextFieldDelegate
+                            // has no `description` and calls i18ndc()). The schema's placeholder documents
+                            // the expected shape.
                             Component {
                                 id: cfgText
                                 FormTextRow {
