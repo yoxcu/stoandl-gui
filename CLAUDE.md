@@ -115,8 +115,10 @@ watch", since the daemon opens no window while a watch is connected), `MOCK_PAIR
 (each pairing window starts with that "can't discover" note), `MOCK_HB_UNKNOWN=1` (unverified heartbeat
 layout), `MOCK_FW_DOWNGRADE=1` (every sideload is a downgrade through recovery; the watch lists as
 `recovery` while it is flashed there, like on the daemon), `MOCK_FW_DOWNGRADE=drop` (the same, but the watch
-comes back on its normal firmware and the daemon reports the dropped downgrade as `failed:`) and
-`MOCK_FW_AUTOSTART=<s>` (a flash the GUI didn't start, seen only through `FirmwareProgress`).
+comes back on its normal firmware and the daemon reports the dropped downgrade as `failed:`),
+`MOCK_FW_AUTOSTART=<s>` (a flash the GUI didn't start, seen only through `FirmwareProgress`) and
+`MOCK_LINK_PAUSE=manual|quiet_time` (the Watch page starts with that link-paused banner; the smoke walks
+Disconnect → Connect either way).
 
 ## Hard rules
 - **The interface has SEVEN signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/

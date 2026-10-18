@@ -23,6 +23,9 @@ Kirigami.ScrollablePage {
     property string fwDetail: ""    // prf: the version the watch is being downgraded to
     readonly property bool fwBusy: fwPhase !== ""
     readonly property bool updateAvailable: fwInfo && fwInfo.kind === "ok" && fwInfo.updateAvailable === true
+    // LinkPause: the user's Disconnect, and/or the Quiet Time pause (power.quiet_time_link_off).
+    readonly property bool pausedByHand: StoandlClient.linkPause.split(",").indexOf("manual") >= 0
+    readonly property bool pausedForQuietTime: StoandlClient.linkPause.split(",").indexOf("quiet_time") >= 0
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
@@ -56,6 +59,12 @@ Kirigami.ScrollablePage {
         if (!r.ok)
             page.toast("Connect failed: " + (r.tail || r.kind));
         StoandlClient.refreshWatches(); // re-fetch after mutation
+    }
+
+    function resumeLink() {
+        var r = StoandlClient.connectWatch("");
+        page.toast(r.ok ? (r.tail || "Watch connection resumed") : "Connect failed: " + (r.tail || r.kind));
+        StoandlClient.refreshWatches();
     }
 
     function stateColor(state) {
@@ -122,6 +131,12 @@ Kirigami.ScrollablePage {
         var bp = applicationWindow().pageStack.push(batteryPageComponent);
         console.log("stoandl-smoke: battery kind=" + (bp.insights ? bp.insights.kind : "none")
                     + " watchConnected=" + bp.watchConnected + " hasInsights=" + bp.hasInsights);
+        // Disconnect → paused banner → Connect (the round trip MOCK_LINK_PAUSE=manual starts halfway).
+        var before = "byHand=" + page.pausedByHand + " quietTime=" + page.pausedForQuietTime;
+        if (!page.pausedByHand) { StoandlClient.disconnectWatch(); StoandlClient.refreshWatches(); }
+        var held = page.pausedByHand;
+        page.resumeLink();
+        console.log("stoandl-smoke: link pause " + before + " disconnect=" + held + " resumed=" + !page.pausedByHand);
         // STOANDL_SMOKE_FLASH=1: start a flash the way Settings → Debug does (sideloadFirmware, which
         // arms the firmware poll), so the phase handling — the prf walk with MOCK_FW_DOWNGRADE=1 or
         // drop — runs end to end and lands on this page's banner. The path doesn't exist: the mock
@@ -145,6 +160,18 @@ Kirigami.ScrollablePage {
             text: "Ring watch"
             enabled: StoandlClient.daemonUp && page.connectedWatch !== null
             onTriggered: StoandlClient.findWatch()
+        },
+        Kirigami.Action {
+            icon.name: "network-disconnect-symbolic"
+            text: "Disconnect"
+            tooltip: "Keep the watch disconnected until you connect it again"
+            visible: StoandlClient.daemonUp && page.connectedWatch !== null && !page.pausedByHand
+            onTriggered: {
+                var r = StoandlClient.disconnectWatch();
+                if (!r.ok)
+                    page.toast("Disconnect failed: " + (r.tail || r.kind));
+                StoandlClient.refreshWatches();
+            }
         },
         Kirigami.Action {
             icon.name: "view-refresh-symbolic"
@@ -176,6 +203,35 @@ Kirigami.ScrollablePage {
             type: Kirigami.MessageType.Warning
             icon.source: "network-bluetooth-inactive-symbolic"
             text: "Bluetooth is off — turn it on to connect your Pebble. The daemon reconnects automatically."
+        }
+
+        // --- link paused: by hand (Disconnect), or for Quiet Time --------------
+        Kirigami.InlineMessage {
+            visible: StoandlClient.daemonUp && page.pausedByHand
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.largeSpacing
+            Layout.leftMargin: Kirigami.Units.largeSpacing
+            Layout.rightMargin: Kirigami.Units.largeSpacing
+            type: Kirigami.MessageType.Information
+            icon.source: "network-disconnect-symbolic"
+            text: "Watch disconnected — no watch connects until you connect it again."
+            actions: [
+                Kirigami.Action {
+                    icon.name: "network-connect-symbolic"
+                    text: "Connect"
+                    onTriggered: page.resumeLink()
+                }
+            ]
+        }
+        Kirigami.InlineMessage {
+            visible: StoandlClient.daemonUp && page.pausedForQuietTime && !page.pausedByHand
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.largeSpacing
+            Layout.leftMargin: Kirigami.Units.largeSpacing
+            Layout.rightMargin: Kirigami.Units.largeSpacing
+            type: Kirigami.MessageType.Information
+            icon.source: "weather-clear-night-symbolic"
+            text: "Watch connection paused for Quiet Time. It comes back when Quiet Time ends or the display comes on."
         }
 
         // --- no-watch (notready) empty state -------------------------------

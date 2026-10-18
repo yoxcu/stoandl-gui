@@ -31,6 +31,9 @@ class StoandlClient : public QObject
     // Host Bluetooth on/usable (BluetoothStatus, polled on the 20 s watch tick). The daemon detects
     // adapter-off / rfkill / airplane-mode; the GUI shows a "Bluetooth is off" state when this is false.
     Q_PROPERTY(bool bluetoothOn READ bluetoothOn NOTIFY bluetoothOnChanged)
+    // Why the watch link is held off (LinkPause, read with every watch refresh): "manual" (Disconnect),
+    // "quiet_time" (power.quiet_time_link_off), both comma-separated, or "" (also for an older daemon).
+    Q_PROPERTY(QString linkPause READ linkPause NOTIFY linkPauseChanged)
     // Headless verification harness (sandbox only): milliseconds per step when STOANDL_SMOKE_MS is
     // set, else 0. Main.qml steps through every tab, exercises the Settings sub-pages and quits, so
     // `QT_QPA_PLATFORM=offscreen tools/run-with-mock.sh` proves QML -> D-Bus -> mock -> render
@@ -46,6 +49,7 @@ public:
 
     bool daemonUp() const { return m_daemonUp; }
     bool bluetoothOn() const { return m_bluetoothOn; }
+    QString linkPause() const { return m_linkPause; }
     static int smokeMs() { return qEnvironmentVariableIntValue("STOANDL_SMOKE_MS"); }
     static bool smokeFlash() { return smokeMs() > 0 && qEnvironmentVariableIntValue("STOANDL_SMOKE_FLASH") == 1; }
 
@@ -75,7 +79,8 @@ public:
     Q_INVOKABLE QVariantList batteryActivity(const QString &watch, qlonglong sinceEpoch);
     // Battery-drain attribution (estimate): BatteryPower(s,x) -> [{category,estDrainPct,share}] (largest first).
     Q_INVOKABLE QVariantList batteryPower(const QString &watch, qlonglong sinceEpoch);
-    Q_INVOKABLE QVariantMap  connectWatch(const QString &name); // Connect(s)
+    Q_INVOKABLE QVariantMap  connectWatch(const QString &name); // Connect(s); "" resumes after Disconnect
+    Q_INVOKABLE QVariantMap  disconnectWatch();          // Disconnect() — keep every watch off until Connect
     Q_INVOKABLE QVariantMap  pair();                     // Pair() then start the PairStatus poll
     Q_INVOKABLE QVariantMap  pairStatusNow();            // PairStatus() one-shot (poll uses this)
     Q_INVOKABLE QVariantMap  confirmPairing(bool accept);// ConfirmPairing(b) — answer a confirm:<code>
@@ -248,6 +253,7 @@ public:
 Q_SIGNALS:
     void daemonUpChanged();
     void bluetoothOnChanged();                       // host Bluetooth on/off (BluetoothStatus, watch tick)
+    void linkPauseChanged();
     void watchesChanged(const QVariantList &rows);   // WatchesChanged signal + 20 s safety-net poll
     void pairStatus(const QString &kind, const QString &msg); // Pair/Repair poll
     void findWatchResult(bool ok);
@@ -313,6 +319,7 @@ private:
     QDBusConnection m_bus;
     bool            m_daemonUp = false;
     bool            m_bluetoothOn = true;   // assume on until the first BluetoothStatus poll says otherwise
+    QString         m_linkPause;
 
     QTimer *m_watchTimer = nullptr;
     QTimer *m_pairTimer  = nullptr;

@@ -320,6 +320,7 @@ QVariantList StoandlClient::batteryPower(const QString &watch, qlonglong sinceEp
 }
 
 QVariantMap StoandlClient::connectWatch(const QString &n)  { return statusMap(callStatus(QStringLiteral("Connect"), {n})); }
+QVariantMap StoandlClient::disconnectWatch()               { return statusMap(callStatus(QStringLiteral("Disconnect"))); }
 QVariantMap StoandlClient::pair()                          { return statusMap(callStatus(QStringLiteral("Pair"))); }
 QVariantMap StoandlClient::pairStatusNow()                 { return statusMap(callStatus(QStringLiteral("PairStatus"))); }
 QVariantMap StoandlClient::confirmPairing(bool accept)     { return statusMap(callStatus(QStringLiteral("ConfirmPairing"), { accept })); }
@@ -1655,6 +1656,9 @@ void StoandlClient::refreshWatches()
         const bool on = !(s.kind == QStringLiteral("ok") && s.tail == QStringLiteral("off"));
         if (on != m_bluetoothOn) { m_bluetoothOn = on; Q_EMIT bluetoothOnChanged(); }
     }
+    const Status lp = m_daemonUp ? callStatus(QStringLiteral("LinkPause")) : Status{};
+    const QString pause = lp.ok() ? lp.tail : QString();
+    if (pause != m_linkPause) { m_linkPause = pause; Q_EMIT linkPauseChanged(); }
     Q_EMIT watchesChanged(m_daemonUp ? listWatches() : QVariantList());
 }
 

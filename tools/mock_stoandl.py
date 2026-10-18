@@ -149,6 +149,10 @@ class MockStoandl(dbus.service.Object):
                 w["state"] = "disconnected"
         # Host Bluetooth on/usable (BluetoothStatus). Set False to exercise the GUI's BT-off state.
         self.bt_on = True
+        # Disconnect(): the watch that was connected (resumed by Connect("")), or None. MOCK_LINK_PAUSE
+        # starts with a pause: `manual`, `quiet_time` or both comma-separated.
+        self.paused_watch = None
+        self.link_pause = [p for p in os.environ.get("MOCK_LINK_PAUSE", "").split(",") if p]
         # Pairing op state: None when idle, else a dict tracking poll count.
         self.pairing = None
         # Locker contents (apps + faces). flags ⊆ {active,sideloaded,config,system,synced}.
@@ -462,6 +466,7 @@ class MockStoandl(dbus.service.Object):
                 # --- Connection ---
                 ("classic.discover", "toggle", "Bluetooth Classic (classic-era watches)", "", "Discover, pair and connect Pebble Time / Time Steel over Bluetooth Classic (experimental)", "Connection", "restart", "", "", "", ""),
                 ("connection.autoswitch", "toggle", "Auto-switch between watches", "", "With 2+ paired watches, connect whichever is in range — preferring the most recently used", "Connection", "live", "", "", "", ""),
+                ("connection.disconnect_persists", "toggle", "Stay disconnected after a restart", "", "A watch you disconnected by hand stays disconnected when stoandl restarts, until you connect it again", "Connection", "live", "", "", "", ""),
                 # --- Deep sleep ---
                 ("power.sleep_guard", "toggle", "Sleep guard", "", "Hold a logind delay lock so a suspend waits until watch traffic in flight (the notification a push wake produced) has reached the watch. Never makes a suspend fail; harmless on a desktop.", "Deep sleep", "restart", "", "", "", ""),
                 ("power.sleep_guard_max_ms", "int", "Longest hold per suspend", "", "How long a suspend waits at most for pending watch traffic (logind's own cap is 5 s). 0 doesn't wait; stoandl still stops its own discovery before every suspend.", "Deep sleep", "restart", "0", "4500", "ms", ""),
@@ -824,11 +829,35 @@ class MockStoandl(dbus.service.Object):
     # --- Connect -----------------------------------------------------------
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def Connect(self, name):
+        if name == "":
+            was = "manual" in self.link_pause
+            self.link_pause = [p for p in self.link_pause if p != "manual"]
+            if self.paused_watch is not None:
+                self._set_connected(self.paused_watch)
+                self.paused_watch = None
+            else:
+                self.WatchesChanged()
+            return "ok:Watch connection resumed" if was else "ok:Watch connection wasn't paused"
         match = self._resolve(name)
         if match is None:
             return f"notfound:no known watch matching '{name}'"
+        self.link_pause = [p for p in self.link_pause if p != "manual"]
+        self.paused_watch = None
         self._set_connected(match)
         return f"ok:connected to {match}"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def Disconnect(self):
+        if "manual" in self.link_pause:
+            return "ok:Watch connection already paused"
+        self.link_pause.append("manual")
+        self.paused_watch = self._connected_name()
+        self._set_connected(None)
+        return "ok:Watch connection paused — 'stoandl watch connect' resumes it"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def LinkPause(self):
+        return "ok:" + ",".join(self.link_pause)
 
     def _resolve(self, query):
         if query in self.watches:
