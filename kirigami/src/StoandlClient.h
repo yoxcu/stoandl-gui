@@ -180,8 +180,8 @@ public:
     // the text on this computer (ok/off/unavailable/busy/error); StopSpeaking() stops it.
     Q_INVOKABLE QVariantMap  ttsStatus();
     Q_INVOKABLE QVariantMap  speak(const QString &text);
-    Q_INVOKABLE QVariantMap  stopSpeaking();    // HOOK #7 — extension config, two backends (url | schema).
-    Q_INVOKABLE QVariantMap  extOpenConfig(const QString &name);   // ExtOpenConfig(s) -> xdg-open url; {kind,url,opened,msg}
+    Q_INVOKABLE QVariantMap  stopSpeaking();
+    // HOOK #7 — extension config: a native form from the manifest's configSchema.
     Q_INVOKABLE QVariantList extConfigSchema(const QString &name); // ExtConfigSchema(s) -> [{key,type,label,secret,options[],description,help}]
     Q_INVOKABLE QVariantMap  extGetConfig(const QString &name);    // ExtGetConfig(s)   -> {key:value, ...}
     Q_INVOKABLE QVariantMap  extSetConfig(const QString &name, const QVariantMap &values); // ExtSetConfig(s, json)

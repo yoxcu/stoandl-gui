@@ -230,10 +230,10 @@ class MockStoandl(dbus.service.Object):
         # Declared order of the built-in entries — the "system default" RestoreSystemAppOrder resets to.
         self._default_order = [a["uuid"] for a in self.apps]
         self._sideload_seq = 0
-        # Extensions. HOOK #7: `config` (none|url|schema) + `description` + `author` + `version`.
+        # Extensions. HOOK #7: `config` (none|schema) + `description` + `author` + `version` + `stderr`.
         self.exts = [
             {"name": "Matrix", "installed": True, "enabled": True, "running": True,
-             "config": "url", "description": "Messages on the wrist + canned replies, E2EE",
+             "config": "schema", "description": "Messages on the wrist + canned replies, E2EE",
              "author": "stoandl", "version": "1.0.0"},
             {"name": "Find My Phone", "installed": True, "enabled": True, "running": True,
              "config": "none", "description": "Ring this device from the watch",
@@ -248,6 +248,11 @@ class MockStoandl(dbus.service.Object):
         # HOOK #7 (schema backend): per-extension typed config. schema = the manifest;
         # values = current settings. Two extensions declare config=schema above.
         self.ext_schema = {
+            "Matrix": [
+                {"key": "homeserver", "type": "string", "label": "Homeserver", "required": True},
+                {"key": "user", "type": "string", "label": "User ID", "required": True},
+                {"key": "password", "type": "string", "label": "Password", "secret": True},
+            ],
             "Signal": [
                 {"key": "phone", "type": "string", "label": "Linked phone number",
                  "description": "The number signal-cli is registered with",
@@ -266,6 +271,7 @@ class MockStoandl(dbus.service.Object):
             ],
         }
         self.ext_values = {
+            "Matrix": {"homeserver": "https://matrix.example.org", "user": "@alice:example.org", "password": ""},
             "Signal": {"phone": "+1 555 0123", "token": "", "interval": 20, "replies": True, "groups": "mentions"},
             "SMS Bridge": {"modem": "ModemManager", "country": "+1", "delivery": False},
         }
@@ -1164,18 +1170,6 @@ class MockStoandl(dbus.service.Object):
                           "config": "none", "description": "Sideloaded extension"})
         self.ExtensionsChanged()
         return f"ok:installed {base}"
-
-    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
-    def ExtOpenConfig(self, query):
-        # HOOK #7 (url backend): config URL on stoandl's embedded HTTP server.
-        e = self._resolve_ext(query)
-        if e is None or e == "ambiguous":
-            return f"notfound:no extension matching '{query}'"
-        if e["config"] == "url":
-            return f"ok:http://127.0.0.1:8718/ext/{e['name'].lower().replace(' ', '-')}"
-        if e["config"] == "schema":
-            return "error:this extension uses a native config form"
-        return "none:"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def ExtConfigSchema(self, query):

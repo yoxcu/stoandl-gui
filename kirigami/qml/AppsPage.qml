@@ -150,13 +150,7 @@ Kirigami.ScrollablePage {
     }
 
     function configureExt(extData) {
-        if (extData.config === "url") {
-            var r = StoandlClient.extOpenConfig(extData.name);
-            if (r.kind === "ok" && r.opened)
-                page.toast("Opening " + extData.name + " settings…");
-            else
-                page.toast("Settings unavailable: " + (r.msg || r.kind));
-        } else if (extData.config === "schema") {
+        if (extData.config === "schema") {
             extConfigDialog.openFor(extData.name);
         } else {
             page.toast("No settings for " + extData.name);

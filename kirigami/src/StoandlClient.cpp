@@ -565,7 +565,7 @@ namespace {
 QVariant extRows(const QVariantList &records)
 {
     // Record (HOOK #7): name \t installed|missing \t enabled|disabled \t
-    //                   running|stopped \t config(none|url|schema) \t description \t author \t version
+    //                   running|stopped \t config(none|schema) \t description \t author \t version
     // (StoandlClient::withExtState() adds `runtimeState`.)
     QVariantList rows;
     for (const QVariant &v : records) {
@@ -577,7 +577,7 @@ QVariant extRows(const QVariantList &records)
         m[QStringLiteral("enabled")]     = (f.value(2) == QStringLiteral("enabled"));
         m[QStringLiteral("running")]     = (f.value(3) == QStringLiteral("running"));
         m[QStringLiteral("config")]      = cfg.isEmpty() ? QStringLiteral("none") : cfg;
-        m[QStringLiteral("hasConfig")]   = (cfg == QStringLiteral("url") || cfg == QStringLiteral("schema"));
+        m[QStringLiteral("hasConfig")]   = (cfg == QStringLiteral("schema"));
         m[QStringLiteral("description")] = f.value(5);
         m[QStringLiteral("author")]      = f.value(6);
         m[QStringLiteral("version")]     = f.value(7);
@@ -1294,23 +1294,6 @@ QVariantMap StoandlClient::getCoreDump()
 }
 
 // --- Extensions: config (HOOK #7) ------------------------------------------
-
-QVariantMap StoandlClient::extOpenConfig(const QString &name)
-{
-    // ExtOpenConfig(s) -> ok:<url> (open it) / none: / error: / notfound:
-    const Status s = callStatus(QStringLiteral("ExtOpenConfig"), {name});
-    QVariantMap m;
-    m[QStringLiteral("kind")]   = s.kind;
-    m[QStringLiteral("url")]    = QString();
-    m[QStringLiteral("opened")] = false;
-    if (s.kind == QStringLiteral("ok")) {
-        m[QStringLiteral("url")]    = s.tail;
-        m[QStringLiteral("opened")] = QDesktopServices::openUrl(QUrl(s.tail));
-    } else {
-        m[QStringLiteral("msg")] = s.tail;
-    }
-    return m;
-}
 
 QVariantList StoandlClient::extConfigSchema(const QString &name)
 {
