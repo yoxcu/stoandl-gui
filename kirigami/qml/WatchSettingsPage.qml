@@ -1,29 +1,37 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls as QQC2
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
 import "StableRows.js" as StableRows
 
 // Watch "advanced settings" (the WatchPrefs BlobDB the official app exposes). The daemon's
-// ListWatchPrefs sends one record per pref: id/type/current/default/allowed/flags/name/description,
-// where type ∈ {bool, number, enum, quicklaunch, color, schedule}. We render ONE delegate per type —
-// crucially, quicklaunch is an APP PICKER (not a slider setting a uuid), enum/color open the page's
-// one OptionPicker and schedule (Quiet Time hours) a validated HH:MM-HH:MM field — and group the ~50
-// prefs into labelled sections instead of one undifferentiated list.
+// ListWatchPrefs sends one record per pref: id/type/current/default/allowed/flags/name/description/
+// section/help/requires, where type ∈ {bool, number, enum, quicklaunch, color, schedule}. We render ONE
+// delegate per type — crucially, quicklaunch is an APP PICKER (not a slider setting a uuid), enum/color
+// open the page's one OptionPicker and schedule (Quiet Time hours) a validated HH:MM-HH:MM field — under
+// the daemon's sections, in the order it lists them. Its "Advanced" section (diagnostic prefs) starts
+// collapsed. A pref that only matters while another has some value (`requires`) is disabled until then
+// and says so; its (?) holds the daemon's help and the default.
 Kirigami.ScrollablePage {
     id: page
     objectName: "watchSettings"
-    title: "Watch settings"
+    title: "Watch preferences"
+
+    /** A pref id to scroll to and highlight (the Settings search); "" = none. */
+    property string focusId: ""
 
     // The page holds the daemon's list and two things derived from it, each reassigned only when it
-    // really changed (same scheme as GeneralSettingsPage):
-    //  - prefShape: [{title, rows:[{id,type}]}], the sections. It is the ONLY thing the Repeaters see,
-    //    so rows are created once: opening builds each row once, a pref change builds nothing.
+    // really changed (same scheme as SchemaSections):
+    //  - prefShape: [{title, advanced, rows:[{id,type}]}], the sections. It is the ONLY thing the
+    //    Repeaters see, so rows are created once: opening builds each row once, a pref change builds nothing.
     //  - prefMap: id → the pref plus its precomputed display data (quick-launch options, colour
-    //    presets/swatch, schedule hint, the picker's checked index). Entries keep their identity while unchanged
-    //    (StableRows.reuse), so a re-read only re-evaluates the rows whose pref moved.
-    // [{id,type,current,currentBool,currentInt,default,allowed[],flags[],debug,name,description,(min,max,unit)}]
+    //    presets/swatch, the picker's checked index, the row's description, help and whether its
+    //    `requires` holds). Entries keep their identity while unchanged (StableRows.reuse), so a re-read
+    //    only re-evaluates the rows whose pref moved.
+    // [{id,type,current,currentBool,currentInt,default,allowed[],flags[],debug,name,description,section,help,
+    //   requires[],(min,max,unit,scale)}]
     property var watchPrefs: []
     property var prefShape: []
     property var prefMap: ({})
@@ -32,6 +40,9 @@ Kirigami.ScrollablePage {
     // Bumped by every pref change (applyPref). A reload() fetch that started before one answers after
     // its synchronous re-read, with prefs read before the set: it then keeps watchPrefs.
     property int editSeq: 0
+    property bool advancedOpen: false
+    readonly property int advancedCount: page.prefShape.reduce(function (n, g) { return n + (g.advanced ? g.rows.length : 0); }, 0)
+    readonly property bool hasNormal: page.prefShape.some(function (g) { return !g.advanced; })
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
@@ -58,8 +69,13 @@ Kirigami.ScrollablePage {
         page.watchPrefs = prefs;
         var map = {};
         var buckets = {};
+        var order = [];
         for (var i = 0; i < prefs.length; ++i) {
             var p = Object.assign({}, prefs[i]);
+            p.enabled = page.requiresMet(p.requires);
+            p.subtitle = p.enabled ? p.description
+                       : (p.description !== "" ? p.description + " · " : "") + page.usedWhen(p.requires);
+            p.helpText = page.helpText(p);
             var o;
             if (p.type === "quicklaunch") {
                 p.qlOptions = page.quickOptions(p.current, p.allowed);
@@ -72,26 +88,55 @@ Kirigami.ScrollablePage {
             } else if (p.type === "color") {
                 p.colorPresetList = page.colorPresets(p.allowed);
                 p.colorCss = page.colorHexCss(p.current);
-            } else if (p.type === "schedule") {
-                p.scheduleHint = page.scheduleHint(p);
             }
             map[p.id] = p;
-            for (var s = 0; s < page.sectionDefs.length; ++s) {
-                if (page.sectionDefs[s].match(p.id)) {
-                    var k = page.sectionDefs[s].key;
-                    (buckets[k] || (buckets[k] = [])).push({ id: p.id, type: p.type });
-                    break;
-                }
-            }
+            // The daemon's sections, in the order it lists them; "Advanced" (diagnostic prefs) last.
+            if (!buckets[p.section]) { buckets[p.section] = []; order.push(p.section); }
+            buckets[p.section].push({ id: p.id, type: p.type });
         }
-        var shape = [];
-        for (var d = 0; d < page.sectionDefs.length; ++d) {
-            var rows = buckets[page.sectionDefs[d].key];
-            if (rows && rows.length) shape.push({ title: page.sectionDefs[d].title, rows: page.pairSchedules(rows) });
-        }
+        var sections = order.map(function (t) { return { title: t, advanced: t === "Advanced", rows: page.pairSchedules(buckets[t]) }; });
+        var shape = sections.filter(function (g) { return !g.advanced; })
+                            .concat(sections.filter(function (g) { return g.advanced; }));
         var nm = StableRows.reuse(page.prefMap, map);
         if (nm !== page.prefMap) page.prefMap = nm;
-        if (!StableRows.same(page.prefShape, shape)) page.prefShape = shape;
+        if (!StableRows.same(page.prefShape, shape)) {
+            if (page.focusId !== "" && shape.some(function (g) {
+                    return g.advanced && g.rows.some(function (r) { return r.id === page.focusId; }); }))
+                page.advancedOpen = true;
+            page.prefShape = shape;
+        }
+    }
+
+    // --- row texts ---------------------------------------------------------
+    // A value as its row shows it: a switch as on/off, quick launch's "off" as Off.
+    function valueText(v) {
+        return v === "true" ? "on" : v === "false" ? "off" : String(v).toLowerCase() === "off" ? "Off" : v;
+    }
+    function helpText(p) {
+        var d = p.type === "color" || p.default === "" ? "" : "Default: " + page.valueText(p.default) + ".";
+        return [p.help || "", d].filter(function (x) { return x !== ""; }).join(" ");
+    }
+    // `requires` is in ListWatchPrefs' own `current` spelling; a pref the watch doesn't list doesn't hold
+    // the row back.
+    function requiresMet(reqs) {
+        if (!reqs || reqs.length === 0) return true;
+        return reqs.some(function (a) {
+            var q = page.prefById(a.key);
+            return q === null || ((q.current === a.value) !== a.negate);
+        });
+    }
+    function usedWhen(reqs) {
+        return "Used when " + reqs.map(function (a) {
+            var q = page.prefById(a.key);
+            return "“" + (q ? q.name : a.key) + "” " + (a.negate ? "isn't " : "is ") + page.valueText(a.value);
+        }).join(" or ");
+    }
+
+    function resetAll() {
+        var r = StoandlClient.resetWatchPrefs();
+        page.toast(r.ok ? r.tail : r.notready ? "Connect a watch first" : "Reset: " + (r.tail || r.kind));
+        page.editSeq++;
+        page.applyPrefs(StoandlClient.listWatchPrefs(), page.appTitles);
     }
 
     // Headless smoke (STOANDL_SMOKE_MS): press a quick-launch row and pick its stored option in the
@@ -101,6 +146,19 @@ Kirigami.ScrollablePage {
     // `watch.dndWeekdaySchedule` would otherwise be rewritten in stoandl.conf too), and writes nothing
     // without a valid one to restore.
     function smokeExercise() {
+        // The daemon's sections, a row its `requires` holds back, the timeout in seconds and a row's help.
+        var gated = Object.keys(page.prefMap).filter(function (id) { return page.prefMap[id].enabled === false; });
+        var nwt = page.prefMap["notifWindowTimeout"];
+        var mask = page.prefMap["mask"];
+        console.log("stoandl-smoke: watch sections " + page.prefShape.map(function (g) { return g.title + (g.advanced ? "(collapsed)" : ""); }).join(", ")
+                    + " · disabled " + gated.length + (gated.length ? " (" + gated[0] + ": " + page.prefMap[gated[0]].subtitle + ")" : "")
+                    + (nwt ? " · notifWindowTimeout " + nwt.currentInt + " " + nwt.unit + " ×" + nwt.scale : "")
+                    + (mask ? " · help mask: " + mask.helpText : ""));
+        // Reset to defaults, against the mock only (a real daemon would reset the user's watch).
+        if (StoandlClient.daemonVersion().indexOf("mock") === 0) {
+            resetConfirm.accepted();
+            console.log("stoandl-smoke: watch reset, qlUp now '" + page.prefMap["qlUp"].qlCurrentLabel + "'");
+        }
         var ql = page.prefById("qlBack");
         if (ql)
             console.log("stoandl-smoke: quick launch qlBack='" + page.quickLabel(ql.current) + "' options="
@@ -137,6 +195,9 @@ Kirigami.ScrollablePage {
         pickerLoader.active = true;
         pickerLoader.item.choose(title, options, currentIndex, onPicked);
     }
+
+    // A number shown scaled (the notification timeout in seconds) goes back in the daemon's unit.
+    function applyNumber(p, shown) { page.applyPref(p.id, String(shown * (p.scale || 1))); }
 
     function applyPref(id, value) {
         page.editSeq++;
@@ -178,19 +239,13 @@ Kirigami.ScrollablePage {
 
     // --- schedule helpers ---------------------------------------------------
     // A Quiet Time schedule's hours do nothing until its "<id>Enabled" switch is on
-    // (dndWeekdaySchedule ↔ dndWeekdayScheduleEnabled), and the daemon lists the schedules last. So
-    // each schedule row moves right under its switch and says what it depends on.
+    // (dndWeekdaySchedule ↔ dndWeekdayScheduleEnabled; the daemon's `requires` says so), and the daemon
+    // lists the schedules last. So each schedule row moves right under its switch.
     function prefById(id) {
         for (var i = 0; i < page.watchPrefs.length; ++i)
             if (page.watchPrefs[i].id === id)
                 return page.watchPrefs[i];
         return null;
-    }
-    function scheduleHint(p) {
-        var sw = page.prefById(p.id + "Enabled");
-        return (p.description ? p.description + " " : "")
-             + "Daily, 24-hour clock; an end before the start runs overnight (e.g. 22:00-07:00)."
-             + (sw ? " Applies while “" + sw.name + "” is on." : "");
     }
     // Takes the shape rows ({id, type}); the schedule ids match their switch's id + "Enabled".
     function pairSchedules(rows) {
@@ -207,27 +262,21 @@ Kirigami.ScrollablePage {
         return out.concat(loose);
     }
 
-    // --- grouping ----------------------------------------------------------
-    // Ordered section rules, matched on the stable libpebble pref id. First match wins; anything
-    // unmatched (a future libpebble pref) lands in "Other" so nothing is ever dropped.
-    readonly property var sectionDefs: [
-        { key: "quicklaunch", title: "Quick launch",        match: function (id) { return id.indexOf("ql") === 0; } },
-        { key: "display",     title: "Display & backlight", match: function (id) { return id.indexOf("light") === 0 || id === "systemTextSize" || id === "displayOrientationLeftHanded"; } },
-        { key: "notif",       title: "Notifications",       match: function (id) { return id.indexOf("notif") === 0 || id === "mask" || id.indexOf("timelineQuickView") === 0; } },
-        { key: "quiet",       title: "Quiet Time",          match: function (id) { return id.indexOf("dnd") === 0; } },
-        { key: "vibe",        title: "Vibration",           match: function (id) { return id.indexOf("vibe") >= 0; } },
-        { key: "music",       title: "Music",               match: function (id) { return id.indexOf("music") === 0; } },
-        { key: "motion",      title: "Motion & menus",      match: function (id) { return id === "motionSensitivity" || id === "stationaryMode" || id.indexOf("menuScroll") === 0; } },
-        { key: "clock",       title: "Clock & language",    match: function (id) { return id === "clock24h" || id === "timezoneSource" || id === "language"; } },
-        { key: "other",       title: "Other",               match: function (id) { return true; } },
-    ]
-
     Connections {
         target: StoandlClient
         function onDaemonUpChanged() { if (StoandlClient.daemonUp) page.reload(); }
     }
 
     Component.onCompleted: page.reload()
+
+    actions: [
+        Kirigami.Action {
+            icon.name: "edit-reset-symbolic"
+            text: "Reset to defaults"
+            enabled: StoandlClient.daemonUp && page.watchPrefs.length > 0
+            onTriggered: resetConfirm.open()
+        }
+    ]
 
     ColumnLayout {
         spacing: 0
@@ -249,19 +298,36 @@ Kirigami.ScrollablePage {
             explanation: "Connect a watch to read and change its settings."
         }
 
-        // One FormHeader + FormCard per non-empty section.
+        // One FormHeader + FormCard per section; "Advanced" after a toggle row, collapsed.
         Repeater {
             model: page.prefShape
             delegate: ColumnLayout {
                 id: sectionItem
                 required property var modelData
                 required property int index
+                readonly property bool shown: !modelData.advanced || page.advancedOpen
                 Layout.fillWidth: true
                 spacing: 0
 
-                FormCard.FormHeader { title: sectionItem.modelData.title }
+                FormCard.FormCard {
+                    visible: sectionItem.modelData.advanced
+                             && (sectionItem.index === 0 || !page.prefShape[sectionItem.index - 1].advanced)
+                    Layout.topMargin: page.hasNormal ? Kirigami.Units.largeSpacing : 0
+                    FormCard.FormButtonDelegate {
+                        text: page.advancedOpen ? "Hide advanced settings" : "Advanced settings (" + page.advancedCount + ")"
+                        icon.name: "configure-symbolic"
+                        trailingLogo.direction: page.advancedOpen ? Qt.UpArrow : Qt.DownArrow
+                        onClicked: page.advancedOpen = !page.advancedOpen
+                    }
+                }
+
+                FormCard.FormHeader {
+                    visible: sectionItem.shown
+                    title: sectionItem.modelData.title
+                }
 
                 FormCard.FormCard {
+                    visible: sectionItem.shown
                     Repeater {
                         model: sectionItem.modelData.rows
                         // One Loader per pref. modelData is only {id, type}; the pref itself is looked up
@@ -273,14 +339,17 @@ Kirigami.ScrollablePage {
                         // The first section's rows are built at once, with the page's data, so the
                         // screen the page opens on is complete in its first frame; the rest are built
                         // asynchronously below it (each holding a row's height until it is ready), so
-                        // the ~50 rows don't block the push animation.
+                        // the ~50 rows don't block the push animation. A search hit builds them all at
+                        // once, so its row's position is final; Advanced rows wait until it is opened.
                         delegate: Loader {
                             id: prefLoader
                             required property var modelData
                             readonly property var pref: page.prefMap[modelData.id] || ({})
                             Layout.fillWidth: true
-                            Layout.preferredHeight: status === Loader.Ready ? -1 : Kirigami.Units.gridUnit * 3
-                            asynchronous: sectionItem.index > 0
+                            Layout.preferredHeight: status === Loader.Ready || !active ? -1 : Kirigami.Units.gridUnit * 3
+                            active: sectionItem.shown
+                            asynchronous: sectionItem.index > 0 && page.focusId === ""
+                            onLoaded: if (modelData.id === page.focusId) focusFlash.reveal(prefLoader)
                             sourceComponent: modelData.type === "bool" ? boolPref
                                            : modelData.type === "enum" ? enumPref
                                            : modelData.type === "quicklaunch" ? quickPref
@@ -294,10 +363,12 @@ Kirigami.ScrollablePage {
                             // would otherwise stay on screen as if it had been stored.
                             Component {
                                 id: boolPref
-                                FormCard.FormSwitchDelegate {
+                                FormSwitchRow {
                                     id: sw
                                     text: prefLoader.pref.name || ""
-                                    description: prefLoader.pref.description || ""
+                                    description: prefLoader.pref.subtitle || ""
+                                    help: prefLoader.pref.helpText || ""
+                                    enabled: prefLoader.pref.enabled !== false
                                     // Only the initial value: FormSwitchDelegate assigns `checked` from its
                                     // inner Switch, which drops any binding, so it follows by hand.
                                     checked: prefLoader.pref.currentBool === true
@@ -319,7 +390,9 @@ Kirigami.ScrollablePage {
                                 id: enumPref
                                 FormOptionRow {
                                     text: prefLoader.pref.name || ""
-                                    description: prefLoader.pref.description || ""
+                                    description: prefLoader.pref.subtitle || ""
+                                    help: prefLoader.pref.helpText || ""
+                                    enabled: prefLoader.pref.enabled !== false
                                     value: prefLoader.pref.current || ""
                                     onClicked: {
                                         var id = prefLoader.modelData.id;
@@ -333,7 +406,9 @@ Kirigami.ScrollablePage {
                                 id: quickPref
                                 FormOptionRow {
                                     text: prefLoader.pref.name || ""
-                                    description: prefLoader.pref.description || ""
+                                    description: prefLoader.pref.subtitle || ""
+                                    help: prefLoader.pref.helpText || ""
+                                    enabled: prefLoader.pref.enabled !== false
                                     value: prefLoader.pref.qlCurrentLabel || ""
                                     // "Off" → the daemon's "off" sentinel; an app name resolves to its uuid daemon-side.
                                     onClicked: {
@@ -348,13 +423,15 @@ Kirigami.ScrollablePage {
                                 id: numberPref
                                 FormSpinRow {
                                     label: prefLoader.pref.name || ""
-                                    description: prefLoader.pref.description || ""
+                                    description: prefLoader.pref.subtitle || ""
+                                    help: prefLoader.pref.helpText || ""
+                                    enabled: prefLoader.pref.enabled !== false
                                     from: prefLoader.pref.min || 0
                                     to: prefLoader.pref.max || 0
                                     unit: prefLoader.pref.unit || ""
                                     value: prefLoader.pref.currentInt >= 0 ? prefLoader.pref.currentInt
                                                                            : (prefLoader.pref.min || 0)
-                                    onCommit: (newValue) => page.applyPref(prefLoader.modelData.id, String(newValue))
+                                    onCommit: (newValue) => page.applyNumber(prefLoader.pref, newValue)
                                 }
                             }
 
@@ -366,7 +443,9 @@ Kirigami.ScrollablePage {
                                 id: colorPref
                                 FormOptionRow {
                                     text: prefLoader.pref.name || ""
-                                    description: prefLoader.pref.description || ""
+                                    description: prefLoader.pref.subtitle || ""
+                                    help: prefLoader.pref.helpText || ""
+                                    enabled: prefLoader.pref.enabled !== false
                                     value: "Choose…"
                                     onClicked: {
                                         var id = prefLoader.modelData.id;
@@ -395,7 +474,9 @@ Kirigami.ScrollablePage {
                                     // What SetWatchPref would store for the text as typed; "" = it would refuse it.
                                     readonly property string normalized: StoandlClient.normalizeSchedule(srow.value)
                                     label: prefLoader.pref.name || ""
-                                    description: prefLoader.pref.scheduleHint || ""
+                                    description: prefLoader.pref.subtitle || "Daily hours, 24-hour clock"
+                                    help: prefLoader.pref.helpText || ""
+                                    enabled: prefLoader.pref.enabled !== false
                                     value: prefLoader.pref.current || ""
                                     placeholderText: "HH:MM-HH:MM"
                                     inputMethodHints: Qt.ImhPreferNumbers | Qt.ImhNoPredictiveText
@@ -429,5 +510,18 @@ Kirigami.ScrollablePage {
         id: pickerLoader
         active: false
         sourceComponent: OptionPicker {}
+    }
+
+    FocusFlash {
+        id: focusFlash
+        flickable: page.flickable
+    }
+
+    Kirigami.PromptDialog {
+        id: resetConfirm
+        title: "Reset watch preferences"
+        subtitle: "Set every watch preference back to its default? The watch gets them when it is next connected."
+        standardButtons: QQC2.Dialog.Ok | QQC2.Dialog.Cancel
+        onAccepted: page.resetAll()
     }
 }
