@@ -96,6 +96,12 @@ Kirigami.ScrollablePage {
         }
     }
 
+    // One option picker for every combo row, built on first use.
+    function pickOption(title, options, currentIndex, onPicked) {
+        pickerLoader.active = true;
+        pickerLoader.item.choose(title, options, currentIndex, onPicked);
+    }
+
     function applyConfig(key, value) {
         page.editSeq++;
         var r = StoandlClient.setConfig(key, value);
@@ -118,14 +124,30 @@ Kirigami.ScrollablePage {
         weatherCard.parent = cardPark;
     }
 
-    // Smoke hook (SettingsPage drives it): the city search's D-Bus round trip and record parsing,
-    // read-only — it adds nothing, and a daemon with weather.place_search off answers disabled:.
+    // Smoke hook (SettingsPage drives it): a combo row's picker, written back unchanged, and the city
+    // search's D-Bus round trip and record parsing, read-only — it adds nothing, and a daemon with
+    // weather.place_search off answers disabled:.
     function smokeExercise() {
         // The two cards sit under their own section, created once, and the city search follows the
         // page's weather.place_search instead of reading the config itself.
         console.log("stoandl-smoke: general cards voice=" + (voiceCard.parent !== cardPark ? "placed" : "parked")
             + " weather=" + (weatherCard.parent !== cardPark ? "placed" : "parked")
             + " searchOn=" + (weatherCard.item ? weatherCard.item.searchOn : "none"));
+        // Press the first combo row: the page's one picker opens on its options with the stored one
+        // checked; picking that one writes it back unchanged.
+        var combo = null;
+        page.cfgShape.forEach(function (g) {
+            g.rows.forEach(function (row) { if (!combo && row.type === "combo") combo = row.key; });
+        });
+        var comboRow = combo ? StableRows.findRow(page, "key", combo) : null;
+        if (comboRow && comboRow.item) {
+            comboRow.item.clicked();
+            var pk = pickerLoader.item;
+            console.log("stoandl-smoke: picker '" + pk.title + "' " + pk.options.length + " options, checked "
+                        + pk.currentIndex + " '" + pk.options[pk.currentIndex] + "' visible=" + pk.visible);
+            pk.pick(pk.currentIndex);
+            console.log("stoandl-smoke: picker wrote " + combo + " back: '" + page.cfgValues[combo] + "'");
+        }
         var r = StoandlClient.searchWeatherPlace("Berlin");
         var p = (r.places || [])[0];
         console.log("stoandl-smoke: weather search " + r.kind + ", " + (r.places || []).length + " places"
@@ -171,6 +193,7 @@ Kirigami.ScrollablePage {
             delegate: ColumnLayout {
                 id: groupItem
                 required property var modelData
+                required property int index
                 readonly property string groupTitle: modelData.title
                 property alias cardSlot: cardSlot
                 Layout.fillWidth: true
@@ -187,26 +210,18 @@ Kirigami.ScrollablePage {
                         // read only cfgLoader.*. They are defined INLINE so they resolve `cfgLoader` (a
                         // Loader cannot satisfy a required property on a page-scoped Component).
                         //
-                        // Rows are built asynchronously (opening the page no longer blocks on ~80 rows)
-                        // and hold a row's height until they are ready, so the page doesn't jump.
+                        // The first section's rows are built at once, with the page's data, so the
+                        // screen the page opens on is complete in its first frame; the rest are built
+                        // asynchronously below it (opening the page no longer blocks on ~80 rows) and
+                        // hold a row's height until they are ready, so the page doesn't jump.
                         delegate: Loader {
                             id: cfgLoader
                             required property var modelData
                             readonly property var field: page.cfgFields[modelData.key] || ({})
                             readonly property string value: page.cfgValues[modelData.key] || ""
-                            // Clamped into the schema's range so the spin box never starts outside its bounds.
-                            readonly property int valueInt: {
-                                var n = parseInt(cfgLoader.value, 10);
-                                var lo = cfgLoader.field.min || 0, hi = cfgLoader.field.max || 0;
-                                return isNaN(n) ? lo : Math.max(lo, Math.min(hi, n));
-                            }
-                            readonly property int optionIndex: {
-                                var i = (cfgLoader.field.options || []).indexOf(cfgLoader.value);
-                                return i >= 0 ? i : 0;
-                            }
                             Layout.fillWidth: true
                             Layout.preferredHeight: status === Loader.Ready ? -1 : Kirigami.Units.gridUnit * 3
-                            asynchronous: true
+                            asynchronous: groupItem.index > 0
                             sourceComponent: modelData.type === "toggle" ? cfgToggle
                                            : modelData.type === "combo"  ? cfgCombo
                                            : modelData.type === "int"    ? cfgInt
@@ -237,16 +252,21 @@ Kirigami.ScrollablePage {
                                 }
                             }
 
+                            // A combo: the label and the stored value; a click opens the page's one
+                            // OptionPicker. The row only shows what the daemon stored, so a refused pick
+                            // leaves it as it was.
                             Component {
                                 id: cfgCombo
-                                FormCard.FormComboBoxDelegate {
+                                FormOptionRow {
                                     text: cfgLoader.field.label || ""
                                     description: cfgLoader.field.description || ""
-                                    model: cfgLoader.field.options
-                                    currentIndex: cfgLoader.optionIndex
-                                    onActivated: {
-                                        page.applyConfig(cfgLoader.modelData.key, currentValue);
-                                        currentIndex = Qt.binding(function () { return cfgLoader.optionIndex; });
+                                    value: cfgLoader.value
+                                    onClicked: {
+                                        var key = cfgLoader.modelData.key;
+                                        var options = cfgLoader.field.options || [];
+                                        // The picker checks the stored value; none when it is not an option.
+                                        page.pickOption(text, options, options.indexOf(cfgLoader.value),
+                                                        function (i, option) { page.applyConfig(key, option); });
                                     }
                                 }
                             }
@@ -261,7 +281,12 @@ Kirigami.ScrollablePage {
                                     from: cfgLoader.field.min || 0
                                     to: cfgLoader.field.max || 0
                                     unit: cfgLoader.field.unit || ""
-                                    value: cfgLoader.valueInt
+                                    // Clamped into the schema's range so the spin box never starts outside its bounds.
+                                    value: {
+                                        var n = parseInt(cfgLoader.value, 10);
+                                        var lo = cfgLoader.field.min || 0, hi = cfgLoader.field.max || 0;
+                                        return isNaN(n) ? lo : Math.max(lo, Math.min(hi, n));
+                                    }
                                     onCommit: (newValue) => page.applyConfig(cfgLoader.modelData.key, String(newValue))
                                 }
                             }
@@ -342,7 +367,8 @@ Kirigami.ScrollablePage {
         }
 
         // Where the two cards wait while their section is absent or being rebuilt (invisible, so the
-        // layout skips it).
+        // layout skips it). Both are built asynchronously: they sit under the later sections, and the
+        // Voice card's first read is a blocking call, kept out of the frame that shows the page.
         Item {
             id: cardPark
             visible: false
@@ -352,6 +378,7 @@ Kirigami.ScrollablePage {
             Loader {
                 id: voiceCard
                 Layout.fillWidth: true
+                asynchronous: true
                 active: page.groupTitles.indexOf("Voice") >= 0
                 sourceComponent: VoiceModelsCard { onChanged: page.reload() }
             }
@@ -360,6 +387,7 @@ Kirigami.ScrollablePage {
             Loader {
                 id: weatherCard
                 Layout.fillWidth: true
+                asynchronous: true
                 active: page.groupTitles.indexOf("Weather") >= 0
                 sourceComponent: WeatherSearchCard {
                     searchOn: page.cfgValues["weather.place_search"] === "true"
@@ -372,5 +400,12 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp && page.cfgShape.length > 0
             text: "These settings render the daemon's stoandl.conf. New keys exposed by the daemon appear here automatically. Changes apply live unless the row says otherwise."
         }
+    }
+
+    // The picker every combo row opens (pickOption), built on first use.
+    Loader {
+        id: pickerLoader
+        active: false
+        sourceComponent: OptionPicker {}
     }
 }

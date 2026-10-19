@@ -59,6 +59,8 @@ qt_add_qml_module(stoandl-gui
         qml/FormTextRow.qml
         qml/FormSpinRow.qml
         qml/FormListRow.qml
+        qml/FormOptionRow.qml
+        qml/OptionPicker.qml
         qml/ConfList.js
         qml/StableRows.js
         qml/DaemonPlaceholder.qml

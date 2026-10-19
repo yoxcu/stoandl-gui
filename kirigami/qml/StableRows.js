@@ -32,3 +32,20 @@ function reuse(prev, next) {
     }
     return changed ? out : prev;
 }
+
+/**
+ * The row delegate under `item` whose modelData[field] is `key` (the smoke hooks press a row with it), or
+ * null. Walks the item tree, so it is for tests, not for anything that runs per row.
+ */
+function findRow(item, field, key) {
+    var kids = item ? item.children : [];
+    for (var i = 0; i < kids.length; ++i) {
+        var c = kids[i];
+        if (c.modelData && c.modelData[field] === key)
+            return c;
+        var r = findRow(c, field, key);
+        if (r)
+            return r;
+    }
+    return null;
+}

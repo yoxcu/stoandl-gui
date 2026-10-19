@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls as QQC2
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
@@ -9,8 +8,8 @@ import "StableRows.js" as StableRows
 // Watch "advanced settings" (the WatchPrefs BlobDB the official app exposes). The daemon's
 // ListWatchPrefs sends one record per pref: id/type/current/default/allowed/flags/name/description,
 // where type ∈ {bool, number, enum, quicklaunch, color, schedule}. We render ONE delegate per type —
-// crucially, quicklaunch is an APP PICKER (not a slider setting a uuid), enum/color get real
-// combos/pickers and schedule (Quiet Time hours) a validated HH:MM-HH:MM field — and group the ~50
+// crucially, quicklaunch is an APP PICKER (not a slider setting a uuid), enum/color open the page's
+// one OptionPicker and schedule (Quiet Time hours) a validated HH:MM-HH:MM field — and group the ~50
 // prefs into labelled sections instead of one undifferentiated list.
 Kirigami.ScrollablePage {
     id: page
@@ -22,7 +21,7 @@ Kirigami.ScrollablePage {
     //  - prefShape: [{title, rows:[{id,type}]}], the sections. It is the ONLY thing the Repeaters see,
     //    so rows are created once: opening builds each row once, a pref change builds nothing.
     //  - prefMap: id → the pref plus its precomputed display data (quick-launch options, colour
-    //    presets/swatch, schedule hint, the combo index). Entries keep their identity while unchanged
+    //    presets/swatch, schedule hint, the picker's checked index). Entries keep their identity while unchanged
     //    (StableRows.reuse), so a re-read only re-evaluates the rows whose pref moved.
     // [{id,type,current,currentBool,currentInt,default,allowed[],flags[],debug,name,description,(min,max,unit)}]
     property var watchPrefs: []
@@ -69,8 +68,7 @@ Kirigami.ScrollablePage {
                 p.optionIndex = o >= 0 ? o : 0;
             } else if (p.type === "enum") {
                 // allowed + current are both display names, so indexOf matches.
-                o = (p.allowed || []).indexOf(p.current);
-                p.optionIndex = o >= 0 ? o : 0;
+                p.optionIndex = (p.allowed || []).indexOf(p.current);
             } else if (p.type === "color") {
                 p.colorPresetList = page.colorPresets(p.allowed);
                 p.colorCss = page.colorHexCss(p.current);
@@ -96,7 +94,8 @@ Kirigami.ScrollablePage {
         if (!StableRows.same(page.prefShape, shape)) page.prefShape = shape;
     }
 
-    // Headless smoke (STOANDL_SMOKE_MS): run the schedule validator both ways and round-trip a
+    // Headless smoke (STOANDL_SMOKE_MS): press a quick-launch row and pick its stored option in the
+    // picker, run the schedule validator both ways and round-trip a
     // window through SetWatchPref, so the re-fetched value re-renders the schedule delegate. The hook
     // also runs against a real daemon, so it writes the watch's own window back afterwards (a pinned
     // `watch.dndWeekdaySchedule` would otherwise be rewritten in stoandl.conf too), and writes nothing
@@ -106,6 +105,17 @@ Kirigami.ScrollablePage {
         if (ql)
             console.log("stoandl-smoke: quick launch qlBack='" + page.quickLabel(ql.current) + "' options="
                         + page.quickOptions(ql.current, ql.allowed).join("|"));
+        // Press the qlBack row: the page's one picker opens on its options with the stored one checked;
+        // picking that one writes it back unchanged (through the row's "Off" → "off" conversion).
+        var qlRow = StableRows.findRow(page, "id", "qlBack");
+        if (qlRow && qlRow.item) {
+            qlRow.item.clicked();
+            var pk = pickerLoader.item;
+            console.log("stoandl-smoke: picker '" + pk.title + "' " + pk.options.length + " options, checked "
+                        + pk.currentIndex + " '" + pk.options[pk.currentIndex] + "' visible=" + pk.visible);
+            pk.pick(pk.currentIndex);
+            console.log("stoandl-smoke: picker wrote qlBack back: '" + page.prefMap["qlBack"].qlCurrentLabel + "'");
+        }
         var bad = StoandlClient.normalizeSchedule("25:00-07:00");
         var good = StoandlClient.normalizeSchedule(" 7:5-22:30 ");
         console.log("stoandl-smoke: schedule validator bad='" + bad + "' good='" + good + "'");
@@ -120,6 +130,12 @@ Kirigami.ScrollablePage {
         page.applyPref("dndWeekdaySchedule", good);
         page.applyPref("dndWeekdaySchedule", orig);
         console.log("stoandl-smoke: schedule round-trip restored " + orig);
+    }
+
+    // One option picker for every enum / quick-launch / colour row, built on first use.
+    function pickOption(title, options, currentIndex, onPicked) {
+        pickerLoader.active = true;
+        pickerLoader.item.choose(title, options, currentIndex, onPicked);
     }
 
     function applyPref(id, value) {
@@ -239,6 +255,7 @@ Kirigami.ScrollablePage {
             delegate: ColumnLayout {
                 id: sectionItem
                 required property var modelData
+                required property int index
                 Layout.fillWidth: true
                 spacing: 0
 
@@ -253,14 +270,17 @@ Kirigami.ScrollablePage {
                         // prefLoader.pref.*. They are defined INLINE so they resolve `prefLoader` (a
                         // Loader can't satisfy a required property on a page-scoped component).
                         //
-                        // Rows are built asynchronously and hold a row's height until they are ready.
+                        // The first section's rows are built at once, with the page's data, so the
+                        // screen the page opens on is complete in its first frame; the rest are built
+                        // asynchronously below it (each holding a row's height until it is ready), so
+                        // the ~50 rows don't block the push animation.
                         delegate: Loader {
                             id: prefLoader
                             required property var modelData
                             readonly property var pref: page.prefMap[modelData.id] || ({})
                             Layout.fillWidth: true
                             Layout.preferredHeight: status === Loader.Ready ? -1 : Kirigami.Units.gridUnit * 3
-                            asynchronous: true
+                            asynchronous: sectionItem.index > 0
                             sourceComponent: modelData.type === "bool" ? boolPref
                                            : modelData.type === "enum" ? enumPref
                                            : modelData.type === "quicklaunch" ? quickPref
@@ -292,31 +312,34 @@ Kirigami.ScrollablePage {
                                 }
                             }
 
+                            // enum and quick launch: the name and the stored value; a click opens the page's
+                            // one OptionPicker. The row only shows what the daemon stored, so a refused pick
+                            // leaves it as it was.
                             Component {
                                 id: enumPref
-                                FormCard.FormComboBoxDelegate {
+                                FormOptionRow {
                                     text: prefLoader.pref.name || ""
                                     description: prefLoader.pref.description || ""
-                                    model: prefLoader.pref.allowed
-                                    currentIndex: prefLoader.pref.optionIndex || 0
-                                    onActivated: {
-                                        page.applyPref(prefLoader.modelData.id, currentValue);
-                                        currentIndex = Qt.binding(function () { return prefLoader.pref.optionIndex || 0; });
+                                    value: prefLoader.pref.current || ""
+                                    onClicked: {
+                                        var id = prefLoader.modelData.id;
+                                        page.pickOption(text, prefLoader.pref.allowed, prefLoader.pref.optionIndex,
+                                                        function (i, option) { page.applyPref(id, option); });
                                     }
                                 }
                             }
 
                             Component {
                                 id: quickPref
-                                FormCard.FormComboBoxDelegate {
+                                FormOptionRow {
                                     text: prefLoader.pref.name || ""
                                     description: prefLoader.pref.description || ""
-                                    model: prefLoader.pref.qlOptions
-                                    currentIndex: prefLoader.pref.optionIndex || 0
+                                    value: prefLoader.pref.qlCurrentLabel || ""
                                     // "Off" → the daemon's "off" sentinel; an app name resolves to its uuid daemon-side.
-                                    onActivated: {
-                                        page.applyPref(prefLoader.modelData.id, currentText === "Off" ? "off" : currentText);
-                                        currentIndex = Qt.binding(function () { return prefLoader.pref.optionIndex || 0; });
+                                    onClicked: {
+                                        var id = prefLoader.modelData.id;
+                                        page.pickOption(text, prefLoader.pref.qlOptions, prefLoader.pref.optionIndex,
+                                                        function (i, option) { page.applyPref(id, option === "Off" ? "off" : option); });
                                     }
                                 }
                             }
@@ -336,53 +359,27 @@ Kirigami.ScrollablePage {
                             }
 
                             // Color: a swatch of the current value + a preset picker (the daemon takes a
-                            // preset name back). FormColorDelegate is avoided — it calls i18ndc(), and
-                            // this app deliberately links no KF6 C++ (no KLocalizedContext on the engine).
+                            // preset name back, and the current value is a hex, so no preset is checked).
+                            // FormColorDelegate is avoided — it calls i18ndc(), and this app deliberately
+                            // links no KF6 C++ (no KLocalizedContext on the engine).
                             Component {
                                 id: colorPref
-                                FormCard.AbstractFormDelegate {
-                                    id: crow
-                                    background: null
-                                    contentItem: RowLayout {
-                                        spacing: Kirigami.Units.largeSpacing
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            spacing: 0
-                                            QQC2.Label {
-                                                Layout.fillWidth: true
-                                                text: prefLoader.pref.name || ""
-                                                elide: Text.ElideRight
-                                            }
-                                            QQC2.Label {
-                                                Layout.fillWidth: true
-                                                visible: text !== ""
-                                                text: prefLoader.pref.description || ""
-                                                elide: Text.ElideRight
-                                                font: Kirigami.Theme.smallFont
-                                                color: Kirigami.Theme.disabledTextColor
-                                            }
-                                        }
-                                        Rectangle {
-                                            Layout.alignment: Qt.AlignVCenter
-                                            implicitWidth: Kirigami.Units.iconSizes.smallMedium
-                                            implicitHeight: Kirigami.Units.iconSizes.smallMedium
-                                            radius: height / 2
-                                            color: Qt.color(prefLoader.pref.colorCss || "#000000")
-                                            border.width: 1
-                                            border.color: Kirigami.Theme.disabledTextColor
-                                        }
-                                        QQC2.ComboBox {
-                                            id: presetBox
-                                            model: prefLoader.pref.colorPresetList
-                                            // current is a hex, not a preset name → no preselection.
-                                            currentIndex: -1
-                                            displayText: currentIndex < 0 ? "Choose…" : currentText
-                                            // The swatch shows the result; the picker goes back to "Choose…".
-                                            onActivated: {
-                                                page.applyPref(prefLoader.modelData.id, currentText);
-                                                currentIndex = -1;
-                                            }
-                                        }
+                                FormOptionRow {
+                                    text: prefLoader.pref.name || ""
+                                    description: prefLoader.pref.description || ""
+                                    value: "Choose…"
+                                    onClicked: {
+                                        var id = prefLoader.modelData.id;
+                                        page.pickOption(text, prefLoader.pref.colorPresetList, -1,
+                                                        function (i, option) { page.applyPref(id, option); });
+                                    }
+                                    Rectangle {
+                                        implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                                        implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                                        radius: height / 2
+                                        color: Qt.color(prefLoader.pref.colorCss || "#000000")
+                                        border.width: 1
+                                        border.color: Kirigami.Theme.disabledTextColor
                                     }
                                 }
                             }
@@ -425,5 +422,12 @@ Kirigami.ScrollablePage {
                 }
             }
         }
+    }
+
+    // The picker every option row opens (pickOption), built on first use.
+    Loader {
+        id: pickerLoader
+        active: false
+        sourceComponent: OptionPicker {}
     }
 }

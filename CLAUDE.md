@@ -73,7 +73,8 @@ is write-only**, blank on edit = keep), **`WatchSettingsPage`** (the ~46 WatchPr
 FormHeader sections and rendered one delegate *per type* — see below), **`GeneralSettingsPage`** (the
 `stoandl.conf` keys — schema-driven like WatchSettingsPage: the daemon's `GetConfigSchema` declares
 `key type label options desc group apply min max unit placeholder`, so a new daemon key appears here with
-the right widget and no QML change. Five kinds: `toggle`→FormSwitchDelegate, `combo`→FormComboBoxDelegate,
+the right widget and no QML change. Five kinds: `toggle`→FormSwitchDelegate, `combo`→`FormOptionRow` (see
+below),
 `int`/`text`/`list`→hand-built `AbstractFormDelegate` rows, because FormSpinBoxDelegate and
 FormTextFieldDelegate have no `description` property — and FormTextFieldDelegate additionally calls
 `i18ndc()`, which throws here for the same reason FormColorDelegate is avoided. Rows are grouped into one
@@ -109,12 +110,12 @@ state otherwise (a real past month can be HRM-capable but have no readings).
 color, schedule}` and the `allowed` field is **pipe-(`|`)-separated** for the option types (NOT comma — the daemon's
 `WatchPrefsControl.allowed()`). `StoandlClient::listWatchPrefs()` splits on `|`, pre-derives number
 `min/max/unit` (a `"3000 ms"` current is not a plain int — use the leading digits), and a `debug` flag.
-Per type: bool→`FormSwitchDelegate`, enum→`FormComboBoxDelegate` (options = `allowed`, **display names**,
-not Kotlin constant names — fixed daemon-side), quicklaunch→`FormComboBoxDelegate` of "Off" + the
+Per type: bool→`FormSwitchDelegate`, enum→`FormOptionRow` (options = `allowed`, **display names**,
+not Kotlin constant names — fixed daemon-side), quicklaunch→`FormOptionRow` of "Off" + the
 firmware system actions (Quiet Time, Backlight, …, read from `allowed` between `off` and the
 `<app name or uuid>` placeholder) + **app names** (from `ListApps`) (NEVER a slider/uuid), number→`FormSpinRow` (unit via `textFromValue`,
 **debounce the write** — `onValueChanged` fires every step and each commit is a D-Bus write + re-read), color→a
-swatch + preset combo (the daemon takes a preset *name* back; `FormColorDelegate` is **avoided** — it
+`FormOptionRow` with a swatch and the presets (the daemon takes a preset *name* back; `FormColorDelegate` is **avoided** — it
 calls `i18ndc()` and we deliberately link no KF6 C++ / `KLocalizedContext`), schedule (the Quiet Time
 weekday/weekend hours, a 24 h `HH:MM-HH:MM` window; an end before the start runs overnight)→`FormTextRow`
 checked as typed by `StoandlClient.normalizeSchedule()` (libpebble3's parse rules, so a bad value is
@@ -132,9 +133,17 @@ values. After a set, re-read only the values (`GetConfig` / `ListWatchPrefs`) an
 themselves; every handler then puts its control back on the re-read value, because a value the daemon
 refused leaves the data unchanged and fires no binding. **`FormSwitchDelegate.checked` can't be bound**:
 the delegate assigns it from its inner Switch, which drops the binding at creation, so a switch row
-follows its value from a `Connections` handler. Row Loaders are `asynchronous` (holding a placeholder
-height until ready); the Voice/Weather cards are created once at page level and moved into their
-section's `cardSlot`. Destroying a page while its rows are still incubating can leave Qt's
+follows its value from a `Connections` handler. **One-of-several rows are `FormOptionRow`** (name, stored
+value, down arrow — what FormComboBoxDelegate shows in its mobile Dialog mode): FormComboBoxDelegate
+builds a hidden QQC2.ComboBox, a delegate per option and an InlineMessage for every row whatever its
+display mode, ~10 ms a row on x86 (Watch settings opened in ~3 s on the OnePlus 6). A click opens the
+page's ONE `OptionPicker` (a dialog of radio rows, built on first use by `pickOption()`), whose callback
+applies the pick; the row shows only the stored value, so a refused pick needs no putting back. The
+first section's row Loaders are synchronous (the screen the page opens on is complete in its first
+frame), the rest `asynchronous` (holding a placeholder height until ready): a fully synchronous build
+blocks ~0.35 s (Watch) / ~0.9 s (Daemon configuration) on x86, more than the push animation can hide.
+The Voice/Weather cards are created once at page level (asynchronously) and moved into their section's
+`cardSlot`. Destroying a page while its rows are still incubating can leave Qt's
 in-progress-creation count behind (the engine then warns "There are still N items in the process of
 being created" at exit), so the smoke clears the page stack and quits only once nothing incubates.
 An edit bumps the page's `editSeq`; a `reload()` fetch that started before it (its reply lands after
@@ -158,8 +167,10 @@ asynchronous loads fetched and the rows built from it. A hook that pushes a page
 
 **Add a `smokeExercise()` to any page whose interesting state is only reachable by navigation or by a
 button press** — otherwise it is not covered. `SettingsPage` pushes all seven sub-pages and runs their
-own `smokeExercise()` (`WatchSettingsPage` logs `qlBack`'s quick-launch options and round-trips a Quiet Time window, `DebugSettingsPage` pushes
-`HeartbeatPage`, which filters, `GeneralSettingsPage` logs where its two cards sit (`stoandl-smoke: general cards voice=placed weather=placed …`), runs a read-only city search and logs
+own `smokeExercise()` (`WatchSettingsPage` logs `qlBack`'s quick-launch options, presses its row and picks the stored option in
+the picker (`stoandl-smoke: picker …`), and round-trips a Quiet Time window, `DebugSettingsPage` pushes
+`HeartbeatPage`, which filters, `GeneralSettingsPage` logs where its two cards sit (`stoandl-smoke: general cards voice=placed weather=placed …`), does the
+same picker round trip on its first combo row, runs a read-only city search and logs
 `stoandl-smoke: weather search <kind>, N places` — `disabled` until `weather.place_search` is on); `NotificationsPage` fires the send-test, steps the Alerts page's
 watch-card preview through each `notification.app_name` placement and writes the stored value back
 unchanged, then opens the per-app dialog, writes its app-name placement back unchanged and logs its
