@@ -13,7 +13,8 @@ import org.kde.kirigamiaddons.formcard as FormCard
  * — the binding is evaluated regardless of its `visible` — so the errors were pure noise that could mask
  * a real one. Same reason FormColorDelegate is avoided (see CLAUDE.md).
  *
- * It also gains a `description` line, which FormTextFieldDelegate has no property for at all.
+ * It also gains a `description` line, which FormTextFieldDelegate has no property for at all, and the
+ * settings rows' `help` (RowHelp beside the label; a long press on the label, a right click or F1).
  *
  * API differs from FormTextFieldDelegate in ONE way: the text is `value`, not `text` — AbstractFormDelegate
  * derives from T.ItemDelegate, which already owns `text`. So `onTextChanged` becomes `onValueChanged`.
@@ -25,6 +26,8 @@ FormCard.AbstractFormDelegate {
     property string label: ""
     /** Optional smaller explanatory line under the label. */
     property string description: ""
+    /** Longer text behind the (?) button next to the label; empty = no button. */
+    property string help: ""
     /** Validation message under the entry, in the negative colour; empty = valid (hidden). */
     property string error: ""
     /** The edited text. Named `value` to avoid ItemDelegate's own `text`. */
@@ -39,15 +42,38 @@ FormCard.AbstractFormDelegate {
 
     background: null
     Layout.fillWidth: true
+    Accessible.description: root.description + (root.help !== "" ? " " + root.help : "")
+    Keys.onPressed: (event) => helpButton.keyPressed(event)
+
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: helpButton.show()
+    }
 
     contentItem: ColumnLayout {
         spacing: Kirigami.Units.smallSpacing
 
-        QQC2.Label {
+        RowLayout {
             Layout.fillWidth: true
             visible: root.label !== ""
-            text: root.label
-            elide: Text.ElideRight
+            spacing: Kirigami.Units.smallSpacing
+
+            QQC2.Label {
+                Layout.fillWidth: true
+                text: root.label
+                elide: Text.ElideRight
+
+                // A long press on the label opens the help (the field and the buttons own the rest of the row).
+                TapHandler {
+                    onLongPressed: helpButton.holdStarted()
+                    onPressedChanged: if (!pressed) helpButton.holdEnded()
+                }
+            }
+
+            RowHelp {
+                id: helpButton
+                help: root.help
+            }
         }
 
         QQC2.Label {

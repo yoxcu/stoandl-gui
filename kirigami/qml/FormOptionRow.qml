@@ -15,11 +15,16 @@ import org.kde.kirigamiaddons.formcard as FormCard
  *
  * The value is display-only: bind it to the stored value. A pick goes to the daemon and the re-read
  * moves the binding, so a refused value never shows here.
+ *
+ * `help` adds a (?) (RowHelp) between the name and the value; it takes its own tap, so the picker
+ * doesn't open. A long press, a right click or F1 opens the same text.
  */
 FormCard.AbstractFormDelegate {
     id: root
 
     property string description: ""
+    /** Longer text behind the (?) button; empty = no button. */
+    property string help: ""
     /** The current value's label, shown at the trailing edge. */
     property string value: ""
     /** Extra items placed before the value (e.g. a colour swatch). */
@@ -28,9 +33,21 @@ FormCard.AbstractFormDelegate {
     Accessible.role: Accessible.ComboBox
     Accessible.name: root.text
     Accessible.description: root.value + (root.description !== "" ? ". " + root.description : "")
+                            + (root.help !== "" ? " " + root.help : "")
     Accessible.onPressAction: root.clicked()
     Keys.onReturnPressed: root.clicked()
     Keys.onEnterPressed: root.clicked()
+    Keys.onPressed: (event) => helpButton.keyPressed(event)
+
+    // A hold opens the help, not the picker: with pressAndHold connected no click follows it.
+    onPressAndHold: helpButton.holdStarted()
+    onReleased: helpButton.holdEnded()
+    onCanceled: helpButton.holdPending = false
+
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: helpButton.show()
+    }
 
     contentItem: ColumnLayout {
         spacing: 0
@@ -47,6 +64,11 @@ FormCard.AbstractFormDelegate {
                 maximumLineCount: 2
                 color: root.enabled ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
                 Accessible.ignored: true
+            }
+
+            RowHelp {
+                id: helpButton
+                help: root.help
             }
 
             RowLayout {

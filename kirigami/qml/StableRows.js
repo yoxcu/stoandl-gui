@@ -1,6 +1,6 @@
 .pragma library
 
-// Helpers for the schema-driven settings pages (GeneralSettingsPage, WatchSettingsPage). Their rows are
+// Helpers for the schema-driven settings pages (SchemaSections, WatchSettingsPage). Their rows are
 // created from a *shape* (which keys exist, of which type, in which section) and read everything else
 // through per-row lookups, so a re-read rebuilds nothing as long as it hands QML back the very same
 // objects for whatever did not change: a property re-evaluating to the same object notifies nobody, but
@@ -44,6 +44,20 @@ function findRow(item, field, key) {
         if (c.modelData && c.modelData[field] === key)
             return c;
         var r = findRow(c, field, key);
+        if (r)
+            return r;
+    }
+    return null;
+}
+
+/** The RowHelp (?) button inside a row item, or null; for the smoke hooks, like findRow. */
+function findHelp(item) {
+    var kids = item ? item.children : [];
+    for (var i = 0; i < kids.length; ++i) {
+        var c = kids[i];
+        if (c.holdPending !== undefined && c.toolTipText !== undefined)
+            return c;
+        var r = findHelp(c);
         if (r)
             return r;
     }

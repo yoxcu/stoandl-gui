@@ -17,6 +17,8 @@ FormCard.AbstractFormDelegate {
 
     property string label: ""
     property string description: ""
+    /** Longer text behind the (?) button next to the label; empty = no button. */
+    property string help: ""
     /** The encoded list, as GetConfig reports it. */
     property string value: ""
     /** Shape hint for the add field (the schema's placeholder). */
@@ -48,15 +50,38 @@ FormCard.AbstractFormDelegate {
 
     background: null
     Layout.fillWidth: true
+    Accessible.description: root.description + (root.help !== "" ? " " + root.help : "")
+    Keys.onPressed: (event) => helpButton.keyPressed(event)
+
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: helpButton.show()
+    }
 
     contentItem: ColumnLayout {
         spacing: Kirigami.Units.smallSpacing
 
-        QQC2.Label {
+        RowLayout {
             Layout.fillWidth: true
             visible: root.label !== ""
-            text: root.label
-            elide: Text.ElideRight
+            spacing: Kirigami.Units.smallSpacing
+
+            QQC2.Label {
+                Layout.fillWidth: true
+                text: root.label
+                elide: Text.ElideRight
+
+                // A long press on the label opens the help (the field and the buttons own the rest of the row).
+                TapHandler {
+                    onLongPressed: helpButton.holdStarted()
+                    onPressedChanged: if (!pressed) helpButton.holdEnded()
+                }
+            }
+
+            RowHelp {
+                id: helpButton
+                help: root.help
+            }
         }
 
         QQC2.Label {

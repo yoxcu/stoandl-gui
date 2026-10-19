@@ -25,12 +25,17 @@ FormCard.AbstractFormDelegate {
 
     property string label: ""
     property string description: ""
+    /** Longer text behind the (?) button next to the label; empty = no button. */
+    property string help: ""
     property int from: 0
     property int to: 1000000
     /** Appended to the displayed number (e.g. "min", "days"). */
     property string unit: ""
     /** The value to show. Bind it; the row does not write back to it. */
     property int value: 0
+    /** What the spin box shows now, the user's pending edit included (a form that saves all its fields at
+     *  once reads this instead of waiting for commit). */
+    readonly property int shownValue: sb.value
 
     onValueChanged: if (!commitTimer.running) sb.show(root.value)
     onFromChanged: if (!commitTimer.running) sb.show(root.value)
@@ -41,6 +46,13 @@ FormCard.AbstractFormDelegate {
 
     background: null
     Layout.fillWidth: true
+    Accessible.description: root.description + (root.help !== "" ? " " + root.help : "")
+    Keys.onPressed: (event) => helpButton.keyPressed(event)
+
+    TapHandler {
+        acceptedButtons: Qt.RightButton
+        onTapped: helpButton.show()
+    }
 
     contentItem: RowLayout {
         spacing: Kirigami.Units.largeSpacing
@@ -48,11 +60,27 @@ FormCard.AbstractFormDelegate {
         ColumnLayout {
             Layout.fillWidth: true
             spacing: 0
-            QQC2.Label {
+            RowLayout {
                 Layout.fillWidth: true
                 visible: root.label !== ""
-                text: root.label
-                elide: Text.ElideRight
+                spacing: Kirigami.Units.smallSpacing
+
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    text: root.label
+                    elide: Text.ElideRight
+
+                    // A long press on the label opens the help (the field and the buttons own the rest of the row).
+                    TapHandler {
+                        onLongPressed: helpButton.holdStarted()
+                        onPressedChanged: if (!pressed) helpButton.holdEnded()
+                    }
+                }
+
+                RowHelp {
+                    id: helpButton
+                    help: root.help
+                }
             }
             QQC2.Label {
                 Layout.fillWidth: true
