@@ -217,7 +217,12 @@ ColumnLayout {
     function statusText(key) {
         var s = page.syncByKey[key];
         if (!s) return "";
-        if (!s.available) return "Not available here";
+        // Weather and calendar are "unavailable" until they have something to read ("no source"), which
+        // the rows right under their master fix; anything else (dnd's "no backend") is really missing.
+        if (!s.available)
+            return s.lastSync !== "no source" ? "Not available here"
+                 : s.service === "weather" ? "No place yet"
+                 : s.service === "calendar" ? "No calendar source yet" : "Nothing to sync yet";
         if (s.service === "music" && page.music && page.music.ok) {
             if (page.music.playing)
                 return page.music.track ? "Now playing · " + page.music.track : "Playing · " + page.music.player;
