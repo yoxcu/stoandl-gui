@@ -1018,20 +1018,63 @@ class MockStoandl(dbus.service.Object):
         self.LockerChanged()
         return f"ok:removed {app['title']}"
 
+    # --- watch tasks (sideload, screenshot, logs, coredump): start, then TaskStatus/TaskChanged ---
+    def _task_start(self, kind, running, work, delay_ms=900):
+        # Like the daemon's WatchTasks: one per kind, `ok:started` now, the result after a delay.
+        tasks = self.__dict__.setdefault("_tasks", {})
+        if tasks.get(kind, "").startswith("running:"):
+            return f"busy:a {kind} task is already running"
+        tasks[kind] = "running:" + running
+        self.TaskChanged(kind, tasks[kind])
+
+        def _finish():
+            try:
+                result = work()
+            except OSError as e:
+                result = f"error:{e}"
+            tasks[kind] = result
+            self.TaskChanged(kind, result)
+            return False
+        GLib.timeout_add(delay_ms, _finish)
+        return "ok:started"
+
+    @staticmethod
+    def _task_out(path, sub, prefix, ext):
+        # Empty path: the daemon picks Pictures/Screenshots or Documents/stoandl; the mock a temp dir.
+        if path:
+            return path if path.startswith("/") else None
+        d = os.path.join("/tmp", "stoandl-mock", sub)
+        os.makedirs(d, exist_ok=True)
+        return os.path.join(d, f"{prefix}-{time.strftime('%Y%m%d-%H%M%S')}{ext}")
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def TaskStatus(self, kind):
+        if kind not in ("sideload", "screenshot", "logs", "coredump"):
+            return f"error:unknown task '{kind}'"
+        return self.__dict__.get("_tasks", {}).get(kind, "idle:")
+
+    @dbus.service.signal(IFACE, signature="ss")
+    def TaskChanged(self, kind, status):
+        # A watch task started (running:<what>) or ended (its result) — what TaskStatus now returns.
+        pass
+
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def SideloadApp(self, path):
-        if not path:
-            return "error:empty path"
+        if not path.startswith("/"):
+            return f"error:No such file: {path}"
         base = path.rsplit("/", 1)[-1]
         title = base[:-4] if base.endswith(".pbw") else base
-        self._sideload_seq += 1
-        order = max((a["order"] for a in self.apps), default=-1) + 1
-        self.apps.append({
-            "uuid": f"side{self._sideload_seq:04d}", "type": "watchapp",
-            "order": order, "flags": ["sideloaded"], "title": title, "developer": "Sideloaded",
-        })
-        self.LockerChanged()
-        return f"ok:installed {title}"
+
+        def work():
+            self._sideload_seq += 1
+            order = max((a["order"] for a in self.apps), default=-1) + 1
+            self.apps.append({
+                "uuid": f"side{self._sideload_seq:04d}", "type": "watchapp",
+                "order": order, "flags": ["sideloaded"], "title": title, "developer": "Sideloaded",
+            })
+            self.LockerChanged()
+            return f"ok:Sideloaded {base}"
+        return self._task_start("sideload", f"Installing {base}", work, delay_ms=1500)
 
     @dbus.service.method(IFACE, in_signature="si", out_signature="s")
     def SetAppOrder(self, query, order):
@@ -1968,34 +2011,47 @@ class MockStoandl(dbus.service.Object):
     # --- Diagnostics -------------------------------------------------------
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def TakeScreenshot(self, path):
+        if self._reachable_name() is None:
+            return "notready:No watch connected"
+        out = self._task_out(path, "Screenshots", "pebble-screenshot", ".png")
+        if out is None:
+            return f"error:The path must be absolute: {path}"
         png = base64.b64decode(
             "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
-        try:
-            with open(path, "wb") as f:
+
+        def work():
+            with open(out, "wb") as f:
                 f.write(png)
-        except OSError as e:
-            return f"error:{e}"
-        return rec(f"ok:{path}", "1", "1")
+            return rec(f"ok:{out}", "1", "1")
+        return self._task_start("screenshot", "Capturing the watch screen", work)
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def GatherLogs(self, path):
-        try:
-            with open(path, "w") as f:
+        if self._reachable_name() is None:
+            return "notready:No watch connected"
+        out = self._task_out(path, "Documents", "pebble-logs", ".txt")
+        if out is None:
+            return f"error:The path must be absolute: {path}"
+
+        def work():
+            with open(out, "w") as f:
                 f.write("[mock] stoandl watch log\nbattery 72%\nfw 4.4.2\n")
-        except OSError as e:
-            return f"error:{e}"
-        return f"ok:{path}"
+            return f"ok:{out}"
+        return self._task_start("logs", "Reading the watch's logs", work, delay_ms=2000)
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def GetCoreDump(self, path):
         if self._reachable_name() is None:
-            return "notready:"
-        try:
-            with open(path, "wb") as f:
+            return "notready:No watch connected"
+        out = self._task_out(path, "Documents", "pebble-coredump", ".bin")
+        if out is None:
+            return f"error:The path must be absolute: {path}"
+
+        def work():
+            with open(out, "wb") as f:
                 f.write(b"\x7fCORE[mock coredump]")
-        except OSError as e:
-            return f"error:{e}"
-        return f"ok:{path}"
+            return f"ok:{out}"
+        return self._task_start("coredump", "Reading the watch's core dump", work)
 
     # --- Reset -------------------------------------------------------------
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
