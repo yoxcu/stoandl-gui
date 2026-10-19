@@ -157,7 +157,7 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             icon.name: "dialog-information-symbolic"
             text: "Heartbeat capture is off"
-            explanation: "The daemon is not capturing analytics heartbeats, so there is no record to inspect. Turn on “Battery insights” in Settings → Daemon configuration."
+            explanation: "The daemon is not capturing analytics heartbeats, so there is no record to inspect. Turn on “Battery insights” in Settings → Health & battery."
         }
 
         // --- no record for this watch yet (unknown:<label>) -----------------

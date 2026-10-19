@@ -5,13 +5,13 @@ import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
 
-// Backup, restore and the support bundle. These are CLI-local (`stoandl backup|restore|support` over
-// ~/.config/stoandl) — NOT D-Bus methods — so they shell out to the co-located binary and report back
-// via cliResult.
+// Backup and restore. These are CLI-local (`stoandl backup|restore` over ~/.config/stoandl) — NOT D-Bus
+// methods — so they shell out to the co-located binary and report back via cliResult. (The support
+// bundle, the third CLI-local tool, is on Diagnostics & developer.)
 Kirigami.ScrollablePage {
     id: page
     objectName: "backupSettings"
-    title: "Backup & diagnostics"
+    title: "Backup & restore"
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
@@ -22,8 +22,6 @@ Kirigami.ScrollablePage {
                 page.toast(ok ? "Backup complete" : ("Backup failed: " + message));
             else if (op === "restore")
                 page.toast(ok ? "Restore complete" : ("Restore failed: " + message));
-            else if (op === "support")
-                page.toast(ok ? "Support bundle created" : ("Support bundle failed: " + message));
         }
     }
 
@@ -46,7 +44,7 @@ Kirigami.ScrollablePage {
                 text: "Back up now…"
                 description: "Save a full backup of the watch and daemon state"
                 icon.name: "document-save-symbolic"
-                onClicked: backupDialog.open()
+                onClicked: backupDialog.openWithName()
             }
             FormCard.FormDelegateSeparator {}
             FormCard.FormButtonDelegate {
@@ -54,20 +52,6 @@ Kirigami.ScrollablePage {
                 description: "Restore a previously saved backup"
                 icon.name: "document-open-symbolic"
                 onClicked: restoreDialog.open()
-            }
-        }
-
-        FormCard.FormHeader {
-            visible: StoandlClient.daemonUp
-            title: "Diagnostics"
-        }
-        FormCard.FormCard {
-            visible: StoandlClient.daemonUp
-            FormCard.FormButtonDelegate {
-                text: "Create support bundle…"
-                description: "Collect logs and diagnostics for a bug report"
-                icon.name: "help-feedback-symbolic"
-                onClicked: supportDialog.open()
             }
         }
     }
@@ -85,26 +69,14 @@ Kirigami.ScrollablePage {
 
     // Save pickers: the user chooses where the archive lands (so they know where it is), and the chosen
     // absolute path is passed to the daemon-side CLI. Blank path (dialog cancelled) is never sent.
-    Dialogs.FileDialog {
+    SaveFileDialog {
         id: backupDialog
+        fileName: "stoandl-backup.tar.gz"
         title: "Save backup as"
-        fileMode: Dialogs.FileDialog.SaveFile
-        selectedFile: "stoandl-backup.tar.gz"
         nameFilters: ["Backup archives (*.tar.gz *.tgz)", "All files (*)"]
         onAccepted: {
             StoandlClient.backup(selectedFile);
             page.toast("Backing up…");
-        }
-    }
-    Dialogs.FileDialog {
-        id: supportDialog
-        title: "Save support bundle as"
-        fileMode: Dialogs.FileDialog.SaveFile
-        selectedFile: "stoandl-support.tar.gz"
-        nameFilters: ["Support bundles (*.tar.gz *.tgz)", "All files (*)"]
-        onAccepted: {
-            StoandlClient.supportBundle(selectedFile);
-            page.toast("Building support bundle…");
         }
     }
 }

@@ -12,6 +12,23 @@ import org.kde.kirigami as Kirigami
 Rectangle {
     id: card
 
+    // notification.app_name's options: `text` is the label GetConfig reports and SetConfig takes, `value`
+    // the placement token (`placement` below, and NotifSetAppName's for an app's override).
+    readonly property var placements: [
+        { text: "Small line", value: "small" },
+        { text: "Subtitle",   value: "subtitle" },
+        { text: "Off",        value: "off" }
+    ]
+    // The token for a label or token (case-insensitive), "" for neither.
+    function placementOf(v) {
+        var s = String(v || "").toLowerCase();
+        for (var i = 0; i < card.placements.length; ++i) {
+            if (card.placements[i].value === s || card.placements[i].text.toLowerCase() === s)
+                return card.placements[i].value;
+        }
+        return "";
+    }
+
     property string appName: ""
     // small | subtitle | off, already resolved (an app on "Default" passes the global placement).
     property string placement: "small"

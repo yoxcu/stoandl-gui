@@ -6,9 +6,14 @@ import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
 
-// Debug — the developer corner of Settings: the low-level diagnostic, recovery and testing tools
-// (they used to hang off the watch-details dialog, which hid them behind the connected-watch card).
-// Grouped Diagnostics / Recovery / Testing, with the one destructive action in a danger position last.
+// Diagnostics & developer — the developer corner of Settings: the Developer page's stoandl.conf keys
+// (SchemaSections) on top, then the support bundle and the low-level diagnostic, recovery and testing
+// tools (they used to hang off the watch-details dialog, which hid them behind the connected-watch
+// card). Grouped Diagnostics / Recovery / Testing, with the one destructive action in a danger position
+// last.
+//
+// The support bundle is CLI-local (`stoandl support`), like backup and restore: it shells out to the
+// co-located binary and reports back via cliResult. It needs no watch.
 //
 // Every tool acts on "the connected watch", so the rows are disabled (with an inline explanation) until
 // a watch is connected. Most daemon methods here take no watch argument at all; the heartbeat ones do,
@@ -19,7 +24,7 @@ import org.stoandl.gui
 Kirigami.ScrollablePage {
     id: page
     objectName: "debugSettings"
-    title: "Debug"
+    title: "Diagnostics & developer"
 
     // Latest ListWatches verdict: is any watch connected right now, or connected in recovery (PRF)?
     property bool watchConnected: false
@@ -32,14 +37,17 @@ Kirigami.ScrollablePage {
     Component { id: heartbeatPage; HeartbeatPage {} }
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
-    function open(component) { return applicationWindow().pageStack.push(component); }
+    function open(component) { return applicationWindow().pushPage(component); }
 
-    // Headless smoke (STOANDL_SMOKE_MS): the heartbeat page is only reachable from here.
+    // Headless smoke (STOANDL_SMOKE_MS): the Developer keys, and the heartbeat page, only reachable from here.
     function smokeExercise() {
+        developerSections.smokeExercise();
         console.log("stoandl-smoke: debug watchTools=" + page.watchTools + " recoveryTools=" + page.recoveryTools);
         var hb = page.open(heartbeatPage);
         if (hb && typeof hb.smokeExercise === "function")
             hb.smokeExercise();
+        // Back, as someone would, before the walk goes on.
+        applicationWindow().smokeWhenIdle(function () { applicationWindow().pageStack.pop(); });
     }
 
     function applyWatches(rows) {
@@ -62,6 +70,10 @@ Kirigami.ScrollablePage {
         // the daemonUp re-sync is the missed-signal net.
         function onWatchesChanged(rows) { page.applyWatches(rows); }
         function onDaemonUpChanged() { page.reload(); }
+        function onCliResult(op, ok, message) {
+            if (op === "support")
+                page.toast(ok ? "Support bundle created" : ("Support bundle failed: " + message));
+        }
     }
 
     Component.onCompleted: page.reload()
@@ -73,6 +85,15 @@ Kirigami.ScrollablePage {
             visible: !StoandlClient.daemonUp
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
+        }
+
+        // The Developer page's stoandl.conf keys (developer connection, app data logs).
+        SchemaSections {
+            id: developerSections
+            visible: StoandlClient.daemonUp
+            Layout.fillWidth: true
+            pageName: "Developer"
+            flickable: page.flickable
         }
 
         FormCard.FormSectionText {
@@ -103,16 +124,10 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp
 
             FormCard.FormButtonDelegate {
-                text: "Core dump"
-                description: "Save the watch's last crash dump to a file"
-                icon.name: "documentinfo-symbolic"
-                enabled: page.recoveryTools
-                onClicked: {
-                    var r = StoandlClient.getCoreDump();
-                    page.toast(r.kind === "ok" ? ("Core dump saved: " + r.path)
-                             : r.kind === "none" ? "No core dump available"
-                             : ("Core dump: " + (r.msg || r.kind)));
-                }
+                text: "Create support bundle…"
+                description: "stoandl's logs and state for a bug report, with secrets left out"
+                icon.name: "help-feedback-symbolic"
+                onClicked: supportDialog.openWithName()
             }
             FormCard.FormDelegateSeparator {}
             FormCard.FormButtonDelegate {
@@ -123,6 +138,19 @@ Kirigami.ScrollablePage {
                 onClicked: {
                     var r = StoandlClient.gatherLogs();
                     page.toast(r.kind === "ok" ? ("Logs saved: " + r.path) : ("Logs: " + (r.msg || r.kind)));
+                }
+            }
+            FormCard.FormDelegateSeparator {}
+            FormCard.FormButtonDelegate {
+                text: "Core dump"
+                description: "Save the watch's last crash dump to a file"
+                icon.name: "documentinfo-symbolic"
+                enabled: page.recoveryTools
+                onClicked: {
+                    var r = StoandlClient.getCoreDump();
+                    page.toast(r.kind === "ok" ? ("Core dump saved: " + r.path)
+                             : r.kind === "none" ? "No core dump available"
+                             : ("Core dump: " + (r.msg || r.kind)));
                 }
             }
             FormCard.FormDelegateSeparator {}
@@ -305,6 +333,20 @@ Kirigami.ScrollablePage {
             },
             Kirigami.Action { text: "Cancel"; icon.name: "dialog-cancel-symbolic"; onTriggered: factoryConfirm.close() }
         ]
+    }
+
+    // --- support bundle -----------------------------------------------------
+    // The user chooses where the archive lands (so they know where it is); the chosen absolute path goes
+    // to the co-located CLI. A cancelled dialog sends nothing.
+    SaveFileDialog {
+        id: supportDialog
+        fileName: "stoandl-support.tar.gz"
+        title: "Save support bundle as"
+        nameFilters: ["Support bundles (*.tar.gz *.tgz)", "All files (*)"]
+        onAccepted: {
+            StoandlClient.supportBundle(selectedFile);
+            page.toast("Building support bundle…");
+        }
     }
 
     // --- flash firmware from a local .pbz ----------------------------------

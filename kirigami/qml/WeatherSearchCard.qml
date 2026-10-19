@@ -41,13 +41,13 @@ ColumnLayout {
         }
     }
 
-    FormCard.FormHeader { title: "Find a location" }
+    FormCard.FormHeader { title: "Find a place" }
 
     FormCard.FormCard {
         FormCard.FormTextDelegate {
             visible: !card.searchOn
             text: "Search is off"
-            description: "Turn on \"Find locations by name\" above to look cities up by name. "
+            description: "Turn on \"Find places by name\" above to look cities up by name. "
                 + "The name you type is sent to Open-Meteo's geocoder."
             icon.name: "find-location-symbolic"
         }

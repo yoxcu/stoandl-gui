@@ -60,6 +60,8 @@ qt_add_qml_module(stoandl-gui
         qml/FormSpinRow.qml
         qml/FormListRow.qml
         qml/FormOptionRow.qml
+        qml/FormSwitchRow.qml
+        qml/RowHelp.qml
         qml/OptionPicker.qml
         qml/ConfList.js
         qml/StableRows.js
@@ -73,10 +75,15 @@ qt_add_qml_module(stoandl-gui
         qml/NotificationsPage.qml
         qml/WatchCardPreview.qml
         qml/SettingsPage.qml
-        qml/SyncSettingsPage.qml
         qml/CalendarsSettingsPage.qml
         qml/WatchSettingsPage.qml
-        qml/GeneralSettingsPage.qml
+        qml/SchemaSettingsPage.qml
+        qml/SchemaSections.qml
+        qml/RestartMessage.qml
+        qml/FocusFlash.qml
+        qml/AboutSettingsPage.qml
+        qml/ForwardingBanner.qml
+        qml/SaveFileDialog.qml
         qml/VoiceModelsCard.qml
         qml/WeatherSearchCard.qml
         qml/HealthProfileSettingsPage.qml
@@ -91,6 +98,22 @@ qt_add_qml_module(stoandl-gui
 # So the generated QML type-registration's `#if __has_include(<StoandlClient.h>)`
 # resolves — the header lives in src/.
 target_include_directories(stoandl-gui PRIVATE src)
+
+# The version Settings → About shows: `git describe` of the checkout, else (a release tarball) the
+# project version above.
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" describe --tags --always --dirty
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                    OUTPUT_VARIABLE STOANDL_GUI_GIT_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET RESULT_VARIABLE STOANDL_GUI_GIT_RESULT)
+endif()
+if(GIT_FOUND AND STOANDL_GUI_GIT_RESULT EQUAL 0 AND NOT STOANDL_GUI_GIT_VERSION STREQUAL "")
+    set(STOANDL_GUI_VERSION "${STOANDL_GUI_GIT_VERSION}")
+else()
+    set(STOANDL_GUI_VERSION "${PROJECT_VERSION}")
+endif()
+target_compile_definitions(stoandl-gui PRIVATE STOANDL_GUI_VERSION="${STOANDL_GUI_VERSION}")
 
 target_link_libraries(stoandl-gui PRIVATE
     Qt6::Core

@@ -7,7 +7,7 @@ import org.stoandl.gui
 // Watch details (opened by tapping the connected-watch hero card). Holds the
 // hardware facts that used to live in the inline HARDWARE list, plus the
 // developer connection, language picker and rename (handoff §4d). The low-level
-// diagnostic / recovery tools moved to Settings → Debug. Bottom sheet on mobile /
+// diagnostic / recovery tools moved to Settings → Diagnostics & developer. Bottom sheet on mobile /
 // popup on desktop — Kirigami.Dialog adapts.
 Kirigami.Dialog {
     id: dialog

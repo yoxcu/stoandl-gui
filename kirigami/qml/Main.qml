@@ -38,6 +38,29 @@ Kirigami.ApplicationWindow {
         WatchPage { id: watchPage }
     }
 
+    // Push a sub-page created here. Kirigami's push(Component) creates the page with a QtObject parent, and
+    // Qt warns "Created graphical object was not placed in the graphics scene" for every page. Created
+    // without a parent instead, the page is held in pushedPages until PageRow removes it (a back
+    // navigation, a tab switch) and destroyed once its slide-out is over, rather than whenever the
+    // garbage collector runs (until then it would still follow the daemon's signals). Destroyed at once,
+    // the form rows of the page sliding out loop on their background colour.
+    property var pushedPages: []
+    function pushPage(component, properties) {
+        var p = component.createObject(null, properties || {});
+        root.pushedPages.push(p);
+        return pageStack.push(p);
+    }
+    Connections {
+        target: root.pageStack
+        function onPageRemoved(page) {
+            var i = root.pushedPages.indexOf(page);
+            if (i < 0)
+                return;
+            root.pushedPages.splice(i, 1);
+            page.destroy(Kirigami.Units.humanMoment);
+        }
+    }
+
     function showTab(index) {
         // Re-tapping the active tab returns to its root (pops any pushed sub-page, e.g. a Settings
         // detail). Switching tabs first pops sub-pages, then swaps the root page in place.
@@ -79,10 +102,18 @@ Kirigami.ApplicationWindow {
 
     // Smoke harness: run fn once no asynchronous read is in flight and nothing is being created
     // asynchronously, so a page's smokeExercise() sees the data its loads fetch (they no longer block)
-    // and the rows built from it. Queued in order; checked every 50 ms.
+    // and the rows built from it. Queued in order; checked every 50 ms, one fn per check, so the D-Bus
+    // signals a fn's calls cause (ConfigChanged …) are dispatched, and their reads started, before the
+    // next one looks.
+    // Depth first: what a running fn queues runs before the rest of the queue, so a page's walk (and what
+    // its hooks queue in turn) ends before the next step, which may pop that page.
     property var smokeQueue: []
+    property int smokeInsertAt: -1
     function smokeWhenIdle(fn) {
-        root.smokeQueue.push(fn);
+        if (root.smokeInsertAt >= 0)
+            root.smokeQueue.splice(root.smokeInsertAt++, 0, fn);
+        else
+            root.smokeQueue.push(fn);
         smokeIdleTimer.start();
     }
     Timer {
@@ -90,9 +121,13 @@ Kirigami.ApplicationWindow {
         interval: 50
         repeat: true
         onTriggered: {
-            while (root.smokeQueue.length > 0
-                   && StoandlClient.callsInFlight === 0 && StoandlClient.incubatingObjects() === 0)
-                root.smokeQueue.shift()();
+            if (root.smokeQueue.length > 0
+                && StoandlClient.callsInFlight === 0 && StoandlClient.incubatingObjects() === 0) {
+                var fn = root.smokeQueue.shift();
+                root.smokeInsertAt = 0;
+                fn();
+                root.smokeInsertAt = -1;
+            }
             if (root.smokeQueue.length === 0)
                 stop();
         }
@@ -115,6 +150,10 @@ Kirigami.ApplicationWindow {
                 StoandlClient.startDaemon();
             }
             if (smokeTimer.step >= root.pageComponents.length) {
+                // A page's walk can queue more than a tick holds (Settings pushes every sub-page): quit
+                // only after it.
+                if (root.smokeQueue.length > 0)
+                    return;
                 smokeTimer.running = false;
                 // Once every exercise ran and the settings rows are built: destroy the pushed pages now
                 // (a pop only animates them away) and quit. (The kept tab pages go back to tabPark.)
