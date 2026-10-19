@@ -184,9 +184,18 @@ Kirigami.ScrollablePage {
     // Re-fetch on show + after every mutation the daemon doesn't announce with LockerChanged.
     Component.onCompleted: page.reload()
 
-    // Read-only (it also runs against a real daemon): the request banners, then one app's permission dialog.
+    // Read-only (it also runs against a real daemon): an extension's settings form (its fields' subtitles,
+    // help and the values Save would send), the request banners, then one app's permission dialog.
     function smokeExercise() {
         if (!StoandlClient.daemonUp) return;
+        var ext = page.extensions.find(function (e) { return e.config === "schema" && e.installed; });
+        if (ext) {
+            extConfigDialog.openFor(ext.name);
+            console.log("stoandl-smoke: ext config " + ext.name + " " + extConfigDialog.fields.map(function (f) {
+                return f.key + (f.description ? "[desc]" : "") + (f.help ? "[help]" : ""); }).join(", ")
+                + " · save " + JSON.stringify(extConfigDialog.collect()));
+            extConfigDialog.close();
+        }
         console.log("stoandl-smoke: perm banners " + page.permGroups.map(function (g) {
             return g.appName + (g.running ? "" : "(closed)") }).join(", ") + " · waiting apps " + page.permWaitingApps.length);
         var uuid = page.permWaitingApps.length > 0 ? page.permWaitingApps[0] : (page.apps.length > 0 ? page.apps[0].uuid : "");
@@ -544,7 +553,7 @@ Kirigami.ScrollablePage {
             FormCard.FormTextDelegate {
                 visible: page.appPlugins.length === 0
                 text: "No plugins"
-                description: "Plugins are off (Settings → Plugins), or none are installed. They give watchfaces and watchapps data and actions from this computer: weather, music, calendar, phone state, or a plugin an app brings."
+                description: "Plugins are off (Settings → Apps & plugins), or none are installed. They give watchfaces and watchapps data and actions from this computer: weather, music, calendar, phone state, or a plugin an app brings."
             }
             Repeater {
                 model: page.appPlugins
@@ -729,6 +738,8 @@ Kirigami.ScrollablePage {
     }
 
     // --- extension schema-config form dialog -------------------------------
+    // One row per field of the manifest's configSchema; a field's optional `description` is the row's
+    // subtitle and its optional `help` sits behind the row's (?).
     Kirigami.Dialog {
         id: extConfigDialog
         title: "Extension settings"
@@ -747,6 +758,12 @@ Kirigami.ScrollablePage {
             var got = StoandlClient.extGetConfig(name);
             values = (got && got.values) ? got.values : ({});
             open();
+        }
+
+        // The enum rows' picker, built on first use.
+        function pick(title, options, index, onPicked) {
+            extPickerLoader.active = true;
+            extPickerLoader.item.choose(title, options, index, onPicked);
         }
 
         // Collect current control values keyed by field key.
@@ -785,15 +802,19 @@ Kirigami.ScrollablePage {
                     hoverEnabled: false
                     Accessible.name: modelData.label
 
+                    // Every row holds one control per type and shows the field's; only that one writes
+                    // fieldValue (a hidden text row would turn every value into a string).
                     contentItem: ColumnLayout {
                         spacing: 0
 
                         // bool -> switch
-                        FormCard.FormSwitchDelegate {
+                        FormSwitchRow {
                             visible: fieldRow.modelData.type === "bool"
                             Layout.fillWidth: true
                             background: null
                             text: fieldRow.modelData.label
+                            description: fieldRow.modelData.description
+                            help: fieldRow.modelData.help
                             checked: fieldRow.fieldValue === true || fieldRow.fieldValue === "true"
                             onToggled: fieldRow.fieldValue = checked
                         }
@@ -803,8 +824,10 @@ Kirigami.ScrollablePage {
                             visible: fieldRow.modelData.type === "string" && !fieldRow.isSecret
                             Layout.fillWidth: true
                             label: fieldRow.modelData.label
+                            description: fieldRow.modelData.description
+                            help: fieldRow.modelData.help
                             value: fieldRow.fieldValue !== undefined ? "" + fieldRow.fieldValue : ""
-                            onValueChanged: fieldRow.fieldValue = value
+                            onValueChanged: if (fieldRow.modelData.type === "string" && !fieldRow.isSecret) fieldRow.fieldValue = value
                         }
 
                         // secret string -> password field, blank unless retyped, plus Clear when stored
@@ -812,11 +835,13 @@ Kirigami.ScrollablePage {
                             visible: fieldRow.isSecret
                             Layout.fillWidth: true
                             label: fieldRow.modelData.label
-                            description: fieldRow.secretStored ? "Stored in the keyring; type to replace it"
-                                : fieldRow.secretCleared ? "Will be removed on Save" : "Not set"
+                            help: fieldRow.modelData.help
+                            description: (fieldRow.modelData.description !== "" ? fieldRow.modelData.description + " · " : "")
+                                + (fieldRow.secretStored ? "Stored in the keyring; type to replace it"
+                                   : fieldRow.secretCleared ? "Will be removed on Save" : "Not set")
                             echoMode: TextInput.Password
                             placeholderText: fieldRow.secretStored ? "••••••••" : ""
-                            onValueChanged: fieldRow.fieldValue = (value === "" && fieldRow.secretCleared) ? null : value
+                            onValueChanged: if (fieldRow.isSecret) fieldRow.fieldValue = (value === "" && fieldRow.secretCleared) ? null : value
                         }
                         FormCard.FormButtonDelegate {
                             visible: fieldRow.secretStored
@@ -827,29 +852,33 @@ Kirigami.ScrollablePage {
                             }
                         }
 
-                        // int -> spin box
-                        FormCard.FormSpinBoxDelegate {
+                        // int -> spin box (Save reads what it shows, not its debounced commit)
+                        FormSpinRow {
                             visible: fieldRow.modelData.type === "int"
                             Layout.fillWidth: true
                             label: fieldRow.modelData.label
+                            description: fieldRow.modelData.description
+                            help: fieldRow.modelData.help
                             from: -1000000
                             to: 1000000
-                            value: fieldRow.fieldValue !== undefined ? parseInt(fieldRow.fieldValue) : 0
-                            onValueChanged: fieldRow.fieldValue = value
+                            value: fieldRow.fieldValue !== undefined ? parseInt(fieldRow.fieldValue) || 0 : 0
+                            onShownValueChanged: if (fieldRow.modelData.type === "int") fieldRow.fieldValue = shownValue
                         }
 
-                        // enum -> combo box
-                        FormCard.FormComboBoxDelegate {
+                        // enum -> option row and the dialog's picker; an unknown stored value shows the first
+                        // option, which Save then writes
+                        FormOptionRow {
+                            readonly property var options: fieldRow.modelData.options || []
+                            readonly property int chosen: Math.max(0, options.indexOf(fieldRow.fieldValue))
                             visible: fieldRow.modelData.type === "enum"
                             Layout.fillWidth: true
                             text: fieldRow.modelData.label
-                            model: fieldRow.modelData.options
-                            currentIndex: {
-                                var opts = fieldRow.modelData.options || [];
-                                var idx = opts.indexOf(fieldRow.fieldValue);
-                                return idx >= 0 ? idx : 0;
-                            }
-                            onCurrentValueChanged: fieldRow.fieldValue = currentValue
+                            description: fieldRow.modelData.description
+                            help: fieldRow.modelData.help
+                            value: options[chosen] || ""
+                            Component.onCompleted: if (fieldRow.modelData.type === "enum" && options.length) fieldRow.fieldValue = options[chosen]
+                            onClicked: extConfigDialog.pick(text, options, chosen,
+                                                            function (i, option) { fieldRow.fieldValue = option; })
                         }
                     }
                 }
@@ -876,6 +905,13 @@ Kirigami.ScrollablePage {
                 onTriggered: extConfigDialog.close()
             }
         ]
+    }
+
+    // The extension settings' enum picker (extConfigDialog.pick), built on first use.
+    Loader {
+        id: extPickerLoader
+        active: false
+        sourceComponent: OptionPicker {}
     }
 
     // --- install .pbw (faces / apps) ---------------------------------------

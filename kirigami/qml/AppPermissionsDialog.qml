@@ -81,7 +81,7 @@ Kirigami.Dialog {
             Layout.margins: Kirigami.Units.smallSpacing
             visible: !dialog.pluginsOn
             type: Kirigami.MessageType.Information
-            text: "Plugins are off (Settings → Plugins), so apps aren't asked and everything is allowed."
+            text: "Plugins are off (Settings → Apps & plugins), so apps aren't asked and everything is allowed."
         }
 
         Kirigami.InlineMessage {

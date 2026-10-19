@@ -8,7 +8,8 @@ import org.stoandl.gui
 // The watch's health *profile* — its own activity-tracking configuration (body metrics + tracking
 // toggles + HR zones), written to the watch's HealthParams BlobDB via GetHealthProfile / SetHealthProfile.
 // This is the WRITE side of health; the Health tab shows the read-only synced data. Applied per field
-// and synced to the watch (needs a health-capable watch to take effect).
+// and synced to the watch (needs a health-capable watch to take effect). Each row's (?) says what the
+// watch does with it; the one-of-several rows open the page's one OptionPicker.
 Kirigami.ScrollablePage {
     id: page
     objectName: "healthProfile"
@@ -43,12 +44,36 @@ Kirigami.ScrollablePage {
     }
 
     function val(key) { return (page.profile || {})[key] || ""; }
+    // A stored token as a row shows it: "10min" → "10 min", "metric" → "Metric".
+    function label(v) {
+        var t = String(v).replace(/^(\d+)(min|h)$/, "$1 $2");
+        return t.charAt(0).toUpperCase() + t.slice(1);
+    }
+    // One picker for the option rows, built on first use; the pick is written as its token.
+    function pick(title, key, options, fallback) {
+        pickerLoader.active = true;
+        pickerLoader.item.choose(title, options.map(page.label), page.comboIndex(options, key, fallback),
+                                 function (i) { page.apply(key, options[i]); });
+    }
     function boolVal(key) { return page.val(key) === "on"; }
     // [fallback] is the entry to show while the value is unknown (the profile is empty before the daemon is ready).
+    readonly property string bodyHelp: "Used by the watch to estimate distance, calories and sleep. Stored on the watch and this device only."
+
     function comboIndex(options, key, fallback) {
         var i = options.indexOf(page.val(key));
         if (i < 0) i = options.indexOf(fallback);
         return i >= 0 ? i : 0;
+    }
+
+    // Smoke hook (Settings → Health & battery's link runs it): the Units picker, its stored option written
+    // back unchanged.
+    function smokeExercise() {
+        page.pick("Units", "units", page.unitOptions);
+        var pk = pickerLoader.item;
+        console.log("stoandl-smoke: health profile picker '" + pk.title + "' " + pk.options.join("|") + " checked "
+                    + pk.currentIndex);
+        pk.pick(pk.currentIndex);
+        console.log("stoandl-smoke: health profile units = " + page.val("units"));
     }
 
     Connections {
@@ -130,6 +155,7 @@ Kirigami.ScrollablePage {
                 id: heightCmField
                 visible: !page.imperial
                 label: "Height (cm)"
+                help: page.bodyHelp
                 value: page.val("height_cm")
                 inputMethodHints: Qt.ImhDigitsOnly
                 onEditingFinished: if (visible && value !== page.val("height_cm")) page.apply("height_cm", value)
@@ -138,6 +164,7 @@ Kirigami.ScrollablePage {
                 id: heightFtField
                 visible: page.imperial
                 label: "Height (ft)"
+                help: page.bodyHelp
                 value: page.heightFeet()
                 inputMethodHints: Qt.ImhDigitsOnly
                 onEditingFinished: if (visible && value !== page.heightFeet()) page.applyHeightImperial(value, heightInField.value)
@@ -147,6 +174,7 @@ Kirigami.ScrollablePage {
                 id: heightInField
                 visible: page.imperial
                 label: "Height (in)"
+                help: page.bodyHelp
                 value: page.heightInches()
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                 onEditingFinished: if (visible && value !== page.heightInches()) page.applyHeightImperial(heightFtField.value, value)
@@ -156,6 +184,7 @@ Kirigami.ScrollablePage {
                 id: weightKgField
                 visible: !page.imperial
                 label: "Weight (kg)"
+                help: page.bodyHelp
                 value: page.val("weight_kg")
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                 onEditingFinished: if (visible && value !== page.val("weight_kg")) page.apply("weight_kg", value)
@@ -164,6 +193,7 @@ Kirigami.ScrollablePage {
                 id: weightLbField
                 visible: page.imperial
                 label: "Weight (lb)"
+                help: page.bodyHelp
                 value: page.weightLb()
                 inputMethodHints: Qt.ImhFormattedNumbersOnly
                 onEditingFinished: if (visible && value !== page.weightLb()) page.applyWeightImperial(value)
@@ -172,25 +202,26 @@ Kirigami.ScrollablePage {
             FormTextRow {
                 id: ageField
                 label: "Age (years)"
+                help: page.bodyHelp
                 value: page.val("age")
                 inputMethodHints: Qt.ImhDigitsOnly
                 onEditingFinished: if (value !== page.val("age")) page.apply("age", value)
             }
             FormCard.FormDelegateSeparator {}
-            FormCard.FormComboBoxDelegate {
+            FormOptionRow {
                 text: "Sex"
-                model: page.genderOptions
-                currentIndex: page.comboIndex(page.genderOptions, "gender")
-                onActivated: page.apply("gender", currentValue)
+                help: page.bodyHelp
+                value: page.label(page.genderOptions[page.comboIndex(page.genderOptions, "gender")])
+                onClicked: page.pick(text, "gender", page.genderOptions)
             }
             FormCard.FormDelegateSeparator {}
-            FormCard.FormComboBoxDelegate {
+            FormOptionRow {
                 text: "Units"
                 // The daemon sends weather in this unit too (there is no separate weather setting).
-                description: "Distances on the watch, and the temperature unit weather is sent in"
-                model: page.unitOptions
-                currentIndex: page.comboIndex(page.unitOptions, "units")
-                onActivated: page.apply("units", currentValue)
+                description: "Metric or imperial units on the watch"
+                help: "Distances on the watch; also the temperature unit for weather and, when Wind speed is Automatic, the wind unit."
+                value: page.label(page.unitOptions[page.comboIndex(page.unitOptions, "units")])
+                onClicked: page.pick(text, "units", page.unitOptions)
             }
         }
 
@@ -202,23 +233,26 @@ Kirigami.ScrollablePage {
         FormCard.FormCard {
             visible: StoandlClient.daemonUp
 
-            FormCard.FormSwitchDelegate {
+            FormSwitchRow {
                 text: "Activity tracking"
                 description: "Steps, distance, calories and active minutes"
+                help: "Counts steps and detects walks, runs and sleep. Off saves a little battery but the Health tab stays empty."
                 checked: page.boolVal("tracking")
                 onToggled: page.apply("tracking", checked ? "on" : "off")
             }
             FormCard.FormDelegateSeparator {}
-            FormCard.FormSwitchDelegate {
+            FormSwitchRow {
                 text: "Activity insights"
                 description: "\"Time to move\" and daily-summary cards on the watch"
+                help: "Short cards on the watch."
                 checked: page.boolVal("activity_insights")
                 onToggled: page.apply("activity_insights", checked ? "on" : "off")
             }
             FormCard.FormDelegateSeparator {}
-            FormCard.FormSwitchDelegate {
+            FormSwitchRow {
                 text: "Sleep insights"
                 description: "Sleep-summary cards on the watch"
+                help: "Short cards on the watch."
                 checked: page.boolVal("sleep_insights")
                 onToggled: page.apply("sleep_insights", checked ? "on" : "off")
             }
@@ -232,22 +266,23 @@ Kirigami.ScrollablePage {
         FormCard.FormCard {
             visible: StoandlClient.daemonUp
 
-            FormCard.FormSwitchDelegate {
+            FormSwitchRow {
                 id: hrmSwitch
                 text: "Heart-rate monitor"
+                help: "Measures heart rate in the background; uses noticeably more battery than step counting."
                 checked: page.boolVal("hrm")
                 onToggled: page.apply("hrm", checked ? "on" : "off")
             }
             FormCard.FormDelegateSeparator {}
-            FormCard.FormComboBoxDelegate {
+            FormOptionRow {
                 text: "Measurement interval"
+                help: "Shorter intervals give finer data and drain faster."
                 enabled: hrmSwitch.checked
-                model: page.intervalOptions
-                currentIndex: page.comboIndex(page.intervalOptions, "hrm_interval", "10min")
-                onActivated: page.apply("hrm_interval", currentValue)
+                value: page.label(page.intervalOptions[page.comboIndex(page.intervalOptions, "hrm_interval", "10min")])
+                onClicked: page.pick(text, "hrm_interval", page.intervalOptions, "10min")
             }
             FormCard.FormDelegateSeparator {}
-            FormCard.FormSwitchDelegate {
+            FormSwitchRow {
                 text: "HR during activities"
                 description: "Continuously track heart rate during detected walks and runs. Uses more battery."
                 enabled: hrmSwitch.checked && page.boolVal("tracking")
@@ -274,5 +309,12 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp
             text: "These configure the watch's own fitness tracking and sync to it when connected (a health-capable watch is required). The Health tab shows the data the watch reports back."
         }
+    }
+
+    // The picker the option rows open (pick), built on first use.
+    Loader {
+        id: pickerLoader
+        active: false
+        sourceComponent: OptionPicker {}
     }
 }
