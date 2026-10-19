@@ -1528,9 +1528,31 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def NotifSetMuteAll(self, spec):
-        for a in self.notif_apps:
-            a["mute"] = spec if spec else "never"
-        return f"ok:all apps mute = {spec or 'never'}"
+        # One temporary mute over every app, apart from the per-app mutes (as in the daemon's GlobalMute).
+        s = (spec or "").strip().lower()
+        if s in ("never", "off", "unmute", "resume", ""):
+            was = self.__dict__.get("muted_until", 0) > time.time()
+            self.muted_until = 0
+            return "ok:Notifications resumed" if was else "ok:Notifications weren't muted"
+        if s in ("always", "on", "mute", "weekdays", "weekends"):
+            return ("error:Muting all apps is temporary: give a time (30m, 1h, 2d or today). To stop "
+                    "forwarding until you turn it back on, set notification.forward to false")
+        if s == "today":
+            now = datetime.datetime.now()
+            end = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            self.muted_until = end.timestamp()
+        else:
+            m = re.fullmatch(r"(\d+)\s*([smhd])", s)
+            if not m:
+                return f"error:Unknown mute '{spec}' (use a time like 30m, 1h, 2d, or today, or never to resume)"
+            secs = int(m.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
+            self.muted_until = time.time() + secs
+        return "ok:Muted all notifications until " + time.strftime("%H:%M", time.localtime(self.muted_until))
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def NotifMuteAllStatus(self):
+        until = self.__dict__.get("muted_until", 0)
+        return f"muted:{int(until)}" if until > time.time() else "none:"
 
     @dbus.service.method(IFACE, in_signature="ssss", out_signature="s")
     def NotifSetStyle(self, query, color, icon, vibe):
