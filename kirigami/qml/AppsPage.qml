@@ -148,6 +148,13 @@ Kirigami.ScrollablePage {
         StoandlClient.refreshExtensions(); // re-fetch after mutation
     }
 
+    // A quarantined or crashed extension starts again only when asked.
+    function restartExt(extData) {
+        var r = StoandlClient.extRestart(extData.name);
+        page.toast(r.ok ? "Restarting " + extData.name : "Restart failed: " + (r.tail || r.kind));
+        StoandlClient.refreshExtensions();
+    }
+
     function configureExt(extData) {
         if (extData.config === "schema") {
             extConfigDialog.openFor(extData.name);
@@ -215,7 +222,23 @@ Kirigami.ScrollablePage {
             });
         });
     }
+    // An extension that crashed (the mock's ExtCrash hook): its last stderr line, and Restart.
+    function smokeCrash() {
+        var ext = page.extensions.find(function (e) { return e.running && e.enabled; });
+        if (!ext || StoandlClient.daemonVersion.indexOf("mock") !== 0) return;
+        StoandlClient.call("ExtCrash", [ext.name]);
+        applicationWindow().smokeWhenIdle(function () {
+            var row = page.extensions.find(function (e) { return e.name === ext.name; }) || {};
+            console.log("stoandl-smoke: ext " + ext.name + " " + row.runtimeState + " last error '" + row.lastStderr + "'");
+            page.restartExt(row);
+            applicationWindow().smokeWhenIdle(function () {
+                var again = page.extensions.find(function (e) { return e.name === ext.name; }) || {};
+                console.log("stoandl-smoke: ext " + ext.name + " after Restart " + again.runtimeState);
+            });
+        });
+    }
     function smokePerms() {
+        page.smokeCrash();
         console.log("stoandl-smoke: perm banners " + page.permGroups.map(function (g) {
             return g.appName + (g.running ? "" : "(closed)") }).join(", ") + " · waiting apps " + page.permWaitingApps.length);
         var uuid = page.permWaitingApps.length > 0 ? page.permWaitingApps[0] : (page.apps.length > 0 ? page.apps[0].uuid : "");
@@ -234,6 +257,14 @@ Kirigami.ScrollablePage {
             text: page.extSegment ? "Install extension" : "Install .pbw"
             enabled: StoandlClient.daemonUp
             onTriggered: page.extSegment ? extFileDialog.open() : pbwFileDialog.open()
+        },
+        Kirigami.Action {
+            icon.name: "folder-open-symbolic"
+            // ExtInstall takes an unpacked extension's folder too (an extension being written, say).
+            text: "Install from folder"
+            visible: page.extSegment
+            enabled: StoandlClient.daemonUp
+            onTriggered: extFolderDialog.open()
         },
         Kirigami.Action {
             icon.name: "view-refresh-symbolic"
@@ -646,7 +677,10 @@ Kirigami.ScrollablePage {
                         let text = head
                         if (modelData.description && modelData.description !== "")
                             text = head !== "" ? head + " — " + modelData.description : modelData.description
-                        return serves !== "" ? (text !== "" ? text + " · " + serves : serves) : text
+                        text = serves !== "" ? (text !== "" ? text + " · " + serves : serves) : text
+                        // Why it stopped: the last line it wrote to stderr (ExtList's 9th column).
+                        const down = modelData.runtimeState === "quarantined" || modelData.runtimeState === "exited"
+                        return down && modelData.lastStderr ? text + "\nLast error: " + modelData.lastStderr : text
                     }
                     checked: modelData.enabled === true
                     onToggled: page.extToggle(modelData)
@@ -663,6 +697,16 @@ Kirigami.ScrollablePage {
                             label: rs === "quarantined" ? "Quarantined" : "Crashed (restarting)"
                             tint: rs === "quarantined" ? Kirigami.Theme.negativeTextColor
                                                        : Kirigami.Theme.neutralTextColor
+                        }
+
+                        QQC2.ToolButton {
+                            visible: extRow.modelData.runtimeState === "quarantined" || extRow.modelData.runtimeState === "exited"
+                            icon.name: "view-refresh-symbolic"
+                            display: QQC2.AbstractButton.IconOnly
+                            text: "Restart " + extRow.modelData.name
+                            QQC2.ToolTip.text: "Restart"
+                            QQC2.ToolTip.visible: hovered
+                            onClicked: page.restartExt(extRow.modelData)
                         }
 
                         QQC2.ToolButton {
@@ -973,6 +1017,16 @@ Kirigami.ScrollablePage {
             var r = StoandlClient.sideloadApp(selectedFile); // absolute daemon-side path (co-located)
             page.toast(r.ok ? "Installing " + decodeURIComponent(("" + selectedFile).split("/").pop()) + "…"
                             : "Install failed: " + (r.tail || r.kind));
+        }
+    }
+
+    Dialogs.FolderDialog {
+        id: extFolderDialog
+        title: "Install extension from folder"
+        onAccepted: {
+            var r = StoandlClient.extInstall(selectedFolder);   // absolute daemon-side path (co-located)
+            page.toast(r.kind === "ok" ? "Extension installed" : "Install failed: " + (r.tail || r.kind));
+            StoandlClient.refreshExtensions();
         }
     }
 

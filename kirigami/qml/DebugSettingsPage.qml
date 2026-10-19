@@ -43,6 +43,8 @@ Kirigami.ScrollablePage {
     function smokeExercise() {
         developerSections.smokeExercise();
         console.log("stoandl-smoke: debug watchTools=" + page.watchTools + " recoveryTools=" + page.recoveryTools);
+        if (page.watchTools)
+            StoandlClient.run(page, ["ping"], function (r) { console.log("stoandl-smoke: ping " + r.kind + " " + r.tail); });
         if (page.recoveryTools) {
             // Two watch tasks at once (one per kind); Main.qml reports each when it ends.
             console.log("stoandl-smoke: logs start " + StoandlClient.gatherLogs().kind
@@ -201,6 +203,16 @@ Kirigami.ScrollablePage {
         FormCard.FormCard {
             visible: StoandlClient.daemonUp
 
+            FormCard.FormButtonDelegate {
+                text: "Ping the watch"
+                description: "A round trip through the whole protocol, not just the Bluetooth link"
+                icon.name: "network-connect-symbolic"
+                enabled: page.watchTools
+                onClicked: StoandlClient.run(page, ["ping"], function (r) {
+                    page.toast(r.ok ? (r.tail || "The watch answered") : "Ping: " + (r.tail || r.kind));
+                })
+            }
+            FormCard.FormDelegateSeparator {}
             FormCard.FormButtonDelegate {
                 text: "Write notification…"
                 description: "Send a test notification through the normal mute / style / filter path"

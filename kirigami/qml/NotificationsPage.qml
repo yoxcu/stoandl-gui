@@ -237,10 +237,33 @@ Kirigami.ScrollablePage {
                     page.reload();
                     win.smokeWhenIdle(function () {
                         console.log("stoandl-smoke: notif app name: " + a.name + " = " + appNameRow.value + " (" + r.kind + ")");
-                        appDialog.close();
+                        if (mock)
+                            page.smokeVibration();
+                        else
+                            appDialog.close();
                         console.log("stoandl-smoke: exercised notifications page");
                     });
                 });
+            });
+        });
+    }
+
+    // A custom vibration (mock only): saved through the editor, listed in the dialog, removed again.
+    function smokeVibration() {
+        var win = applicationWindow();
+        vibeEditor.openFor(null);
+        vibeName.text = "Smoke";
+        vibePattern.text = "200, 100, 200";
+        vibeEditor.save(vibeEditor.pattern, "saved");
+        win.smokeWhenIdle(function () {
+            var v = appDialog.vibes.find(function (x) { return x.value === "Smoke"; });
+            console.log("stoandl-smoke: custom vibration listed=" + (v !== undefined) + " pattern=" + (v ? v.pattern : "")
+                        + " custom=" + (v ? v.custom : ""));
+            vibeEditor.openFor(v);
+            vibeEditor.save("", "removed");
+            win.smokeWhenIdle(function () {
+                console.log("stoandl-smoke: custom vibration removed=" + !appDialog.vibes.some(function (x) { return x.value === "Smoke"; }));
+                appDialog.close();
             });
         });
     }
@@ -578,6 +601,11 @@ Kirigami.ScrollablePage {
         function openFor(row) {
             appDialog.appName = row.name;
             appDialog.open();
+            appDialog.loadChoices();
+        }
+
+        // StoandlClient caches them; a custom vibration saved or removed drops that cache.
+        function loadChoices() {
             StoandlClient.fetch(appDialog, ["notifStyleChoices"], function (choices) {
                 appDialog.vibes = [{ text: "Default", value: "default" }].concat(choices.vibes || []);
                 appDialog.iconOptions = [{ text: "Default", value: "default" }].concat(choices.icons || []);
@@ -683,6 +711,16 @@ Kirigami.ScrollablePage {
                             implicitHeight: Kirigami.Units.iconSizes.smallMedium
                         }
                         QQC2.Label { text: vibeRow.modelData.text; Layout.fillWidth: true; elide: Text.ElideRight }
+                        // A custom vibration can be changed or removed (built-ins can't).
+                        QQC2.ToolButton {
+                            visible: vibeRow.modelData.custom === true
+                            icon.name: "document-edit-symbolic"
+                            display: QQC2.AbstractButton.IconOnly
+                            text: "Edit " + vibeRow.modelData.text
+                            QQC2.ToolTip.text: "Edit vibration"
+                            QQC2.ToolTip.visible: hovered
+                            onClicked: vibeEditor.openFor(vibeRow.modelData)
+                        }
                         // Buzzes the connected watch without picking the row.
                         QQC2.ToolButton {
                             text: "Test"
@@ -701,6 +739,14 @@ Kirigami.ScrollablePage {
                         }
                     }
                 }
+            }
+
+            FormCard.FormButtonDelegate {
+                Layout.fillWidth: true
+                text: "New vibration…"
+                description: "Your own pattern, for any app and for calendar reminders"
+                icon.name: "list-add-symbolic"
+                onClicked: vibeEditor.openFor(null)
             }
 
             Kirigami.Separator { Layout.fillWidth: true }
@@ -783,6 +829,88 @@ Kirigami.ScrollablePage {
                 accent: appDialog.colorOptions[appDialog.colorIndex].swatch
             }
         }
+    }
+
+    // ============ CUSTOM VIBRATION (NotifSetVibePattern) ============
+    // A name and on/off milliseconds; Test buzzes the watch with the pattern as typed. Saving adds (or, for an
+    // existing one, replaces) it; Remove clears it (an empty pattern).
+    Kirigami.PromptDialog {
+        id: vibeEditor
+        title: editing ? "Edit vibration" : "New vibration"
+        standardButtons: QQC2.Dialog.NoButton
+        preferredWidth: Math.min(Kirigami.Units.gridUnit * 22, applicationWindow().width - Kirigami.Units.gridUnit * 2)
+
+        property bool editing: false
+        readonly property string pattern: vibePattern.text.replace(/\s/g, "")
+
+        function openFor(vibe) {
+            vibeEditor.editing = vibe !== null;
+            vibeName.text = vibe ? vibe.value : "";
+            vibePattern.text = vibe ? (vibe.pattern || "") : "";
+            vibeEditor.open();
+        }
+
+        function save(pattern, what) {
+            var r = StoandlClient.notifSetVibePattern(vibeName.text.trim(), pattern);
+            page.toast(r.ok ? what : "Vibration: " + (r.tail || r.kind));
+            if (r.ok) {
+                vibeEditor.close();
+                appDialog.loadChoices();
+            }
+        }
+
+        ColumnLayout {
+            spacing: Kirigami.Units.largeSpacing
+            QQC2.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                text: "Milliseconds on, off, on, … separated by commas (at most 64 parts and 10 seconds), e.g. 200,100,200."
+            }
+            QQC2.TextField {
+                id: vibeName
+                Layout.fillWidth: true
+                enabled: !vibeEditor.editing
+                placeholderText: "Name"
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                QQC2.TextField {
+                    id: vibePattern
+                    Layout.fillWidth: true
+                    placeholderText: "200,100,200"
+                    inputMethodHints: Qt.ImhPreferNumbers
+                    font.family: "monospace"
+                }
+                QQC2.Button {
+                    text: "Test"
+                    enabled: vibeEditor.pattern !== ""
+                    onClicked: {
+                        var r = StoandlClient.notifVibeTest(vibeEditor.pattern);
+                        page.toast(r.ok ? r.tail : "Test: " + (r.tail || r.kind));
+                    }
+                }
+            }
+        }
+
+        customFooterActions: [
+            Kirigami.Action {
+                text: "Save"
+                icon.name: "document-save-symbolic"
+                enabled: vibeName.text.trim() !== "" && vibeEditor.pattern !== ""
+                onTriggered: vibeEditor.save(vibeEditor.pattern, "Saved vibration " + vibeName.text.trim())
+            },
+            Kirigami.Action {
+                text: "Remove"
+                icon.name: "edit-delete-symbolic"
+                visible: vibeEditor.editing
+                onTriggered: vibeEditor.save("", "Removed vibration " + vibeName.text.trim())
+            },
+            Kirigami.Action {
+                text: "Cancel"
+                icon.name: "dialog-cancel-symbolic"
+                onTriggered: vibeEditor.close()
+            }
+        ]
     }
 
     // ============ ADD FILTER (prompt dialog) ============

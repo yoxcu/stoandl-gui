@@ -616,7 +616,9 @@ namespace {
 QVariant extRows(const QVariantList &records)
 {
     // Record (HOOK #7): name \t installed|missing \t enabled|disabled \t
-    //                   running|stopped \t config(none|schema) \t description \t author \t version
+    //                   running|stopped \t config(none|schema) \t description \t author \t version \t lastStderr
+    // (lastStderr: the child's last non-blank stderr line, kept across its restarts; appended, so empty from
+    // an older daemon)
     // (StoandlClient::withExtState() adds `runtimeState`.)
     QVariantList rows;
     for (const QVariant &v : records) {
@@ -632,6 +634,7 @@ QVariant extRows(const QVariantList &records)
         m[QStringLiteral("description")] = f.value(5);
         m[QStringLiteral("author")]      = f.value(6);
         m[QStringLiteral("version")]     = f.value(7);
+        m[QStringLiteral("lastStderr")]  = f.value(8);
         rows.append(m);
     }
     return rows;
@@ -2001,6 +2004,17 @@ QVariantMap StoandlClient::notifStyleChoices()
 {
     return read(QStringLiteral("notifStyleChoices")).toMap();
 }
+QVariantMap StoandlClient::notifSetVibePattern(const QString &name, const QString &pattern)
+{
+    const Status s = callStatus(QStringLiteral("NotifSetVibePattern"), {name, pattern});
+    // The vibrations NotifStyleChoices offers, and calendar.reminder_vibe's choices, list the custom ones.
+    if (s.ok()) {
+        dropCache(QStringLiteral("notifStyleChoices"));
+        dropCache(QStringLiteral("configSchema"));
+    }
+    return statusMap(s);
+}
+
 QVariantMap StoandlClient::notifVibeTest(const QString &spec)
 {
     return statusMap(callStatus(QStringLiteral("NotifVibeTest"), {spec}));
@@ -2778,6 +2792,8 @@ const ReadSpec *readSpec(const QString &name)
         { QStringLiteral("searchWeatherPlace"), { "SearchWeatherPlace", nullptr, "s", nullptr, placesMap,     SLOW_CALL_TIMEOUT_MS } },
         { QStringLiteral("updateFirmware"),   { "UpdateFirmware",    nullptr,  "",   nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
         { QStringLiteral("launchApp"),        { "LaunchApp",         nullptr,  "s",  nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
+        { QStringLiteral("ping"),             { "Ping",              nullptr,  "",   nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
+        { QStringLiteral("transcribe"),       { "Transcribe",        nullptr,  "s",  nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
     };
     const auto it = READS.constFind(name);
     return it == READS.constEnd() ? nullptr : &it.value();

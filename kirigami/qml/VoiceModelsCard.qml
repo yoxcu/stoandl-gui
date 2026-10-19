@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as QQC2
+import QtQuick.Dialogs as Dialogs
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
@@ -67,8 +68,29 @@ ColumnLayout {
         return r;
     }
 
+    // Speech to text, tried on a recording you pick (Transcribe: a 16-bit WAV or Ogg/Opus, through
+    // voice.backend; with the HTTP service the audio leaves this machine, as it would for a dictation).
+    property string heard: ""
+    property bool transcribing: false
+    function transcribe(fileUrl) {
+        var path = decodeURIComponent(String(fileUrl).replace(/^file:\/\//, ""));
+        card.transcribing = true;
+        card.heard = "";
+        StoandlClient.run(card, ["transcribe", path], function (r) {
+            card.transcribing = false;
+            if (r.ok)
+                card.heard = "Heard: “" + (r.fields[1] || "") + "” (" + (Number(r.fields[0]) / 1000).toFixed(1) + " s)";
+            else
+                card.toast(r.kind === "off" ? "Speech to text is off: choose an engine above" : "Can't transcribe: " + (r.tail || r.kind));
+        });
+    }
+
     // Smoke hook (SchemaSections runs it): the test sentence, as the button sends it, then stopped.
     function smokeExercise() {
+        // A file that isn't there: the mock (speech to text off) answers off:, a real daemon off: or error:.
+        StoandlClient.run(card, ["transcribe", "/nonexistent/smoke.wav"], function (t) {
+            console.log("stoandl-smoke: transcribe " + t.kind);
+        });
         var r = card.testVoice();
         var st = StoandlClient.stopSpeaking();
         console.log("stoandl-smoke: tts status=" + card.status.kind + " voices=" + card.models.length
@@ -142,7 +164,16 @@ ColumnLayout {
                        : (card.status.tail || "Not available")
             icon.name: card.tts ? (card.status.kind === "ready" ? "audio-speakers-symbolic" : "audio-volume-muted-symbolic")
                      : card.status.kind === "ready" ? "audio-input-microphone-symbolic" : "microphone-sensitivity-muted-symbolic"
-            trailing: card.tts ? testButtons : null
+            trailing: card.tts ? testButtons : sttTest
+
+            QQC2.Button {
+                id: sttTest
+                visible: !card.tts
+                text: card.transcribing ? "Listening…" : "Try a recording…"
+                icon.name: "audio-input-microphone-symbolic"
+                enabled: card.status.kind === "ready" && !card.transcribing
+                onClicked: recordingDialog.open()
+            }
 
             RowLayout {
                 id: testButtons
@@ -163,6 +194,11 @@ ColumnLayout {
                     onClicked: StoandlClient.stopSpeaking()
                 }
             }
+        }
+
+        FormCard.FormTextDelegate {
+            visible: !card.tts && card.heard !== ""
+            text: card.heard
         }
 
         Repeater {
@@ -255,5 +291,12 @@ ColumnLayout {
               + "the watch speaker through the assistant app."
             : "Models are saved under ~/.local/share/stoandl/stt. A download is the only time stoandl contacts "
               + "huggingface.co for voice; recognition runs on this device."
+    }
+
+    Dialogs.FileDialog {
+        id: recordingDialog
+        title: "Try speech to text on a recording"
+        nameFilters: ["Recordings (*.wav *.ogg *.opus)", "All files (*)"]
+        onAccepted: card.transcribe(selectedFile)
     }
 }

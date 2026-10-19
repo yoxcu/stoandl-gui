@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as QQC2
+import QtQuick.Dialogs as Dialogs
 import org.kde.kirigami as Kirigami
 import org.stoandl.gui
 
@@ -290,6 +291,11 @@ Kirigami.Dialog {
                 text: "Back"; iconName: "go-previous-symbolic"
                 onClicked: dialog.view = "main"
             }
+            ActionRow {
+                text: "Install from file…"; iconName: "document-open-symbolic"
+                enabled: !dialog.langBusy
+                onClicked: pblDialog.open()
+            }
             Kirigami.Separator { Layout.fillWidth: true }
 
             QQC2.Label {
@@ -354,6 +360,19 @@ Kirigami.Dialog {
                     }
                 }
             }
+        }
+    }
+
+    // A .pbl you already have (one the catalog doesn't list); progress comes as for a catalog pack.
+    Dialogs.FileDialog {
+        id: pblDialog
+        title: "Install a language pack (.pbl)"
+        nameFilters: ["Pebble language packs (*.pbl)", "All files (*)"]
+        onAccepted: {
+            var r = StoandlClient.sideloadLanguage(selectedFile);   // absolute daemon-side path (co-located)
+            if (r.ok) { dialog.langBusy = true; dialog.langPercent = -1; }
+            dialog.toast(r.ok ? "Loading " + decodeURIComponent(("" + selectedFile).split("/").pop()) + " onto the watch…"
+                              : "Language: " + (r.tail || r.kind));
         }
     }
 

@@ -192,7 +192,7 @@ public:
     Q_INVOKABLE void         refreshApps();              // async re-fetch → appsChanged (on show + after any mutation)
 
     // --- typed wrappers: Extensions (Apps screen, 3rd segment) -------------
-    Q_INVOKABLE QVariantList extList();                  // -> [{name,installed,enabled,running,config,description}]
+    Q_INVOKABLE QVariantList extList();                  // -> [{name,installed,enabled,running,config,description,author,version,lastStderr}]
     Q_INVOKABLE QVariantMap  extEnable(const QString &name);   // ExtEnable(s)
     Q_INVOKABLE QVariantMap  extDisable(const QString &name);  // ExtDisable(s)
     Q_INVOKABLE QVariantMap  extRestart(const QString &name);  // ExtRestart(s)
@@ -296,6 +296,8 @@ public:
     // -> {vibes:[{text,value,pattern,custom}], icons:[{text,value}]}; cached for the daemon running now.
     Q_INVOKABLE QVariantMap  notifStyleChoices();
     Q_INVOKABLE QVariantMap  notifVibeTest(const QString &spec);                        // NotifVibeTest(s)
+    // NotifSetVibePattern(s,s): add or replace a custom vibration (on/off ms CSV); an empty pattern removes it.
+    Q_INVOKABLE QVariantMap  notifSetVibePattern(const QString &name, const QString &pattern);
     Q_INVOKABLE QVariantMap  notifSetAppName(const QString &name, const QString &placement); // NotifSetAppName(s,s)
     Q_INVOKABLE QVariantMap  notifSetImages(const QString &name, const QString &mode); // NotifSetImages(s,s)
     // HOOK (notifications) — regex filters.

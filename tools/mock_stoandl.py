@@ -8,7 +8,7 @@ polls — so the GUI's "re-fetch after every mutation" path and the poll loops b
 light up.
 
 Covers every method either GUI calls: the daemon's whole de.yoxcu.stoandl.Control
-except the CLI-only FakeCallRing/FakeCallEnd/ForceCoreDump/HeartRate/Ping/RunningApp,
+except the CLI-only FakeCallRing/FakeCallEnd/ForceCoreDump/HeartRate/RunningApp,
 plus the ExtCrash test hook. "HOOK #n" marks the methods the GUI work added to the
 daemon. Returns follow the daemon's docs/dbus-interface.md, the one contract doc:
 status strings are "kind:tail" with tab-separated fields; list methods return one
@@ -1192,6 +1192,7 @@ class MockStoandl(dbus.service.Object):
         if not (e["enabled"] and e["installed"]):
             return f"error:{e['name']} is not running"
         name = e["name"]
+        e["stderr"] = "panic: mock crash (the homeserver didn't answer)"   # ExtList's lastStderr
         self.ExtensionStateChanged(name, "exited")
 
         def _quarantine():
@@ -1616,8 +1617,56 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def NotifStyleChoices(self):
+        custom = self.__dict__.setdefault("custom_vibes", {})
         return ([rec("vibe", name, name, ms, "builtin") for name, ms in self.MOCK_VIBES]
+                + [rec("vibe", name, name, ms, "custom") for name, ms in custom.items()]
                 + [rec("icon", value, label) for value, label in self.MOCK_ICONS])
+
+    @staticmethod
+    def _vibe_pattern_err(pattern):
+        # The daemon's limits: on/off ms, at most 64 segments and 10 s in total.
+        try:
+            ms = [int(x) for x in pattern.split(",")]
+        except ValueError:
+            return "expected on/off milliseconds separated by commas, e.g. 200,100,200"
+        if not ms or any(x <= 0 for x in ms):
+            return "every segment must be a positive number of milliseconds"
+        if len(ms) > 64 or sum(ms) > 10000:
+            return "at most 64 segments and 10 seconds in total"
+        return None
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def NotifSetVibePattern(self, name, pattern):
+        # Add, replace or (empty pattern) remove a custom vibration; built-ins, CSVs and reset words are refused.
+        n, p = name.strip(), pattern.strip().replace(" ", "")
+        custom = self.__dict__.setdefault("custom_vibes", {})
+        if not n or n.lower() in ("default", "none", "clear") or any(n.lower() == b.lower() for b, _ in self.MOCK_VIBES) \
+                or re.fullmatch(r"[\d,\s]+", n):
+            return f"error:'{name}' can't name a custom vibration (a built-in, a pattern or a reset word)"
+        if not p:
+            if n not in custom:
+                return f"notfound:no custom vibration '{n}'"
+            del custom[n]
+            return f"ok:Removed vibration {n}"
+        err = self._vibe_pattern_err(p)
+        if err:
+            return f"error:{err}"
+        verb = "Replaced" if n in custom else "Added"
+        custom[n] = p
+        return f"ok:{verb} vibration {n} ({p} ms)"
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def NotifVibeTest(self, spec):
+        # Buzz the connected watch with a name, a CSV or `default`, outside the notification pipeline.
+        if self._connected_name() is None:
+            return "notready:No watch connected"
+        s = spec.strip()
+        names = {b.lower(): b for b, _ in self.MOCK_VIBES}
+        names.update({c.lower(): c for c in self.__dict__.get("custom_vibes", {})})
+        if s.lower() == "default" or s.lower() in names:
+            return f"ok:Buzzed {names.get(s.lower(), 'the watch default')}"
+        err = self._vibe_pattern_err(s)
+        return f"error:Unknown vibration '{spec}'" if err else f"ok:Buzzed {s} ms"
 
     @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
     def NotifSetAppName(self, query, placement):
@@ -2121,6 +2170,14 @@ class MockStoandl(dbus.service.Object):
             return f"ok:{out}"
         return self._task_start("coredump", "Reading the watch's core dump", work)
 
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def Ping(self):
+        # A PING round trip over the full protocol path: ok:<msg with latency> | notready: | error:.
+        if self._connected_name() is None:
+            return "notready:No watch connected"
+        time.sleep(0.2)
+        return "ok:Pong from the watch in 184 ms"
+
     # --- Reset -------------------------------------------------------------
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def ResetIntoRecovery(self):
@@ -2243,9 +2300,12 @@ class MockStoandl(dbus.service.Object):
         ("whisper-small", "Whisper small", "whisper-cli", 264, "false", "99 languages, set voice.language; slower and less accurate than Parakeet", "stt"),
         ("whisper-base", "Whisper base", "whisper-cli", 82, "false", "fast and small, weak for languages other than English", "stt"),
         ("whisper-turbo", "Whisper large-v3-turbo", "whisper-cli", 874, "false", "most accurate, for fast desktops only", "stt"),
-        ("piper-de-thorsten-low", "Thorsten (German, low)", "piper", 63, "true", "German; clear on the watch speaker and fast", "tts"),
-        ("piper-de-eva_k-x_low", "Eva K (German, x-low)", "piper", 21, "false", "German; smallest and fastest, a little rougher", "tts"),
-        ("piper-en-ryan-low", "Ryan (English, low)", "piper", 63, "false", "English; clear on the watch speaker and fast", "tts"),
+        # The daemon's TTS catalog (voice/VoiceModels.kt), in its order.
+        ("piper-de-thorsten-low", "Thorsten (German)", "piper", 63, "true", "German, male; low quality, fast: enough for the watch speaker. Thorsten-Voice dataset, CC0", "tts"),
+        ("piper-en-kathleen-low", "Kathleen (English)", "piper", 63, "true", "US English, female; low quality, fast: enough for the watch speaker. Kathleen dataset, CC0", "tts"),
+        ("piper-de-eva_k-x_low", "Eva K (German, smallest)", "piper", 21, "false", "German, female; the smallest and fastest, rougher. M-AILABS dataset (BSD-style licence)", "tts"),
+        ("piper-de-thorsten-medium", "Thorsten (German, medium)", "piper", 63, "false", "German, male; 22 kHz, clearer on this device's speakers, slower to make (the watch waits longer). Thorsten-Voice dataset, CC0", "tts"),
+        ("piper-en-ljspeech-medium", "LJSpeech (English, medium)", "piper", 64, "false", "US English, female; 22 kHz, clearer on this device's speakers, slower to make (the watch waits longer). LJ Speech dataset, public domain", "tts"),
     ]
     # The config key a downloaded model of each kind becomes, its backend key, and the dropdown's text
     # while nothing is installed (ConfigSchema.kt's runtime combos).
@@ -2266,10 +2326,15 @@ class MockStoandl(dbus.service.Object):
             m = self._voice_model(d[0])
             self._voice_installed_changed(m[6])
             key, backend, _ = self.VOICE_KIND_KEYS[m[6]]
-            if self.config.get(backend) in ("Off", "Local model"):
+            # Like PebbleIntegration's VoiceControl callback: a voice always becomes tts.local_voice (and turns
+            # tts.backend to Local model only from Off); a speech model only takes over while the backend is
+            # Off or Local model. GetConfig spells a combo by its label, so the config holds the name.
+            takes_over = m[6] == "tts" or self.config.get(backend) in ("Off", "Local model")
+            if takes_over:
                 self.config[key] = m[1]
-                self.config[backend] = "Local model"
                 self.ConfigChanged(key)
+            if takes_over and self.config.get(backend) == "Off":
+                self.config[backend] = "Local model"
                 self.ConfigChanged(backend)
 
     def _voice_installed_changed(self, kind):
@@ -2336,6 +2401,18 @@ class MockStoandl(dbus.service.Object):
         self._voice_installed_changed(self._voice_model(mid)[6])
         return f"ok:removed {mid}"
 
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def Transcribe(self, path):
+        # The daemon transcribes the WAV/Ogg at the absolute path with voice.backend (up to a minute):
+        # ok:<ms>\t<text>. The mock "hears" a fixed sentence after a second, unless speech to text is off.
+        st = self.VoiceStatus()
+        if not st.startswith("ready:"):
+            return st
+        if not path.startswith("/") or not os.path.exists(path):
+            return f"error:No such file: {path}"
+        time.sleep(1)
+        return "ok:" + rec(1000, "this is a test of speech to text")
+
     # --- Text to speech (TtsService): status, and host playback of a test sentence ----------------
     def _tts_status(self):
         b = self.config.get("tts.backend", "Off")
@@ -2367,7 +2444,7 @@ class MockStoandl(dbus.service.Object):
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def StopSpeaking(self):
         if getattr(self, "speaking_until", 0) <= time.time():
-            return "none:nothing is playing"
+            return "none:nothing is being read aloud"
         self.speaking_until = 0
         return "ok:stopped"
 
