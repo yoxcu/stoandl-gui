@@ -815,12 +815,10 @@ class MockStoandl(dbus.service.Object):
     # The daemon's walk: bare `pending:` while searching (or a pause note, see PAIR_PAUSE_NOTES) ->
     # `pending:Found <watch> — pairing...` -> `confirm:<code>` until ConfirmPairing answers ->
     # `pending:Completing pairing…` -> `ok:Paired and connected`. A decline ends the window with
-    # `error:Pairing declined`. Pair() with a watch already connected opens no window at all.
+    # `error:Pairing declined`. Like the daemon, Pair() opens a window while a watch is connected too (to
+    # pair a second one), and the new watch takes the one link over.
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def Pair(self):
-        if self._connected_name() is not None:
-            self.pairing = {"phase": "result", "result": "ok:Watch already connected"}
-            return "ok:Pairing started"
         self._open_pairing("Pebble (new)", None)
         return "ok:Pairing started"
 

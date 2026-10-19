@@ -13,6 +13,7 @@ Kirigami.Dialog {
     id: dialog
 
     signal forgetRequested(string name)
+    signal repairRequested(string name)
 
     // 'main' | 'language'
     property string view: "main"
@@ -34,7 +35,7 @@ Kirigami.Dialog {
     title: view === "language" ? "Watch language"
          : (details.name ? (details.name + (details.code ? " · " + details.code : "")) : "Watch")
 
-    preferredWidth: Kirigami.Units.gridUnit * 25
+    preferredWidth: Math.min(Kirigami.Units.gridUnit * 25, applicationWindow().width - Kirigami.Units.gridUnit * 2)
     standardButtons: QQC2.Dialog.Close
     showCloseButton: true
 
@@ -259,6 +260,14 @@ Kirigami.Dialog {
                 onClicked: {
                     dialog.fwCheckRequested = true;   // the answer is toasted by onFirmwareInfoChanged
                     StoandlClient.forceFirmwareCheck();
+                }
+            }
+            ActionRow {
+                text: "Re-pair watch…"; iconName: "network-bluetooth-symbolic"
+                onClicked: {
+                    var name = dialog.details.name || "";
+                    dialog.close();
+                    dialog.repairRequested(name);
                 }
             }
             ActionRow {

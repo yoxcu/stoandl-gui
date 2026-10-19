@@ -69,10 +69,15 @@ Kirigami.ScrollablePage {
     // The Battery page starts from this page's watch list (and follows watchesChanged after that).
     function openBattery() { return applicationWindow().pushPage(batteryPageComponent, { watchRows: page.watches }); }
 
-    // The three dialogs are built on first use, not with the page (a Loader each, below).
+    // The dialogs are built on first use, not with the page (a Loader each, below).
     function detailsDialogItem() { detailsLoader.active = true; return detailsLoader.item; }
     function pairDialogItem() { pairLoader.active = true; return pairLoader.item; }
     function forgetDialogItem() { forgetLoader.active = true; return forgetLoader.item; }
+    function repairDialogItem() { repairLoader.active = true; return repairLoader.item; }
+
+    // Set when the pairing dialog restarts stoandl to turn Bluetooth Classic on: the dialog opens again once
+    // the daemon is back.
+    property bool pairAfterRestart: false
 
     function connectTo(name) {
         var r = StoandlClient.connectWatch(name);
@@ -134,6 +139,12 @@ Kirigami.ScrollablePage {
     Connections {
         target: StoandlClient
         function onPairStatus(kind, msg) { if (pairLoader.item) pairLoader.item.handleStatus(kind, msg); }
+        function onDaemonUpChanged() {
+            if (StoandlClient.daemonUp && page.pairAfterRestart) {
+                page.pairAfterRestart = false;
+                page.pairDialogItem().openForPair();
+            }
+        }
         function onFindWatchResult(ok) {
             page.toast(ok ? "Ringing watch…" : "No watch ready to ring");
         }
@@ -173,8 +184,20 @@ Kirigami.ScrollablePage {
         var bare = pd.statusMsg;
         pd.handleStatus("pending", "Discovery paused — Bluetooth is off. Turn it on to pair.");
         console.log("stoandl-smoke: pair status bare='" + bare + "' note='" + pd.statusMsg + "'");
+        pd.handleStatus("timeout", "Pairing timed out");
+        console.log("stoandl-smoke: pair timeout hint=" + pd.notFound + " retry=" + pd.canRetry);
         pd.statusKind = "";
         pd.statusMsg = "";
+        // With Bluetooth Classic off (mock only), the dialog offers to turn it on before it searches.
+        if (StoandlClient.daemonUp && StoandlClient.daemonVersion.indexOf("mock") === 0) {
+            StoandlClient.setConfig("classic.discover", "false");
+            pd.openForPair();
+            applicationWindow().smokeWhenIdle(function () {
+                console.log("stoandl-smoke: pair dialog classic off stage=" + pd.stage);
+                pd.close();
+                StoandlClient.setConfig("classic.discover", "true");
+            });
+        }
         // The details dialog (built on first use) shows the cached firmware answer; the hero card
         // that opens it is only there with a watch connected.
         if (StoandlClient.daemonUp && page.connectedWatch !== null) {
@@ -607,6 +630,17 @@ Kirigami.ScrollablePage {
                             onClicked: page.connectTo(watchRow.modelData.name)
                         }
 
+                        // A watch that won't connect any more (a bond lost on one side) needs pairing anew.
+                        QQC2.ToolButton {
+                            visible: watchRow.modelData.state === "disconnected"
+                            icon.name: "network-bluetooth-symbolic"
+                            display: QQC2.AbstractButton.IconOnly
+                            text: "Re-pair " + watchRow.modelData.name
+                            QQC2.ToolTip.text: "Re-pair watch"
+                            QQC2.ToolTip.visible: hovered
+                            onClicked: page.repairDialogItem().openFor(watchRow.modelData.name)
+                        }
+
                         QQC2.ToolButton {
                             icon.name: "edit-delete-remove-symbolic"
                             display: QQC2.AbstractButton.IconOnly
@@ -626,6 +660,7 @@ Kirigami.ScrollablePage {
         active: false
         sourceComponent: WatchDetailsDialog {
             onForgetRequested: function(name) { page.forgetDialogItem().openFor(name); }
+            onRepairRequested: function(name) { page.repairDialogItem().openFor(name); }
         }
     }
 
@@ -641,17 +676,45 @@ Kirigami.ScrollablePage {
             title: "Pair watch"
             standardButtons: QQC2.Dialog.Cancel
             showCloseButton: true
+            preferredWidth: Math.min(Kirigami.Units.gridUnit * 24, page.width - Kirigami.Units.gridUnit * 2)
 
             property string statusKind: ""
             property string statusMsg: ""
             property string code: ""
+            // "check": reading whether Bluetooth Classic is on; "classicOff": it is off, so the dialog offers
+            // to turn it on before searching; "search": a pairing window is open (or ended: statusKind).
+            property string stage: "search"
+            property string repairName: ""
+            readonly property bool ended: statusKind === "error" || statusKind === "timeout"
+            readonly property bool notFound: statusKind === "timeout"
+            readonly property bool canRetry: ended
 
-            function openForPair() {
-                title = "Pair watch";
+            function begin(heading, msg) {
+                title = heading;
                 statusKind = "";
                 code = "";
-                statusMsg = "Opening pairing window…";
+                statusMsg = msg;
+            }
+
+            // A new watch. With classic.discover off, a Pebble Time, Time Steel or Round can't be found, so
+            // ask first (turning it on restarts stoandl, which the daemon refuses while a window is open).
+            function openForPair() {
+                repairName = "";
+                begin("Pair watch", "");
+                stage = "check";
                 open();
+                StoandlClient.fetch(pairDialog, ["getConfig"], function (r) {
+                    var classic = ((r && r.values) || {})["classic.discover"];
+                    if (classic === "false")
+                        pairDialog.stage = "classicOff";
+                    else
+                        pairDialog.startPair();
+                });
+            }
+
+            function startPair() {
+                stage = "search";
+                statusMsg = "Opening pairing window…";
                 var r = StoandlClient.pair();
                 if (r.ok) {
                     StoandlClient.startPairPoll();
@@ -662,10 +725,9 @@ Kirigami.ScrollablePage {
             }
 
             function openForRepair(name) {
-                title = "Re-pair " + name;
-                statusKind = "";
-                code = "";
-                statusMsg = "Re-opening pairing window…";
+                repairName = name;
+                begin("Re-pair " + name, "Re-opening pairing window…");
+                stage = "search";
                 open();
                 var r = StoandlClient.repair(name);
                 if (r.ok) {
@@ -674,6 +736,31 @@ Kirigami.ScrollablePage {
                     statusKind = r.kind;
                     statusMsg = r.tail || ("Could not start re-pairing (" + r.kind + ")");
                 }
+            }
+
+            function retry() {
+                if (repairName !== "")
+                    openForRepair(repairName);
+                else
+                    startPair();
+            }
+
+            // classic.discover is read when stoandl starts: set it, restart, and open this dialog again once
+            // the daemon is back (WatchPage.pairAfterRestart).
+            function turnOnClassic() {
+                var r = StoandlClient.setConfig("classic.discover", "true");
+                if (!r.ok) {
+                    page.toast("Could not turn Bluetooth Classic on: " + (r.tail || r.kind));
+                    return;
+                }
+                var rr = StoandlClient.restartDaemon();
+                if (!rr.ok) {
+                    page.toast(rr.tail || rr.kind);
+                    return;
+                }
+                page.pairAfterRestart = true;
+                page.toast("Restarting stoandl with Bluetooth Classic on…");
+                close();
             }
 
             function handleStatus(kind, msg) {
@@ -691,7 +778,7 @@ Kirigami.ScrollablePage {
                           : kind === "pending" ? "Searching for a watch in pairing mode…"
                           : kind;
                 if (kind === "ok") {
-                    // "Paired and connected", "Paired", or "Watch already connected" (no window opened).
+                    // "Paired and connected" (the new watch took the link over), or "Paired".
                     page.toast(msg !== "" ? msg : "Watch paired");
                     StoandlClient.refreshWatches();
                     close();
@@ -703,12 +790,43 @@ Kirigami.ScrollablePage {
             ColumnLayout {
                 spacing: Kirigami.Units.largeSpacing
 
+                // How to put a watch in pairing mode, the same on every generation. (Not Back+Up: that
+                // reboots the watch.)
                 QQC2.Label {
                     Layout.fillWidth: true
                     wrapMode: Text.WordWrap
                     text: pairDialog.statusKind === "confirm"
                         ? "Verify this code matches the one shown on the watch, then Accept."
-                        : "Put the watch in pairing mode."
+                        : "On the watch, open Settings → Bluetooth and keep that screen open: the watch can be "
+                          + "found only while it shows."
+                }
+
+                // Bluetooth Classic is off: offer it before searching (only BLE watches would be found).
+                ColumnLayout {
+                    visible: pairDialog.stage === "classicOff"
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        wrapMode: Text.WordWrap
+                        text: "Pebble Time, Time Steel or Round? They pair over Bluetooth Classic, which is off. "
+                              + "Turning it on restarts stoandl, then this dialog opens again."
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        QQC2.Button {
+                            text: "Turn on Bluetooth Classic"
+                            icon.name: "network-bluetooth-symbolic"
+                            onClicked: pairDialog.turnOnClassic()
+                        }
+                        Item { Layout.fillWidth: true }
+                        QQC2.Button {
+                            text: "Search now"
+                            icon.name: "search-symbolic"
+                            highlighted: true
+                            onClicked: pairDialog.startPair()
+                        }
+                    }
                 }
 
                 QQC2.Label {
@@ -721,15 +839,16 @@ Kirigami.ScrollablePage {
                 }
 
                 RowLayout {
+                    visible: pairDialog.stage !== "classicOff"
                     spacing: Kirigami.Units.largeSpacing
                     QQC2.BusyIndicator {
-                        visible: pairDialog.statusKind === "" || pairDialog.statusKind === "pending"
+                        visible: pairDialog.stage === "check" || pairDialog.statusKind === "" || pairDialog.statusKind === "pending"
                         running: visible
                         implicitWidth: Kirigami.Units.iconSizes.medium
                         implicitHeight: Kirigami.Units.iconSizes.medium
                     }
                     Kirigami.Icon {
-                        visible: pairDialog.statusKind === "error" || pairDialog.statusKind === "timeout"
+                        visible: pairDialog.ended
                         source: "dialog-error-symbolic"
                         implicitWidth: Kirigami.Units.iconSizes.medium
                         implicitHeight: Kirigami.Units.iconSizes.medium
@@ -739,6 +858,22 @@ Kirigami.ScrollablePage {
                         wrapMode: Text.WordWrap
                         text: pairDialog.statusMsg
                     }
+                }
+
+                // The window ended without a watch: what usually helps, and Retry.
+                QQC2.Label {
+                    visible: pairDialog.notFound
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    text: "Not found? A Pebble Time, Time Steel or Round needs Bluetooth Classic on (Settings → "
+                          + "Connection & power). Move the watch closer and keep its Bluetooth screen open."
+                }
+                QQC2.Button {
+                    visible: pairDialog.canRetry
+                    Layout.alignment: Qt.AlignRight
+                    text: "Retry"
+                    icon.name: "view-refresh-symbolic"
+                    onClicked: pairDialog.retry()
                 }
 
                 // Numeric-comparison Accept/Decline (only while a code is awaiting a decision).
@@ -767,6 +902,44 @@ Kirigami.ScrollablePage {
                     }
                 }
             }
+        }
+    }
+
+    // --- re-pair confirmation: Repair() removes the bond before it searches ----
+    Loader {
+        id: repairLoader
+        active: false
+        sourceComponent: Kirigami.PromptDialog {
+            id: repairDialog
+            title: "Re-pair watch"
+            standardButtons: QQC2.Dialog.NoButton
+            preferredWidth: Math.min(Kirigami.Units.gridUnit * 24, page.width - Kirigami.Units.gridUnit * 2)
+
+            property string watchName: ""
+
+            function openFor(name) {
+                watchName = name;
+                subtitle = "Re-pair “" + name + "”? stoandl removes its pairing with the watch and searches for it "
+                         + "again. On the watch, open Settings → Bluetooth, remove this device if it is listed, and "
+                         + "keep that screen open.";
+                open();
+            }
+
+            customFooterActions: [
+                Kirigami.Action {
+                    text: "Re-pair"
+                    icon.name: "network-bluetooth-symbolic"
+                    onTriggered: {
+                        repairDialog.close();
+                        page.pairDialogItem().openForRepair(repairDialog.watchName);
+                    }
+                },
+                Kirigami.Action {
+                    text: "Cancel"
+                    icon.name: "dialog-cancel-symbolic"
+                    onTriggered: repairDialog.close()
+                }
+            ]
         }
     }
 
