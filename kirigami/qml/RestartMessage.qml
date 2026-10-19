@@ -5,8 +5,9 @@ import org.stoandl.gui
 
 // "Restart stoandl to apply: …" with Restart now, while a key set here waits for the daemon to start again
 // (StoandlClient.restartPending). Restart() asks the daemon's service manager, so it works from the Flatpak
-// too; the daemon refuses while a pairing window or a watch update is open, or isn't a service. The list
-// clears when the daemon goes or comes, which is the restart applying it.
+// too; the daemon refuses while a pairing window or a watch update is open (the button waits for those this
+// GUI follows, StoandlClient.busyOp), or isn't a service. The list clears when the daemon goes or comes,
+// which is the restart applying it.
 Kirigami.InlineMessage {
     id: msg
 
@@ -23,10 +24,14 @@ Kirigami.InlineMessage {
     Layout.rightMargin: Kirigami.Units.largeSpacing
     type: Kirigami.MessageType.Information
     text: "Restart stoandl to apply: " + msg.labels.join(", ")
+          + (StoandlClient.busyOp === "pairing" ? " (after the pairing window)"
+             : StoandlClient.busyOp === "firmware" ? " (after the firmware update)"
+             : StoandlClient.busyOp === "language" ? " (after the language install)" : "")
     actions: [
         Kirigami.Action {
             icon.name: "view-refresh-symbolic"
             text: "Restart now"
+            enabled: StoandlClient.busyOp === ""
             onTriggered: {
                 var r = StoandlClient.restartDaemon();
                 applicationWindow().showPassiveNotification(r.ok ? "Restarting stoandl…" : (r.tail || r.kind), r.ok ? "short" : "long");

@@ -81,6 +81,9 @@ class StoandlClient : public QObject
     // that way. Read when the daemon comes up, after notifSetMuteAll() and on refreshMuteAll(); drops to 0
     // by itself when the time comes (the daemon sends no signal for it).
     Q_PROPERTY(qint64 mutedUntil READ mutedUntil NOTIFY mutedUntilChanged)
+    // A long operation this GUI follows that the daemon won't restart under: "pairing" (a Pair/Repair
+    // window), "firmware" (a flash) or "language" (a language pack install); "" when none runs.
+    Q_PROPERTY(QString busyOp READ busyOp NOTIFY busyOpChanged)
     // The running daemon's Version(), read when it comes up; "" while it is down or before the answer.
     Q_PROPERTY(QString daemonVersion READ daemonVersion NOTIFY daemonVersionChanged)
     // Typed reads whose last D-Bus call failed: read name ("notifList", …) → why, in the words errorText()
@@ -110,6 +113,7 @@ public:
     QStringList restartPending() const { return m_restartPending; }
     QString daemonVersion() const { return m_daemonVersion; }
     qint64 mutedUntil() const { return m_mutedUntil; }
+    QString busyOp() const;
     QVariantMap readErrors() const { return m_readErrors; }
     static QString guiVersion();
 
@@ -395,6 +399,7 @@ Q_SIGNALS:
     void restartPendingChanged();
     void daemonVersionChanged();
     void mutedUntilChanged();
+    void busyOpChanged();
     void readErrorsChanged();
     void tasksChanged();
     // A watch task this GUI started ended: its TaskStatus result as a status map, plus {path, width, height}
@@ -484,6 +489,8 @@ private:
     void         probeService();
     void         setInstanceUp(bool up);
     void         setMutedUntil(qint64 epochSeconds);
+    // Emit busyOpChanged if a pair, firmware or language poll started or stopped.
+    void         opPollsChanged();
 
     QDBusConnection m_bus;
     bool            m_daemonUp = false;
@@ -559,6 +566,7 @@ private:
     QString     m_daemonVersion;
     qint64      m_mutedUntil = 0;
     QTimer     *m_muteEndTimer = nullptr;   // drops mutedUntil to 0 when it passes
+    QString     m_lastBusyOp;
     QVariantMap m_readErrors;
     // The cached reads' answers (readSpec's `cached`: the config schema, the notification styles) for the
     // daemon running now; m_cacheGeneration drops an answer to a call that started before a drop.

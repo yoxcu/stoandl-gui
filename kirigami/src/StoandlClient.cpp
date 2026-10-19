@@ -984,9 +984,10 @@ void StoandlClient::startFirmwarePoll()
     m_fwPrfVersion.clear();
     if (!m_fwTimer->isActive())
         m_fwTimer->start();
+    opPollsChanged();
 }
 
-void StoandlClient::stopFirmwarePoll() { m_fwTimer->stop(); }
+void StoandlClient::stopFirmwarePoll() { m_fwTimer->stop(); opPollsChanged(); }
 
 void StoandlClient::endFirmwareOp()
 {
@@ -1027,6 +1028,7 @@ void StoandlClient::emitFirmwareStatus(const QString &phase, int percent, const 
             m_fwElapsedMs = 0;
             if (!m_fwTimer->isActive())
                 m_fwTimer->start();
+            opPollsChanged();
         }
         Q_EMIT firmwareStatus(QStringLiteral("prf"), -1, m_fwPrfVersion);
         return;
@@ -1048,6 +1050,7 @@ void StoandlClient::emitFirmwareStatus(const QString &phase, int percent, const 
         if (!m_fwTimer->isActive()) {
             m_fwElapsedMs = 0;
             m_fwTimer->start();
+            opPollsChanged();
         }
     }
 
@@ -1132,9 +1135,10 @@ void StoandlClient::startLanguagePoll()
     m_langFirstPoll = true;
     if (!m_langTimer->isActive())
         m_langTimer->start();
+    opPollsChanged();
 }
 
-void StoandlClient::stopLanguagePoll() { m_langTimer->stop(); }
+void StoandlClient::stopLanguagePoll() { m_langTimer->stop(); opPollsChanged(); }
 
 void StoandlClient::languagePollOnce()
 {
@@ -2250,11 +2254,30 @@ void StoandlClient::startPairPoll()
     m_pairElapsedMs = 0;
     if (!m_pairTimer->isActive())
         m_pairTimer->start();
+    opPollsChanged();
 }
 
 void StoandlClient::stopPairPoll()
 {
     m_pairTimer->stop();
+    opPollsChanged();
+}
+
+QString StoandlClient::busyOp() const
+{
+    return m_pairTimer->isActive() ? QStringLiteral("pairing")
+         : m_fwTimer->isActive() ? QStringLiteral("firmware")
+         : m_langTimer->isActive() ? QStringLiteral("language")
+         : QString();
+}
+
+void StoandlClient::opPollsChanged()
+{
+    const QString op = busyOp();
+    if (op != m_lastBusyOp) {
+        m_lastBusyOp = op;
+        Q_EMIT busyOpChanged();
+    }
 }
 
 void StoandlClient::pollPairOnce()
