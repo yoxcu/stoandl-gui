@@ -20,7 +20,7 @@ class QTimer;
 // (`StoandlClient` in module org.stoandl.gui). Three jobs: call, parse, poll.
 //
 // Contract: de.yoxcu.stoandl.Control on the *session* bus, path /de/yoxcu/stoandl.
-// The interface exposes seven reactive signals (WatchesChanged, FirmwareProgress, …) that
+// The interface exposes reactive signals (WatchesChanged, FirmwareProgress, ConfigChanged, …) that
 // augment polling; polling stays as the fallback (the daemon is not D-Bus-activated, so a
 // late/reconnecting client can miss a signal). The QML never polls and never parses — all
 // of that lives here. See the daemon's docs/dbus-interface.md.
@@ -56,6 +56,15 @@ class StoandlClient : public QObject
     // Asynchronous reads in flight (fetch(), the refresh*() reloads, app icons; not the firmware check).
     // The smoke harness waits for 0 before it exercises a page whose loads are asynchronous.
     Q_PROPERTY(int callsInFlight READ callsInFlight NOTIFY callsInFlightChanged)
+    // notification.forward, the master switch for forwarding (read with GetConfig when the daemon comes
+    // up and on every ConfigChanged for it). True until known, so no "forwarding is off" banner flashes
+    // before the first answer; also true with a daemon that predates the key.
+    Q_PROPERTY(bool forwarding READ forwarding NOTIFY forwardingChanged)
+    // This GUI's version (git describe at build time, else the CMake project version), for About.
+    Q_PROPERTY(QString guiVersion READ guiVersion CONSTANT)
+    // stoandl.conf keys set here (setConfig) that the daemon only applies when it starts again, in the
+    // order they were set. Cleared when the daemon goes or comes (its restart applied them).
+    Q_PROPERTY(QStringList restartPending READ restartPending NOTIFY restartPendingChanged)
 
 public:
     explicit StoandlClient(QObject *parent = nullptr);
@@ -72,6 +81,9 @@ public:
     QVariantMap firmwareInfo() const { return m_fwInfo; }
     bool firmwareChecking() const { return m_fwCheckInFlight; }
     int callsInFlight() const { return m_callsInFlight; }
+    bool forwarding() const { return m_forwarding; }
+    QStringList restartPending() const { return m_restartPending; }
+    static QString guiVersion();
 
     // Parsed status string: "kind:tail", tail tab-split into fields.
     struct Status {
@@ -157,13 +169,20 @@ public:
 
     // --- Voice (speech-to-text models, Settings → Voice) ---
     Q_INVOKABLE QVariantMap  voiceStatus();              // VoiceStatus() -> {kind: off|ready|unavailable, tail}
-    Q_INVOKABLE QVariantList voiceModels();              // VoiceModels() -> [{id,name,program,sizeMb,state,progress,error,recommended,engineOk,note}]
+    // VoiceModels() -> [{id,name,program,sizeMb,state,progress,error,recommended,engineOk,note,kind}];
+    // kind is stt (speech to text) or tts (a voice), "stt" from a daemon without the column. A change in
+    // the installed set drops the cached config schema (its model and voice dropdowns list them).
+    Q_INVOKABLE QVariantList voiceModels();
     Q_INVOKABLE QVariantMap  voiceDownloadModel(const QString &id); // VoiceDownloadModel(s): ok|installed|busy|notfound
     Q_INVOKABLE QVariantMap  voiceCancelDownload();      // VoiceCancelDownload()
     Q_INVOKABLE QVariantMap  voiceRemoveModel(const QString &id);   // VoiceRemoveModel(s)
-    // HOOK #7 — extension config, two backends (url | schema).
+    // Text to speech (Settings → Voice). TtsStatus() -> {kind: off|ready|unavailable, tail}; Speak(s) plays
+    // the text on this computer (ok/off/unavailable/busy/error); StopSpeaking() stops it.
+    Q_INVOKABLE QVariantMap  ttsStatus();
+    Q_INVOKABLE QVariantMap  speak(const QString &text);
+    Q_INVOKABLE QVariantMap  stopSpeaking();    // HOOK #7 — extension config, two backends (url | schema).
     Q_INVOKABLE QVariantMap  extOpenConfig(const QString &name);   // ExtOpenConfig(s) -> xdg-open url; {kind,url,opened,msg}
-    Q_INVOKABLE QVariantList extConfigSchema(const QString &name); // ExtConfigSchema(s) -> [{key,type,label,secret,options[]}]
+    Q_INVOKABLE QVariantList extConfigSchema(const QString &name); // ExtConfigSchema(s) -> [{key,type,label,secret,options[],description,help}]
     Q_INVOKABLE QVariantMap  extGetConfig(const QString &name);    // ExtGetConfig(s)   -> {key:value, ...}
     Q_INVOKABLE QVariantMap  extSetConfig(const QString &name, const QVariantMap &values); // ExtSetConfig(s, json)
 
@@ -186,13 +205,17 @@ public:
                                                   const QString &username, const QString &password);
     Q_INVOKABLE QVariantMap  removeCalendarSource(const QString &id);
     // HOOK #5 — per-service master toggles + status.
-    Q_INVOKABLE QVariantList getSyncStatus();            // -> [{service,enabled,available,lastSync}]
+    Q_INVOKABLE QVariantList getSyncStatus();            // -> [{service,enabled,available,lastSync,key}]
     Q_INVOKABLE QVariantMap  setSyncEnabled(const QString &service, bool enabled); // SetSyncEnabled(s,b)
     Q_INVOKABLE QVariantMap  musicStatus();              // MusicStatus() -> {kind,ok,playing,player,track}
 
     // --- typed wrappers: Watch settings (Settings screen) ------------------
-    Q_INVOKABLE QVariantList listWatchPrefs();           // -> [{id,type,current,default,allowed[],flags[],name,description}]
+    // -> [{id,type,current,default,allowed[],flags[],name,description,section,help,requires[]}], plus
+    // number prefs' {min,max,unit,scale}: notifWindowTimeout is shown in seconds (scale 1000, a value to
+    // send is shown × scale), every other number as the daemon lists it (scale 1).
+    Q_INVOKABLE QVariantList listWatchPrefs();
     Q_INVOKABLE QVariantMap  setWatchPref(const QString &id, const QString &value); // SetWatchPref(s,s)
+    Q_INVOKABLE QVariantMap  resetWatchPrefs();          // ResetWatchPrefs() -> ok:<message> | notready:
     // A `schedule` pref value as the daemon would store it ("7:5-22:30" -> "07:05-22:30"), or ""
     // when SetWatchPref would reject it (libpebble3's QuietTimeSchedule.parse rules: H:MM or HH:MM
     // on both sides of one '-', hours 0-23, minutes 0-59). Lets the editor flag a bad value before
@@ -200,9 +223,15 @@ public:
     Q_INVOKABLE QString      normalizeSchedule(const QString &raw) const;
 
     // --- typed wrappers: Daemon config (Settings -> Advanced) — HOOK #10 ---
-    Q_INVOKABLE QVariantList configSchema();             // GetConfigSchema() -> [{key,type,label,options[],desc}]
+    // GetConfigSchema() -> [{key,type,label,options[],desc,group,restart,min,max,unit,placeholder,page,help,
+    // requires[{key,negate,value}],default,egress}]. Cached per daemon (fetch() too): dropped when the
+    // daemon goes or comes, on ConfigChanged and when voiceModels() sees the installed set change.
+    Q_INVOKABLE QVariantList configSchema();
     Q_INVOKABLE QVariantMap  getConfig();                // GetConfig() -> {key:value, ...}
     Q_INVOKABLE QVariantMap  setConfig(const QString &key, const QString &value); // SetConfig(s,s)
+    // Restart() -> ok:restarting <unit> | busy:<why> | error:<how to restart by hand>.
+    Q_INVOKABLE QVariantMap  restartDaemon();
+    Q_INVOKABLE QString      daemonVersion();            // Version(), "" when it can't be read
 
     // --- typed wrappers: Settings -> Debug -> Heartbeat --------------------
     // Header of the most recent captured hourly analytics heartbeat.
@@ -313,6 +342,11 @@ Q_SIGNALS:
     void firmwareInfoChanged();                      // firmwareInfo / firmwareChecking
     void callsInFlightChanged();
     void appIconChanged(const QString &uuid, const QString &url); // an appIcon() miss was answered
+    // ConfigChanged(key): a stoandl.conf key was written (by any client, or the daemon itself). Pages
+    // re-read GetConfig (and the schema, which this drops from the cache).
+    void configChanged(const QString &key);
+    void forwardingChanged();
+    void restartPendingChanged();
 
 private Q_SLOTS:
     void onNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
@@ -329,6 +363,7 @@ private Q_SLOTS:
     // (ready / exited / quarantined) the list-level poke can't carry. Records the state and
     // re-syncs the list (the override is merged into the rows extList() builds).
     void onExtensionStateChanged(const QString &name, const QString &state);
+    void onConfigChanged(const QString &key);                         // → configChanged(), forwarding
     void pollPairOnce();
     void firmwarePollOnce();
     void languagePollOnce();
@@ -368,6 +403,9 @@ private:
     void         clearFirmwareInfo(bool forgetKey);
     static QVariantMap firmwareInfoMap(const Status &s);
     void         setDaemonUp(bool up);
+    // Read notification.forward (asynchronously) into m_forwarding.
+    void         refreshForwarding();
+    void         dropConfigSchema();
     void         runCli(const QString &op, const QStringList &args);
     // Run `systemctl --user <args>` asynchronously; `done` gets (exit 0, first stderr line / reason).
     void         runSystemctl(const QStringList &args,
@@ -428,4 +466,13 @@ private:
     // "running" (the polled ExtList keeps a quarantined ext in its `running` map). Entries are
     // pruned in extList() when ExtList no longer lists that name.
     QHash<QString, QString> m_extState;
+
+    bool        m_forwarding = true;
+    QStringList m_restartPending;
+    // GetConfigSchema's parsed rows for the daemon running now; m_schemaGeneration drops an answer to a
+    // call that started before the cache was invalidated.
+    QVariant    m_schema;
+    quint64     m_schemaGeneration = 0;
+    // The installed speech models and voices voiceModels() last saw ("" before the first read).
+    QString     m_installedModels;
 };

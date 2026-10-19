@@ -192,7 +192,7 @@ class MockStoandl(dbus.service.Object):
             },
         }
         # MOCK_NO_WATCH=1 starts in the "paired but nothing connected" state, so the GUI's no-watch
-        # paths (e.g. the watch-scoped rows on Settings → Debug) are testable without a Disconnect
+        # paths (e.g. the watch-scoped rows on Settings → Diagnostics & developer) are testable without a Disconnect
         # method. It is a real state, not a flag: ListWatches and every "connected watch" method agree.
         if os.environ.get("MOCK_NO_WATCH") == "1":
             for w in self.watches.values():
@@ -249,13 +249,17 @@ class MockStoandl(dbus.service.Object):
         # values = current settings. Two extensions declare config=schema above.
         self.ext_schema = {
             "Signal": [
-                {"key": "phone", "type": "string", "label": "Linked phone number"},
+                {"key": "phone", "type": "string", "label": "Linked phone number",
+                 "description": "The number signal-cli is registered with",
+                 "help": "Include the country code, e.g. +49 151 2345678. The extension only reads messages for this account."},
                 {"key": "token", "type": "string", "label": "Device token", "secret": True},
-                {"key": "interval", "type": "int", "label": "Poll interval (s)"},
+                {"key": "interval", "type": "int", "label": "Poll interval (s)",
+                 "help": "Shorter is faster but keeps the phone awake more often."},
                 {"key": "replies", "type": "bool", "label": "Allow quick replies"},
             ],
             "SMS Bridge": [
-                {"key": "modem", "type": "enum", "label": "Modem", "options": ["ModemManager", "oFono"]},
+                {"key": "modem", "type": "enum", "label": "Modem", "options": ["ModemManager", "oFono"],
+                 "description": "The telephony service that owns the modem"},
                 {"key": "country", "type": "string", "label": "Default country code"},
                 {"key": "delivery", "type": "bool", "label": "Delivery reports"},
             ],
@@ -346,14 +350,14 @@ class MockStoandl(dbus.service.Object):
              "allowed": "RRGGBB|Red|Orange|Yellow|Lime|Green|Cyan|Blue|Purple|Magenta|Pink|Warm White|Cool White",
              "flags": "", "name": "Backlight Color",
              "description": "LED color used when the backlight is on (color watches only)"},
-            # libpebble3 has no description for textStyle; the daemon appends its per-firmware note.
-            {"id": "textStyle", "type": "enum", "current": "Default", "default": "Default",
-             "allowed": "Smaller|Default|Larger", "flags": "", "name": "Text Size",
-             "description": "What this sizes depends on the firmware: up to PebbleOS 4.36 notifications "
-                            "and the timeline, on 4.37 the whole system UI, on 4.38.0 the system UI but not "
-                            "notifications (they have their own size). From 4.38.1 it only seeds the "
-                            "notification size once, on a watch that never stored one. The phone can't set "
-                            "the newer sizes: change them on the watch."},
+            # The two text sizes keep libpebble3's descriptions; the daemon renames them (both are "Text
+            # Size" upstream) and moves its firmware note into the help column (watch-pref-text.tsv).
+            {"id": "systemTextSize", "type": "enum", "current": "Default", "default": "Default",
+             "allowed": "Smaller|Default|Larger", "flags": "", "name": "Menu Text Size",
+             "description": "Text size in menus and the system UI"},
+            {"id": "notifTextSize", "type": "enum", "current": "Default", "default": "Default",
+             "allowed": "Smaller|Default|Larger", "flags": "", "name": "Notification Text Size",
+             "description": "Text size of notifications"},
             {"id": "lightAmbientThreshold", "type": "number", "current": "200", "default": "150",
              "allowed": "1..4096", "flags": "debug", "name": "Ambient Light Threshold",
              "description": "How low ambient light must be to enable the backlight"},
@@ -1497,6 +1501,16 @@ class MockStoandl(dbus.service.Object):
             a[field] = "default" if val == "default" else val
         return f"ok:{a['name']} style updated"
 
+    # NotifStyleChoices: the built-in vibrations (VibePatterns, in the daemon's order) and the curated icons.
+    MOCK_VIBES = [("Standard", "300,300"), ("Pulses", "100,100,100,100"), ("Double", "200,100,200"),
+                  ("Triple", "200,100,200,100,200"), ("Subtle", "100"), ("Long", "800")]
+    MOCK_ICONS = [("calendar", "Calendar"), ("mail", "Mail"), ("chat", "Chat"), ("phone", "Phone")]
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="as")
+    def NotifStyleChoices(self):
+        return ([rec("vibe", name, name, ms, "builtin") for name, ms in self.MOCK_VIBES]
+                + [rec("icon", value, label) for value, label in self.MOCK_ICONS])
+
     @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
     def NotifSetAppName(self, query, placement):
         # Per-app override of notification.app_name; default/''/none/clear drops it (follows the global).
@@ -2098,14 +2112,27 @@ class MockStoandl(dbus.service.Object):
         self.PermissionRequestsChanged()
         return f"ok:{key or 'all'} {decision}"
 
-    # --- Voice: the daemon's speech-model catalog (VoiceModels.kt), downloads simulated over 6 s ---
+    # --- Voice: the daemon's model store (VoiceModels.kt), speech models and voices alike, downloads ---
+    # simulated over 6 s. Each entry: id, name, program, size MB, recommended, note, kind (stt|tts).
     MOCK_SPEECH_MODELS = [
-        ("parakeet-v3", "Parakeet v3", "parakeet-cli", 669, "true", "25 European languages, detects the language; best accuracy for its speed (phones, older PCs)"),
-        ("parakeet-v3-small", "Parakeet v3 (smaller)", "parakeet-cli", 356, "false", "the same model compressed further: less memory, slightly less accurate"),
-        ("whisper-small", "Whisper small", "whisper-cli", 264, "false", "99 languages, set voice.language; slower and less accurate than Parakeet"),
-        ("whisper-base", "Whisper base", "whisper-cli", 82, "false", "fast and small, weak for languages other than English"),
-        ("whisper-turbo", "Whisper large-v3-turbo", "whisper-cli", 874, "false", "most accurate, for fast desktops only"),
+        ("parakeet-v3", "Parakeet v3", "parakeet-cli", 669, "true", "25 European languages, detects the language; best accuracy for its speed (phones, older PCs)", "stt"),
+        ("parakeet-v3-small", "Parakeet v3 (smaller)", "parakeet-cli", 356, "false", "the same model compressed further: less memory, slightly less accurate", "stt"),
+        ("whisper-small", "Whisper small", "whisper-cli", 264, "false", "99 languages, set voice.language; slower and less accurate than Parakeet", "stt"),
+        ("whisper-base", "Whisper base", "whisper-cli", 82, "false", "fast and small, weak for languages other than English", "stt"),
+        ("whisper-turbo", "Whisper large-v3-turbo", "whisper-cli", 874, "false", "most accurate, for fast desktops only", "stt"),
+        ("piper-de-thorsten-low", "Thorsten (German, low)", "piper", 63, "true", "German; clear on the watch speaker and fast", "tts"),
+        ("piper-de-eva_k-x_low", "Eva K (German, x-low)", "piper", 21, "false", "German; smallest and fastest, a little rougher", "tts"),
+        ("piper-en-ryan-low", "Ryan (English, low)", "piper", 63, "false", "English; clear on the watch speaker and fast", "tts"),
     ]
+    # The config key a downloaded model of each kind becomes, its backend key, and the dropdown's text
+    # while nothing is installed (ConfigSchema.kt's runtime combos).
+    VOICE_KIND_KEYS = {
+        "stt": ("voice.local_model", "voice.backend", "No model installed"),
+        "tts": ("tts.local_voice", "tts.backend", "No voice installed"),
+    }
+
+    def _voice_model(self, mid):
+        return next((m for m in self.MOCK_SPEECH_MODELS if m[0] == mid), None)
 
     def _voice_tick(self):
         """Finish a simulated download whose time is up; installing activates it like the daemon does."""
@@ -2113,20 +2140,23 @@ class MockStoandl(dbus.service.Object):
         if d and time.time() - d[1] >= 6:
             self.voice_dl = None
             self.voice_installed = getattr(self, "voice_installed", []) + [d[0]]
-            self._voice_installed_changed()
-            if self.config.get("voice.backend") in ("Off", "Local model"):
-                name = next(m[1] for m in self.MOCK_SPEECH_MODELS if m[0] == d[0])
-                self.config["voice.local_model"] = name
-                self.config["voice.backend"] = "Local model"
-                self.ConfigChanged("voice.local_model")
-                self.ConfigChanged("voice.backend")
+            m = self._voice_model(d[0])
+            self._voice_installed_changed(m[6])
+            key, backend, _ = self.VOICE_KIND_KEYS[m[6]]
+            if self.config.get(backend) in ("Off", "Local model"):
+                self.config[key] = m[1]
+                self.config[backend] = "Local model"
+                self.ConfigChanged(key)
+                self.ConfigChanged(backend)
 
-    def _voice_installed_changed(self):
-        names = [m[1] for m in self.MOCK_SPEECH_MODELS if m[0] in getattr(self, "voice_installed", [])]
-        field = next(c for c in self.config_schema if c["key"] == "voice.local_model")
-        field["options"] = ",".join(names) or "No model installed"
-        if self.config.get("voice.local_model") not in names:
-            self.config["voice.local_model"] = names[0] if names else "No model installed"
+    def _voice_installed_changed(self, kind):
+        key, _, none = self.VOICE_KIND_KEYS[kind]
+        names = [m[1] for m in self.MOCK_SPEECH_MODELS
+                 if m[6] == kind and m[0] in getattr(self, "voice_installed", [])]
+        field = next(c for c in self.config_schema if c["key"] == key)
+        field["options"] = ",".join(names) or none
+        if self.config.get(key) not in names:
+            self.config[key] = names[0] if names else none
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def VoiceStatus(self):
@@ -2141,23 +2171,24 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def VoiceModels(self):
+        # id \t name \t program \t sizeMb \t state \t recommended \t programInstalled \t note \t kind
         self._voice_tick()
         out = []
         d = getattr(self, "voice_dl", None)
-        for mid, name, prog, size, recommended, note in self.MOCK_SPEECH_MODELS:
+        for mid, name, prog, size, recommended, note, kind in self.MOCK_SPEECH_MODELS:
             if d and d[0] == mid:
                 state = f"downloading:{min(99, int((time.time() - d[1]) * 100 / 6))}"
             elif mid in getattr(self, "voice_installed", []):
                 state = "installed"
             else:
                 state = "available"
-            out.append(rec(mid, name, prog, size, state, recommended, "true", note))
+            out.append(rec(mid, name, prog, size, state, recommended, "true", note, kind))
         return out
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def VoiceDownloadModel(self, mid):
         self._voice_tick()
-        m = next((m for m in self.MOCK_SPEECH_MODELS if m[0] == mid), None)
+        m = self._voice_model(mid)
         if m is None:
             return f"notfound:no model '{mid}' (stoandl voice models)"
         if mid in getattr(self, "voice_installed", []):
@@ -2179,8 +2210,43 @@ class MockStoandl(dbus.service.Object):
         if mid not in getattr(self, "voice_installed", []):
             return f"notfound:{mid} isn't installed"
         self.voice_installed.remove(mid)
-        self._voice_installed_changed()
+        self._voice_installed_changed(self._voice_model(mid)[6])
         return f"ok:removed {mid}"
+
+    # --- Text to speech (TtsService): status, and host playback of a test sentence ----------------
+    def _tts_status(self):
+        b = self.config.get("tts.backend", "Off")
+        if b == "Off":
+            return "off:tts.backend is off"
+        if b == "Local model":
+            v = self.config.get("tts.local_voice", "")
+            return f"ready:local\t{v}" if v != "No voice installed" else "unavailable:no voice installed (stoandl voice download)"
+        if b == "Custom command":
+            c = self.config.get("tts.command", "")
+            return f"ready:command\t{c}" if c else "unavailable:tts.command is empty"
+        u = self.config.get("tts.url", "")
+        return f"ready:http\t{u}" if u else "unavailable:tts.url is empty"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def TtsStatus(self):
+        self._voice_tick()
+        return self._tts_status()
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def Speak(self, text):
+        # Plays on this computer (pw-play / paplay / aplay); a new call preempts the one playing.
+        st = self._tts_status()
+        if not st.startswith("ready:"):
+            return st
+        self.speaking_until = time.time() + 0.08 * len(text)
+        return f"ok:speaking {len(text)} characters"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def StopSpeaking(self):
+        if getattr(self, "speaking_until", 0) <= time.time():
+            return "none:nothing is playing"
+        self.speaking_until = 0
+        return "ok:stopped"
 
     @dbus.service.signal(IFACE, signature="")
     def ExtensionsChanged(self):

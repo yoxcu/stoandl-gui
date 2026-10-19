@@ -123,6 +123,26 @@ int parsePercent(const QString &s)
     return num.isEmpty() ? -1 : num.toInt();
 }
 
+// A `requires` column (GetConfigSchema 13, ListWatchPrefs 10): alternatives joined by '|', each
+// `key=value` or `key!=value` -> [{key, negate, value}]. The row matters while ANY of them holds; none
+// (an empty column, or an older daemon without it) means always.
+QVariantList parseRequires(const QString &raw)
+{
+    QVariantList out;
+    for (const QString &alt : raw.split(QLatin1Char('|'), Qt::SkipEmptyParts)) {
+        const int ne = alt.indexOf(QStringLiteral("!="));
+        const int eq = ne >= 0 ? ne : alt.indexOf(QLatin1Char('='));
+        if (eq <= 0)
+            continue;
+        QVariantMap m;
+        m[QStringLiteral("key")]    = alt.left(eq).trimmed();
+        m[QStringLiteral("negate")] = ne >= 0;
+        m[QStringLiteral("value")]  = alt.mid(eq + (ne >= 0 ? 2 : 1));
+        out.append(m);
+    }
+    return out;
+}
+
 // A reply as a Status; failures (D-Bus errors, daemon error/failed/timeout kinds) are logged.
 Status statusFromReply(const QString &method, const QDBusMessage &reply)
 {
@@ -223,6 +243,8 @@ StoandlClient::StoandlClient(QObject *parent)
                   this, SLOT(onPluginsChanged()));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("ExtensionStateChanged"),
                   this, SLOT(onExtensionStateChanged(QString, QString)));
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("ConfigChanged"),
+                  this, SLOT(onConfigChanged(QString)));
 
     recheckDaemon();
 }
@@ -1215,10 +1237,10 @@ QVariantMap StoandlClient::setWatchNickname(const QString &name, const QString &
     return statusMap(callStatus(QStringLiteral("SetWatchNickname"), {name, nickname}));
 }
 
-QVariantMap StoandlClient::musicStatus()
+namespace {
+QVariant musicStatusMap(const Status &s)
 {
     // MusicStatus() -> ok:<playing|paused>\t<player>\t<track>
-    const Status s = callStatus(QStringLiteral("MusicStatus"));
     QVariantMap m;
     m[QStringLiteral("kind")] = s.kind;
     m[QStringLiteral("ok")]   = s.ok();
@@ -1228,6 +1250,12 @@ QVariantMap StoandlClient::musicStatus()
         m[QStringLiteral("track")]   = s.fields.value(2);
     }
     return m;
+}
+} // namespace
+
+QVariantMap StoandlClient::musicStatus()
+{
+    return read(QStringLiteral("musicStatus")).toMap();
 }
 
 QVariantMap StoandlClient::startDevConnection()
@@ -1302,6 +1330,9 @@ QVariantList StoandlClient::extConfigSchema(const QString &name)
         f[QStringLiteral("type")]   = o.value(QStringLiteral("type")).toString();
         f[QStringLiteral("label")]  = o.value(QStringLiteral("label")).toString();
         f[QStringLiteral("secret")] = o.value(QStringLiteral("secret")).toBool();
+        // Optional: one line under the field, and longer text behind its (?) button.
+        f[QStringLiteral("description")] = o.value(QStringLiteral("description")).toString();
+        f[QStringLiteral("help")]   = o.value(QStringLiteral("help")).toString();
         QStringList opts;
         for (const QJsonValue &ov : o.value(QStringLiteral("options")).toArray())
             opts << ov.toString();
@@ -1339,7 +1370,8 @@ QVariantMap StoandlClient::extSetConfig(const QString &name, const QVariantMap &
 namespace {
 QVariant syncStatusRows(const QVariantList &records)
 {
-    // Record: service \t enabled \t available \t lastSync
+    // Record: service \t enabled \t available \t lastSync \t key (the stoandl.conf key SetSyncEnabled sets;
+    // appended, so empty from an older daemon)
     QVariantList rows;
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
@@ -1348,6 +1380,7 @@ QVariant syncStatusRows(const QVariantList &records)
         m[QStringLiteral("enabled")]   = (f.value(1) == QStringLiteral("enabled"));
         m[QStringLiteral("available")] = (f.value(2) == QStringLiteral("available"));
         m[QStringLiteral("lastSync")]  = f.value(3);
+        m[QStringLiteral("key")]       = f.value(4);
         rows.append(m);
     }
     return rows;
@@ -1369,7 +1402,9 @@ QVariantMap StoandlClient::setSyncEnabled(const QString &service, bool enabled)
 namespace {
 QVariant watchPrefRows(const QVariantList &records)
 {
-    // Record: id \t type \t current \t default \t allowed \t flags \t name \t description
+    // Record: id \t type \t current \t default \t allowed \t flags \t name \t description \t section
+    //         \t help \t requires
+    // Columns 8-10 were appended: an older daemon leaves them empty, and its prefs land in "Other".
     //
     // type ∈ {bool, number, enum, quicklaunch, color, schedule} (the daemon's
     // WatchPrefsControl.typeName()). `allowed` is built by WatchPrefsControl.allowed() and is
@@ -1401,6 +1436,9 @@ QVariant watchPrefRows(const QVariantList &records)
         m[QStringLiteral("debug")]       = flags.contains(QStringLiteral("debug"));
         m[QStringLiteral("name")]        = f.value(6);
         m[QStringLiteral("description")] = f.value(7);
+        m[QStringLiteral("section")]     = f.value(8).isEmpty() ? QStringLiteral("Other") : f.value(8);
+        m[QStringLiteral("help")]        = f.value(9);
+        m[QStringLiteral("requires")]    = parseRequires(f.value(10));
         // Number prefs: pre-derive {min, max, unit} from the "min..max[ unit]" allowed range so the
         // QML spinbox gets clean ints + a unit suffix (a slider over a raw string can't).
         if (type == QStringLiteral("number")) {
@@ -1415,9 +1453,23 @@ QVariant watchPrefRows(const QVariantList &records)
                 if (sp >= 0)
                     unit = hi.mid(sp + 1).trimmed();
             }
+            // The notification timeout runs from 15 s to 10 min: shown in seconds, sent in ms. (The
+            // backlight timeout stays in ms, whose sub-second values whole seconds would lose.)
+            const int scale = (f.value(0) == QStringLiteral("notifWindowTimeout") && unit == QStringLiteral("ms")) ? 1000 : 1;
+            if (scale > 1) {
+                unit = QStringLiteral("s");
+                rangeMin /= scale;
+                rangeMax /= scale;
+                const int cur = m.value(QStringLiteral("currentInt")).toInt();
+                m[QStringLiteral("currentInt")] = cur < 0 ? cur : cur / scale;
+                const int def = parsePercent(f.value(3));
+                if (def >= 0)
+                    m[QStringLiteral("default")] = QStringLiteral("%1 s").arg(def / scale);
+            }
             m[QStringLiteral("min")]  = rangeMin < 0 ? 0 : rangeMin;
             m[QStringLiteral("max")]  = rangeMax < 0 ? 100 : rangeMax;
             m[QStringLiteral("unit")] = unit;
+            m[QStringLiteral("scale")] = scale;
         }
         rows.append(m);
     }
@@ -1433,6 +1485,11 @@ QVariantList StoandlClient::listWatchPrefs()
 QVariantMap StoandlClient::setWatchPref(const QString &id, const QString &value)
 {
     return statusMap(callStatus(QStringLiteral("SetWatchPref"), {id, value}));
+}
+
+QVariantMap StoandlClient::resetWatchPrefs()
+{
+    return statusMap(callStatus(QStringLiteral("ResetWatchPrefs")));
 }
 
 QString StoandlClient::normalizeSchedule(const QString &raw) const
@@ -1466,10 +1523,13 @@ namespace {
 QVariant configSchemaRows(const QVariantList &records)
 {
     // Record: key \t type \t label \t options(comma) \t desc \t group \t apply \t min \t max \t unit
-    //         \t placeholder
+    //         \t placeholder \t page \t help \t requires \t default \t egress
     // Columns 5+ were appended to the original 5-column contract, so an older daemon simply leaves them
-    // empty — hence the defaults below rather than a hard read. type ∈ {toggle, combo, text, int, list};
-    // apply ∈ {live, restart} ("restart" = the daemon only picks the value up when it starts).
+    // empty — hence the defaults below rather than a hard read. type ∈ {toggle, combo, text, int, list,
+    // secret}; apply ∈ {live, restart} ("restart" = the daemon only picks the value up when it starts).
+    // page is the Settings page, group the section on it; a daemon without pages puts every key on one.
+    // default is the value an empty stoandl.conf gives (GetConfig's spelling), egress the hosts the key
+    // makes stoandl contact (a noun phrase that reads after "Contacts").
     QVariantList rows;
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
@@ -1490,6 +1550,11 @@ QVariant configSchemaRows(const QVariantList &records)
         m[QStringLiteral("max")] = okMax ? hi : 1000000;
         m[QStringLiteral("unit")] = f.value(9);
         m[QStringLiteral("placeholder")] = f.value(10);
+        m[QStringLiteral("page")]     = f.value(11).isEmpty() ? QStringLiteral("Daemon configuration") : f.value(11);
+        m[QStringLiteral("help")]     = f.value(12);
+        m[QStringLiteral("requires")] = parseRequires(f.value(13));
+        m[QStringLiteral("default")]  = f.value(14);
+        m[QStringLiteral("egress")]   = f.value(15);
         rows.append(m);
     }
     return rows;
@@ -1516,6 +1581,22 @@ QVariant configValues(const QVariantList &records)
 }
 } // namespace
 
+QVariantMap StoandlClient::restartDaemon()
+{
+    return statusMap(callStatus(QStringLiteral("Restart")));
+}
+
+QString StoandlClient::daemonVersion()
+{
+    const QDBusMessage r = m_bus.call(methodCall(QStringLiteral("Version"), {}), QDBus::Block, CALL_TIMEOUT_MS);
+    return r.type() == QDBusMessage::ErrorMessage ? QString() : r.arguments().value(0).toString();
+}
+
+QString StoandlClient::guiVersion()
+{
+    return QStringLiteral(STOANDL_GUI_VERSION);
+}
+
 QVariantMap StoandlClient::getConfig()
 {
     return read(QStringLiteral("getConfig")).toMap();
@@ -1523,7 +1604,13 @@ QVariantMap StoandlClient::getConfig()
 
 QVariantMap StoandlClient::setConfig(const QString &key, const QString &value)
 {
-    return statusMap(callStatus(QStringLiteral("SetConfig"), {key, value}));
+    const Status s = callStatus(QStringLiteral("SetConfig"), {key, value});
+    // A key the daemon reads only at startup says so at the end of its ok: ("… (restart stoandl to apply)").
+    if (s.ok() && s.tail.endsWith(QStringLiteral("(restart stoandl to apply)")) && !m_restartPending.contains(key)) {
+        m_restartPending.append(key);
+        Q_EMIT restartPendingChanged();
+    }
+    return statusMap(s);
 }
 
 // --- Debug: the hourly analytics heartbeat ---------------------------------
@@ -2011,10 +2098,52 @@ void StoandlClient::setDaemonUp(bool up)
         return;
     m_daemonUp = up;
     m_fwForceUnsupported = false;   // a restarted daemon may be a newer one
+    dropConfigSchema();             // … with other keys, or other installed models
+    if (!m_restartPending.isEmpty()) {   // a daemon that went or came read stoandl.conf anew
+        m_restartPending.clear();
+        Q_EMIT restartPendingChanged();
+    }
+    if (up) {
+        refreshForwarding();
+    } else if (!m_forwarding) {
+        m_forwarding = true;        // unknown again: no banner while the daemon is away
+        Q_EMIT forwardingChanged();
+    }
     // A daemon that went away (or a new one) owes us a fresh firmware answer.
     if (m_fwHaveInfo || !m_fwInfo.isEmpty() || m_fwCheckInFlight)
         clearFirmwareInfo(true);
     Q_EMIT daemonUpChanged();
+}
+
+void StoandlClient::dropConfigSchema()
+{
+    m_schema = QVariant();
+    ++m_schemaGeneration;
+}
+
+void StoandlClient::refreshForwarding()
+{
+    callAsync(methodCall(QStringLiteral("GetConfig"), {}), nullptr, [this](const QDBusMessage &reply) {
+        if (reply.type() == QDBusMessage::ErrorMessage || !m_daemonUp)
+            return;
+        const QVariantMap values = configValues(recordsFromReply(QStringLiteral("GetConfig"), reply))
+                                       .toMap().value(QStringLiteral("values")).toMap();
+        const QVariant v = values.value(QStringLiteral("notification.forward"));
+        const bool on = !v.isValid() || v.toString() != QStringLiteral("false");
+        if (on != m_forwarding) {
+            m_forwarding = on;
+            Q_EMIT forwardingChanged();
+        }
+    });
+}
+
+void StoandlClient::onConfigChanged(const QString &key)
+{
+    qCDebug(lcStoandl).noquote() << "signal ConfigChanged:" << key;
+    dropConfigSchema();
+    if (key == QStringLiteral("notification.forward"))
+        refreshForwarding();
+    Q_EMIT configChanged(key);
 }
 
 void StoandlClient::onNameOwnerChanged(const QString &name, const QString &, const QString &newOwner)
@@ -2220,10 +2349,14 @@ void StoandlClient::onPluginsChanged()
 // --- Voice -------------------------------------------------------------------
 
 QVariantMap StoandlClient::voiceStatus() { return statusMap(callStatus(QStringLiteral("VoiceStatus"))); }
+QVariantMap StoandlClient::ttsStatus()   { return statusMap(callStatus(QStringLiteral("TtsStatus"))); }
+QVariantMap StoandlClient::speak(const QString &text) { return statusMap(callStatus(QStringLiteral("Speak"), {text})); }
+QVariantMap StoandlClient::stopSpeaking() { return statusMap(callStatus(QStringLiteral("StopSpeaking"))); }
 
 QVariantList StoandlClient::voiceModels()
 {
     QVariantList rows;
+    QString installed = QStringLiteral("#");   // never null: null means "not read yet"
     for (const QVariant &v : list(QStringLiteral("VoiceModels"))) {
         const QStringList f = v.toStringList();
         const QString state = f.value(4);   // installed | available | downloading:<pct> | failed:<msg>
@@ -2238,8 +2371,16 @@ QVariantList StoandlClient::voiceModels()
         m[QStringLiteral("recommended")] = (f.value(5) == QStringLiteral("true"));
         m[QStringLiteral("engineOk")]    = (f.value(6) == QStringLiteral("true"));
         m[QStringLiteral("note")]        = f.value(7);
+        // Appended column: stt (a speech model) or tts (a voice); an older daemon lists only models.
+        m[QStringLiteral("kind")]        = f.value(8).isEmpty() ? QStringLiteral("stt") : f.value(8);
+        if (state == QStringLiteral("installed"))
+            installed += f.value(0) + QLatin1Char(',');
         rows.append(m);
     }
+    // The schema's model and voice dropdowns list what is installed: a download or removal changes them.
+    if (!m_installedModels.isNull() && installed != m_installedModels)
+        dropConfigSchema();
+    m_installedModels = installed;
     return rows;
 }
 
@@ -2279,6 +2420,7 @@ const ReadSpec *readSpec(const QString &name)
         { QStringLiteral("pluginList"),       { "PluginList",        nullptr,  "",   pluginRows,       nullptr } },
         { QStringLiteral("permPending"),      { "PermPending",       nullptr,  "",   permPendingRows,  nullptr } },
         { QStringLiteral("getSyncStatus"),    { "GetSyncStatus",     nullptr,  "",   syncStatusRows,   nullptr } },
+        { QStringLiteral("musicStatus"),      { "MusicStatus",       nullptr,  "",   nullptr,          musicStatusMap } },
         { QStringLiteral("listWatchPrefs"),   { "ListWatchPrefs",    nullptr,  "",   watchPrefRows,    nullptr } },
         { QStringLiteral("configSchema"),     { "GetConfigSchema",   nullptr,  "",   configSchemaRows, nullptr } },
         { QStringLiteral("getConfig"),        { "GetConfig",         nullptr,  "",   configValues,     nullptr } },
@@ -2331,15 +2473,26 @@ QVariantList asList(const QVariant &v)
 }
 } // namespace
 
+namespace {
+// The one cached read: the config schema, which every settings page and the search read and which only
+// changes with the daemon (or its installed models; see dropConfigSchema's callers).
+const QString SCHEMA_READ = QStringLiteral("configSchema");
+} // namespace
+
 QVariant StoandlClient::read(const QString &name, const QVariantList &args)
 {
     const ReadSpec *spec = readSpec(name);
     Q_ASSERT_X(spec, "StoandlClient::read", "a typed read missing from readSpec()");
     if (!spec)
         return {};
+    if (name == SCHEMA_READ && m_schema.isValid())
+        return m_schema;
     const QDBusMessage reply = m_bus.call(methodCall(QString::fromLatin1(spec->method), readArgs(*spec, args)),
                                           QDBus::Block, CALL_TIMEOUT_MS);
-    return parseRead(*spec, reply);
+    const QVariant value = parseRead(*spec, reply);
+    if (name == SCHEMA_READ && reply.type() != QDBusMessage::ErrorMessage)
+        m_schema = value;
+    return value;
 }
 
 void StoandlClient::readAsync(const QString &name, const QVariantList &args, QObject *context,
@@ -2351,8 +2504,27 @@ void StoandlClient::readAsync(const QString &name, const QVariantList &args, QOb
         done(QVariant());
         return;
     }
+    const bool schema = name == SCHEMA_READ;
+    if (schema && m_schema.isValid()) {
+        // Answered from the cache, still after this call returns, as a D-Bus answer would be.
+        const QPointer<QObject> guard(context);
+        const bool scoped = context != nullptr;
+        const QVariant value = m_schema;
+        QTimer::singleShot(0, this, [guard, scoped, done, value] {
+            if (!scoped || guard)
+                done(value);
+        });
+        return;
+    }
+    const quint64 generation = m_schemaGeneration;
     callAsync(methodCall(QString::fromLatin1(spec->method), readArgs(*spec, args)), context,
-              [spec, done](const QDBusMessage &reply) { done(parseRead(*spec, reply)); });
+              [this, spec, done, schema, generation](const QDBusMessage &reply) {
+        const QVariant value = parseRead(*spec, reply);
+        // Not an answer from before the cache was dropped (it may list the old keys or models).
+        if (schema && reply.type() != QDBusMessage::ErrorMessage && generation == m_schemaGeneration)
+            m_schema = value;
+        done(value);
+    });
 }
 
 void StoandlClient::callAsync(const QDBusMessage &message, QObject *context,
