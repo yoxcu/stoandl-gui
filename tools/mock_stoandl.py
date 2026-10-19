@@ -256,6 +256,7 @@ class MockStoandl(dbus.service.Object):
                 {"key": "interval", "type": "int", "label": "Poll interval (s)",
                  "help": "Shorter is faster but keeps the phone awake more often."},
                 {"key": "replies", "type": "bool", "label": "Allow quick replies"},
+                {"key": "groups", "type": "enum", "label": "Group chats", "options": ["all", "mentions", "none"]},
             ],
             "SMS Bridge": [
                 {"key": "modem", "type": "enum", "label": "Modem", "options": ["ModemManager", "oFono"],
@@ -265,7 +266,7 @@ class MockStoandl(dbus.service.Object):
             ],
         }
         self.ext_values = {
-            "Signal": {"phone": "+1 555 0123", "token": "", "interval": 20, "replies": True},
+            "Signal": {"phone": "+1 555 0123", "token": "", "interval": 20, "replies": True, "groups": "mentions"},
             "SMS Bridge": {"modem": "ModemManager", "country": "+1", "delivery": False},
         }
         # HOOK #5: sync services — availability + last-sync. Whether one is on is its config key

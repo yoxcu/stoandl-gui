@@ -29,6 +29,16 @@ FormCard.AbstractFormDelegate {
     property string help: ""
     property int from: 0
     property int to: 1000000
+    /** One arrow press, key press or wheel tick. By default ~100 steps across the range so a wide one
+     *  stays navigable, snapped to 1, 2 or 5 × 10ⁿ so a step lands on round numbers (0..1440 min steps
+     *  by 10, not 14); a row whose range is only a sanity bound sets 1. */
+    property int stepSize: {
+        var raw = (root.to - root.from) / 100;
+        if (raw <= 1) return 1;
+        var mag = Math.pow(10, Math.floor(Math.log10(raw)));
+        var f = raw / mag;
+        return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * mag;
+    }
     /** The value can't be changed now (a setting it depends on is off); the help still opens.
      *  (`enabled: false` would disable the (?) with it.) */
     property bool locked: false
@@ -106,15 +116,7 @@ FormCard.AbstractFormDelegate {
             from: root.from
             to: root.to
             editable: true
-            // ~100 steps across the range so a wide one stays navigable, snapped to 1, 2 or 5 × 10ⁿ so
-            // a step lands on round numbers (0..1440 min steps by 10, not 14).
-            stepSize: {
-                var raw = (root.to - root.from) / 100;
-                if (raw <= 1) return 1;
-                var mag = Math.pow(10, Math.floor(Math.log10(raw)));
-                var f = raw / mag;
-                return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * mag;
-            }
+            stepSize: root.stepSize
             textFromValue: function (v, locale) { return v + (root.unit ? " " + root.unit : ""); }
             valueFromText: function (text, locale) { return parseInt(text, 10) || 0; }
             // A programmatic set (the initial value, a re-read) that must not look like an edit.

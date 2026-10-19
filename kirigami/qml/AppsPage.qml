@@ -191,9 +191,14 @@ Kirigami.ScrollablePage {
         var ext = page.extensions.find(function (e) { return e.config === "schema" && e.installed; });
         if (ext) {
             extConfigDialog.openFor(ext.name);
+            var saved = JSON.stringify(extConfigDialog.collect());
             console.log("stoandl-smoke: ext config " + ext.name + " " + extConfigDialog.fields.map(function (f) {
                 return f.key + (f.description ? "[desc]" : "") + (f.help ? "[help]" : ""); }).join(", ")
-                + " · save " + JSON.stringify(extConfigDialog.collect()));
+                + " · save " + saved);
+            extConfigDialog.close();
+            // Opened again, the form shows the stored values, not the previous open's rows.
+            extConfigDialog.openFor(ext.name);
+            console.log("stoandl-smoke: ext config reopened same=" + (JSON.stringify(extConfigDialog.collect()) === saved));
             extConfigDialog.close();
         }
         console.log("stoandl-smoke: perm banners " + page.permGroups.map(function (g) {
@@ -754,9 +759,12 @@ Kirigami.ScrollablePage {
         function openFor(name) {
             extName = name;
             title = name + " settings";
-            fields = StoandlClient.extConfigSchema(name);
+            // The rows bind to `values` as they are built, and an edit replaces that binding; so the
+            // stored values go in first, and the rows are rebuilt from scratch against them.
+            fields = [];
             var got = StoandlClient.extGetConfig(name);
             values = (got && got.values) ? got.values : ({});
+            fields = StoandlClient.extConfigSchema(name);
             open();
         }
 
@@ -766,13 +774,19 @@ Kirigami.ScrollablePage {
             extPickerLoader.item.choose(title, options, index, onPicked);
         }
 
-        // Collect current control values keyed by field key.
+        // Collect current control values keyed by field key. An enum whose stored value isn't one of
+        // its options shows the first option, so that is what Save writes.
         function collect() {
             var out = {};
             for (var i = 0; i < fieldRepeater.count; ++i) {
                 var item = fieldRepeater.itemAt(i);
-                if (item && item.fieldKey !== "")
-                    out[item.fieldKey] = item.fieldValue;
+                if (!item || item.fieldKey === "")
+                    continue;
+                var v = item.fieldValue;
+                var options = item.modelData.options || [];
+                if (item.modelData.type === "enum" && options.length && options.indexOf(v) < 0)
+                    v = options[0];
+                out[item.fieldKey] = v;
             }
             return out;
         }
@@ -852,7 +866,7 @@ Kirigami.ScrollablePage {
                             }
                         }
 
-                        // int -> spin box (Save reads what it shows, not its debounced commit)
+                        // int -> spin box stepping by 1 (Save reads what it shows, not its debounced commit)
                         FormSpinRow {
                             visible: fieldRow.modelData.type === "int"
                             Layout.fillWidth: true
@@ -861,12 +875,13 @@ Kirigami.ScrollablePage {
                             help: fieldRow.modelData.help
                             from: -1000000
                             to: 1000000
+                            stepSize: 1
                             value: fieldRow.fieldValue !== undefined ? parseInt(fieldRow.fieldValue) || 0 : 0
                             onShownValueChanged: if (fieldRow.modelData.type === "int") fieldRow.fieldValue = shownValue
                         }
 
                         // enum -> option row and the dialog's picker; an unknown stored value shows the first
-                        // option, which Save then writes
+                        // option, which collect() then writes
                         FormOptionRow {
                             readonly property var options: fieldRow.modelData.options || []
                             readonly property int chosen: Math.max(0, options.indexOf(fieldRow.fieldValue))
@@ -876,7 +891,6 @@ Kirigami.ScrollablePage {
                             description: fieldRow.modelData.description
                             help: fieldRow.modelData.help
                             value: options[chosen] || ""
-                            Component.onCompleted: if (fieldRow.modelData.type === "enum" && options.length) fieldRow.fieldValue = options[chosen]
                             onActivated: extConfigDialog.pick(text, options, chosen,
                                                             function (i, option) { fieldRow.fieldValue = option; })
                         }
