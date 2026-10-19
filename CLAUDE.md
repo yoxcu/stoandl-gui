@@ -39,7 +39,7 @@ front-end used to ship alongside; it was retired on 2026-10-15.)
   WatchPage's 20 s poll stops when its tab goes and restarts in `refreshOnShow()`. Pushed sub-pages are
   still created from Components and destroyed when popped. A kept page no longer starts from a fresh
   read, so a control whose bound value its own clicks overwrite (a `FormSwitchDelegate`'s `checked`, see
-  below) is set again in the reload callback (the Alerts page's Forward switch).
+  below) follows its value from a handler, not a binding (the settings rows' `Connections`).
 - **Page loads don't block.** `StoandlClient.fetch(owner, reads, callback)` runs typed reads over
   `QDBusPendingCallWatcher`: one read (`["healthSummary", "day", 0]`) or several in parallel
   (`[["configSchema"], ["getConfig"]]`, callback gets the values in order), named like their
@@ -47,10 +47,22 @@ front-end used to ship alongside; it was retired on 2026-10-15.)
   argument such as GetHealthSeries' metric, the argument types, the parser); the synchronous wrapper
   runs the same entry through `read()`, so a read is fetchable once it has a row there. Latest wins per
   owner, and nothing is delivered after the owner died. Health, Battery (from the rows the Watch page
-  passes, then `watchesChanged`), Alerts, Watch settings and Daemon configuration load this way, and
+  passes, then `watchesChanged`), Alerts, Watch preferences and the schema settings pages load this way, and
   `refreshApps/Extensions/Plugins()` are asynchronous too (their signals arrive later). A settings
   edit still re-reads synchronously, so its handler can put the control back at once. Per-refresh
   `NameHasOwner` is gone: `NameOwnerChanged` tracks the daemon after the start-up probe.
+- **The config schema is cached** in `StoandlClient` (`configSchema`, through `read()` and `fetch()`
+  alike) for the daemon running now: dropped when the daemon goes or comes, on every `ConfigChanged`,
+  and when `voiceModels()` sees the installed set change (the model and voice dropdowns list them). A
+  page open costs a GetConfig (and GetSyncStatus), not the schema. `StoandlClient.forwarding`
+  (notification.forward, read on daemonUp and its ConfigChanged) drives the "Forwarding is off" banner,
+  and `restartPending` lists the keys `setConfig()` was told apply after a restart (cleared when the
+  daemon goes or comes).
+- **Sub-pages are pushed with `Main.pushPage(component, props)`**, never `pageStack.push(Component)`:
+  Kirigami creates a pushed Component with a QtObject parent, which makes Qt warn "Created graphical
+  object was not placed in the graphics scene" for every page. `pushPage` creates it without a parent
+  and destroys it a `humanMoment` after PageRow removes it (destroyed at once, the form rows of the page
+  sliding out loop on their background colour).
 - **App icons** are cached in `StoandlClient` (uuid → URL, `""` for none) until `LockerChanged`; a
   miss returns `""`, asks `GetAppIcon` asynchronously and announces it with `appIconChanged(uuid,url)`
   (a `none` is re-asked after a minute: the daemon can fetch a `.pbw` after the LockerChanged that
@@ -61,40 +73,77 @@ front-end used to ship alongside; it was retired on 2026-10-15.)
 **Watch · Health · Apps · Notifications · Settings** in `Kirigami.NavigationTabBar` (KDE HIG: ≤5
 destinations → tab bar, not a drawer). **Watch is tab 0** (the launch view). Responsive: the tab bar is
 in the window *footer*, so it sits BELOW content on mobile and relocates ABOVE on desktop. Extensions
-are the 3rd segment of **Apps** (Faces / Apps / Extensions). Sync services live in **Settings**. The nav
+are the 3rd segment of **Apps** (Faces / Apps / Extensions). Sync services are their master keys' rows in
+**Settings** (one control per key: there is no Sync page). The nav
 is hidden when the daemon is down (nothing works without it).
 
-**Settings is a category landing, not one page.** `SettingsPage.qml` is a short list of
-`FormButtonDelegate` rows that `pageStack.push()` focused sub-pages (KDE HIG for a large settings
-surface): **`SyncSettingsPage`** (service master toggles + force-sync), **`CalendarsSettingsPage`**
-(calendar *sources* — CalDAV accounts / iCal feeds / .ics — each account's discovered calendars nested
-under it with per-calendar enable toggles, plus an add/edit/delete dialog; the CalDAV **password field
-is write-only**, blank on edit = keep), **`WatchSettingsPage`** (the ~46 WatchPrefs, grouped into
-FormHeader sections and rendered one delegate *per type* — see below), **`GeneralSettingsPage`** (the
-`stoandl.conf` keys — schema-driven like WatchSettingsPage: the daemon's `GetConfigSchema` declares
-`key type label options desc group apply min max unit placeholder`, so a new daemon key appears here with
-the right widget and no QML change. Five kinds: `toggle`→FormSwitchDelegate, `combo`→`FormOptionRow` (see
-below),
-`int`/`text`/`list`→hand-built `AbstractFormDelegate` rows, because FormSpinBoxDelegate and
-FormTextFieldDelegate have no `description` property — and FormTextFieldDelegate additionally calls
-`i18ndc()`, which throws here for the same reason FormColorDelegate is avoided. Rows are grouped into one
-FormHeader+FormCard per `group`, and a row whose `apply` is `restart` says so in its description. Columns
-6–11 were **appended** to the original 5-column contract, so parse them with a per-column fallback —
-never a hard read), **`BackupSettingsPage`** (backup/restore/support CLI), and
-**`DebugSettingsPage`** (the low-level tools, grouped Diagnostics / Recovery / Testing + a danger-zone
-factory reset — core dump, watch logs, reboot-to-recovery, flash a local `.pbz`, write a test
-notification; they moved here out of the watch-details dialog, and since they all act on *the connected
-watch* — the daemon methods take no watch argument — those rows disable with an inline explanation when
-none is connected. A watch in its recovery firmware lists as `recovery` in `ListWatches` (the `recovery`
-row flag; "In recovery" on the Watch tab): core dump, watch logs and the `.pbz` flash stay enabled for
-it — flashing is how it gets back — and the rest disable with a recovery note. Its Diagnostics group also pushes **`HeartbeatPage`**:
-the watch's hourly analytics record via `HeartbeatInfo`/`HeartbeatMetrics`, header facts + every metric
-grouped by name prefix; when the daemon reports `known=0` it shows *why* nothing is decoded instead of
-guessed values. It reads the daemon's stored record, but the daemon resolves the watch argument among
-*connected* watches only — with none connected it answers `unknown:` — so the row is gated like the
-other Debug tools and the page tells "no watch connected" apart from "nothing captured"). `Main.qml`'s
-`showTab()` pops pushed sub-pages on tab-switch and on re-tapping the active tab. (Calendars used to be
-a flat list nested in SyncSettingsPage; they moved to their own page when account grouping + CRUD landed.)
+**Settings is a category landing, not one page.** `SettingsPage.qml` lists, in a static order that
+holds only icons: **Watch preferences** (`WatchSettingsPage`), one entry per **schema page**
+(Notifications, Weather, Calendar, Music, Voice, Health & battery, Apps & plugins, Connection & power,
+Firmware & language — `SchemaSettingsPage { pageName }`), **Backup & restore**, **Diagnostics &
+developer** (`DebugSettingsPage`, with the schema page "Developer" on top) and **About** (GUI and daemon
+versions, licence, a copyable support line). A schema page's description is its section titles (Advanced
+ones left out) joined by " · "; a schema page the list doesn't name shows up under **More**, so a page
+the daemon adds is never dropped. A `Kirigami.SearchField` on top (200 ms debounce) matches every word
+in a key's label, description, help or key, and — read on the field's first focus, since it can block
+5 s daemon-side — a watch pref's name, description, help or id; a hit ("Label — Page › Section") pushes
+its page with `focusKey`/`focusId`, which builds that page's rows at once, scrolls to the row and flashes
+it (`FocusFlash`). `Main.qml`'s `showTab()` pops pushed sub-pages on tab-switch and on re-tapping the
+active tab.
+
+**Schema pages** (`SchemaSettingsPage` = a ScrollablePage around **`SchemaSections`**, which Debug also
+embeds). The daemon's `GetConfigSchema` (16 columns: `key type label options desc group apply min max
+unit placeholder page help requires default egress`; appended columns are parsed with a per-column
+fallback, never a hard read — a daemon without `page` puts everything on one "Daemon configuration" page)
+declares every key, so a new daemon key appears on its page with the right widget and no QML change.
+Kinds: `toggle`→`FormSwitchRow`, `combo`→`FormOptionRow`, `int`→`FormSpinRow`, `text`→`FormTextRow`,
+`list`→`FormListRow`, `secret`→a password `FormTextRow` + Remove. Rows are grouped by `group` into
+FormHeader+FormCard sections; sections titled `Advanced …` (a page's last) sit behind one "Advanced
+settings (N)" row, collapsed, and their row Loaders are inactive until it opens. A row whose `requires`
+(`key=value|key!=value` alternatives in GetConfig's spelling, parsed in `StoandlClient`) doesn't hold is
+**disabled, not hidden**, and its subtitle ends "· Used when “Label” is value". A service's master row
+(GetSyncStatus' `key` column) adds its "Last sync · …" or, for Music, what plays; Weather, Calendar and
+Health & battery get a "Sync now" page action. A key that applies after a restart says "(after restart)"
+in its subtitle, and setting one shows `RestartMessage` ("Restart stoandl to apply: … [Restart now]" →
+`Restart()`, which goes through the daemon's own service manager, so it works from the Flatpak). Cards
+and links are anchored to a **key**, not a section title: `VoiceModelsCard { kind: "stt" }` under the
+section holding `voice.local_model`, `{ kind: "tts" }` (with Test voice → `Speak`) under
+`tts.local_voice`'s, `WeatherSearchCard` under `weather.place_search`'s; inside the section, right after
+the key's row, the `WatchCardPreview` after `notification.app_name`, an "Accounts and feeds" link
+(`CalendarsSettingsPage`) after `calendar.discover` and a "Health profile" link
+(`HealthProfileSettingsPage`) after `health.sync`. Every `ConfigChanged` re-reads the page (200 ms
+debounce), so `stoandl daemon set` and other clients show at once.
+
+**Row help** (the KDE HIG pattern: one line inline, the rest behind "?"). Every row component
+(`FormSwitchRow`, `FormOptionRow`, `FormTextRow`, `FormSpinRow`, `FormListRow`) takes `help` and builds one
+`RowHelp` (Kirigami.ContextualHelpButton: switch → trailing, option row → before the value, the others →
+next to the label), hidden while `help` is empty. A long press (on the label for text/spin/list rows,
+whose field owns the rest), a right click or F1/Menu open the same tooltip; a long press opens it on
+release (a tooltip opened during the press closes on the release) and, with pressAndHold connected,
+neither flips a switch nor opens a picker. `Accessible.description` is the description plus the help. A
+schema row's help is the daemon's `help` plus a generated line: "Default: … Contacts <egress>. Applies
+after restarting stoandl. stoandl.conf key: …". The Health profile rows and the extension settings
+form (a manifest field's optional `description`/`help`) use the same rows.
+
+**The other settings pages.** `CalendarsSettingsPage` ("Accounts and feeds": calendar *sources* — CalDAV
+accounts / iCal feeds / .ics — each account's discovered calendars nested under it with per-calendar
+enable toggles, plus an add/edit/delete dialog; the CalDAV **password field is write-only**, blank on
+edit = keep), **`WatchSettingsPage`** (see WatchPrefs below), **`BackupSettingsPage`** (backup/restore
+CLI) and **`DebugSettingsPage`** ("Diagnostics & developer": the Developer keys, then the support bundle
+(CLI), watch logs, core dump, the heartbeat, recovery, testing and a danger-zone factory reset; since the
+watch tools act on *the connected watch* — the daemon methods take no watch argument — those rows disable
+with an inline explanation when none is connected. A watch in its recovery firmware lists as `recovery`
+in `ListWatches` (the `recovery` row flag; "In recovery" on the Watch tab): core dump, watch logs and the
+`.pbz` flash stay enabled for it — flashing is how it gets back — and the rest disable with a recovery
+note. Its Diagnostics group also pushes **`HeartbeatPage`**: the watch's hourly analytics record via
+`HeartbeatInfo`/`HeartbeatMetrics`, header facts + every metric grouped by name prefix; when the daemon
+reports `known=0` it shows *why* nothing is decoded instead of guessed values. It reads the daemon's
+stored record, but the daemon resolves the watch argument among *connected* watches only — with none
+connected it answers `unknown:` — so the row is gated like the other Debug tools and the page tells "no
+watch connected" apart from "nothing captured"). The Alerts tab keeps temporary mute, the per-app list
+and filters, a "Notification settings" action to Settings → Notifications, and — like the Watch tab — a
+`ForwardingBanner` ("Forwarding is off … [Turn on]") while notification.forward is off; the key's one
+control is the first row of Settings → Notifications.
 
 **Health is period-based** (mirrors the official Pebble app's `HealthTimeRange`). One selector
 (Daily/Weekly/Monthly) + one navigator (`periodType`/`periodOffset`) drive all three sections.
@@ -109,8 +158,14 @@ state otherwise (a real past month can be HRM-capable but have no readings).
 **WatchPrefs widgets (the gotchas).** `ListWatchPrefs` types are `{bool, number, enum, quicklaunch,
 color, schedule}` and the `allowed` field is **pipe-(`|`)-separated** for the option types (NOT comma — the daemon's
 `WatchPrefsControl.allowed()`). `StoandlClient::listWatchPrefs()` splits on `|`, pre-derives number
-`min/max/unit` (a `"3000 ms"` current is not a plain int — use the leading digits), and a `debug` flag.
-Per type: bool→`FormSwitchDelegate`, enum→`FormOptionRow` (options = `allowed`, **display names**,
+`min/max/unit` (a `"3000 ms"` current is not a plain int — use the leading digits), and a `debug` flag;
+**`notifWindowTimeout` alone is shown in seconds** (`scale` 1000: the page sends value × scale; the
+backlight timeout stays in ms, whose sub-second values whole seconds would lose). The **sections are the
+daemon's** (column 8, in the order it lists them; "Advanced" — its diagnostic prefs — collapsed like a
+schema page's; an older daemon's prefs all land in "Other"), the (?) holds its `help` (column 9) and the
+default, and `requires` (column 10, `id=value` in the `current` spelling) disables a row with "· Used
+when …", as on the schema pages. "Reset to defaults" (page action, confirmed) calls `ResetWatchPrefs`.
+Per type: bool→`FormSwitchRow`, enum→`FormOptionRow` (options = `allowed`, **display names**,
 not Kotlin constant names — fixed daemon-side), quicklaunch→`FormOptionRow` of "Off" + the
 firmware system actions (Quiet Time, Backlight, …, read from `allowed` between `off` and the
 `<app name or uuid>` placeholder) + **app names** (from `ListApps`) (NEVER a slider/uuid), number→`FormSpinRow` (unit via `textFromValue`,
@@ -120,11 +175,10 @@ calls `i18ndc()` and we deliberately link no KF6 C++ / `KLocalizedContext`), sch
 weekday/weekend hours, a 24 h `HH:MM-HH:MM` window; an end before the start runs overnight)→`FormTextRow`
 checked as typed by `StoandlClient.normalizeSchedule()` (libpebble3's parse rules, so a bad value is
 flagged before the daemon refuses it) and sent zero-padded on Enter/focus-out only. The hours do nothing
-until the matching `<id>Enabled` bool is on, and the daemon lists schedules last, so each schedule row is
-moved under its switch and names it. Removed/renamed ids stay out of the section rules (`langEnglish` is
-now the `language` enum; `dynBacklightMinThreshold`/`lightDynamicIntensity` are gone).
+until the matching `<id>Enabled` bool is on (the daemon's `requires` says so), and the daemon lists
+schedules last, so each schedule row is moved under its switch.
 
-**Stable settings rows** (`WatchSettingsPage`, `GeneralSettingsPage`). The Repeaters' model is only the
+**Stable settings rows** (`WatchSettingsPage`, `SchemaSections`). The Repeaters' model is only the
 *shape* — sections of `{key|id, type}` — and is reassigned only when it really changes, so opening a page
 builds each row once and an edit or re-read builds nothing (it used to rebuild all ~80 rows per edit,
 0.4-0.7 s on x86). Everything else lives in two page maps: the schema/pref per key (entries keep their JS
@@ -141,9 +195,9 @@ page's ONE `OptionPicker` (a dialog of radio rows, built on first use by `pickOp
 applies the pick; the row shows only the stored value, so a refused pick needs no putting back. The
 first section's row Loaders are synchronous (the screen the page opens on is complete in its first
 frame), the rest `asynchronous` (holding a placeholder height until ready): a fully synchronous build
-blocks ~0.35 s (Watch) / ~0.9 s (Daemon configuration) on x86, more than the push animation can hide.
-The Voice/Weather cards are created once at page level (asynchronously) and moved into their section's
-`cardSlot`. Destroying a page while its rows are still incubating can leave Qt's
+blocked ~0.35 s (Watch) / ~0.9 s (the old one-page daemon configuration) on x86, more than the push
+animation can hide. The cards are created once at page level (asynchronously) and moved into the
+`cardSlot` of the section holding their anchor key. Destroying a page while its rows are still incubating can leave Qt's
 in-progress-creation count behind (the engine then warns "There are still N items in the process of
 being created" at exit), so the smoke clears the page stack and quits only once nothing incubates.
 An edit bumps the page's `editSeq`; a `reload()` fetch that started before it (its reply lands after
@@ -160,36 +214,51 @@ read only the Loader's properties.
 `STOANDL_SMOKE_MS=<ms>` makes the app step through every tab one per tick, call `smokeExercise()` on any
 page that defines one, and quit — so `QT_QPA_PLATFORM=offscreen tools/run-with-mock.sh` proves
 QML → `StoandlClient` → D-Bus → mock → render end-to-end and self-terminates. The env var is read via `StoandlClient.smokeMs`.
-Exercises and the quit go through `Main.smokeWhenIdle(fn)`: queued in order and run once
+Exercises and the quit go through `Main.smokeWhenIdle(fn)`: queued and run once
 `StoandlClient.callsInFlight` and `incubatingObjects()` are both 0, so a hook sees the data its page's
-asynchronous loads fetched and the rows built from it. A hook that pushes a page and then reads it
-(SettingsPage's sub-pages, the WatchPage's BatteryPage) goes through it as well.
+asynchronous loads fetched and the rows built from it. One fn runs per 50 ms check, so the D-Bus signals
+a fn's calls cause (ConfigChanged …) are dispatched, and their reads started, before the next looks; and
+the queue is **depth first**: what a running fn queues runs before the rest, so a page's walk (and what
+its hooks queue in turn) ends before the next step pops that page. The quit waits for an empty queue. A
+hook that pushes a page and then reads it (SettingsPage's sub-pages, the WatchPage's BatteryPage) goes
+through it as well; a hook that pushes a page pops it again (one page at a time, as someone would).
 
 **Add a `smokeExercise()` to any page whose interesting state is only reachable by navigation or by a
-button press** — otherwise it is not covered. `SettingsPage` pushes all seven sub-pages and runs their
-own `smokeExercise()` (`WatchSettingsPage` logs `qlBack`'s quick-launch options, presses its row and picks the stored option in
-the picker (`stoandl-smoke: picker …`), and round-trips a Quiet Time window, `DebugSettingsPage` pushes
-`HeartbeatPage`, which filters, `GeneralSettingsPage` logs where its two cards sit (`stoandl-smoke: general cards voice=placed weather=placed …`), does the
-same picker round trip on its first combo row, runs a read-only city search and logs
-`stoandl-smoke: weather search <kind>, N places` — `disabled` until `weather.place_search` is on); `NotificationsPage` fires the send-test, steps the Alerts page's
-watch-card preview through each `notification.app_name` placement and writes the stored value back
-unchanged, then opens the per-app dialog, writes its app-name placement back unchanged and logs its
-preview for that override and for Default (each preview as `stoandl-smoke: preview <placement>:
-title=… | small=… | …`); `AppsPage` logs the permission request banners (`stoandl-smoke: perm banners …`)
-and one app's permission dialog rows (`stoandl-smoke: perms key=status, …`), read-only; `WatchPage` logs the firmware answer (`stoandl-smoke: firmware
-checking=… kind=… update=…`), opens the details dialog and logs its firmware state, forces a re-check
-(both only with a watch connected), hands the pairing dialog the
-daemon's search states (the bare `pending:` and a pause note) and pushes `BatteryPage` even with no
-watch connected; with the daemon down the tick presses "Start daemon". The Quiet Time round trip
-writes the watch's own window back afterwards (the hook also runs against a real daemon). With
-`STOANDL_SMOKE_FLASH=1` the `WatchPage` hook also flashes a `.pbz` that doesn't exist, as Settings → Debug
-does (the mock walks any path, a real daemon refuses a missing file), and the app prints every
-normalised `firmwareStatus → <kind>` line — how the `prf` handling is checked end to end (run with a
-`STOANDL_SMOKE_MS` of ~2400 so the ~11 s walk ends before the quit, ~1900 to reach Settings → Debug while
-the watch is in recovery). This harness is how the
+button press** — otherwise it is not covered. `SettingsPage` logs its entries and their generated
+descriptions, searches ("quiet": schema and watch-pref hits, `stoandl-smoke: search …`), opens a hit
+(`stoandl-smoke: revealed <key>`), then opens every entry in turn, runs its hook and goes back, and
+finally (mock only) writes a restart key back unchanged, logs the restart message, presses Restart now
+and waits for the daemon to come back with nothing pending. `WatchSettingsPage` logs the daemon's
+sections, a row its `requires` disables, `notifWindowTimeout` in seconds and a help text, resets to
+defaults (mock only), presses `qlBack`'s row and picks the stored option in the picker
+(`stoandl-smoke: picker …`), and round-trips a Quiet Time window. Each schema page (`SchemaSections`)
+logs where its cards and anchors sit and which rows are disabled and why, opens its first row's help as
+a long press does (`stoandl-smoke: help <key> shown=true · <text>`), long-presses its first combo row
+(help, no picker) and then does the picker round trip on it, runs a read-only city search on Weather,
+speaks the test sentence and stops it on Voice (`stoandl-smoke: tts …`), and follows its links
+(Accounts and feeds, Health profile, whose hook does a Units picker round trip). `DebugSettingsPage`
+runs the Developer keys' hook and pushes `HeartbeatPage`, which filters; `AboutSettingsPage` logs its
+support line. `NotificationsPage` fires the send-test, turns forwarding off (mock only) and logs the
+banner, presses its Turn on, then opens the per-app dialog, writes its app-name placement back unchanged
+and logs its preview for that override and for Default (each preview as `stoandl-smoke: preview
+<placement>: title=… | small=… | …`); `AppsPage` opens an extension's settings form and logs its fields
+(`[desc]`/`[help]`) and the values Save would send, the permission request banners (`stoandl-smoke: perm
+banners …`) and one app's permission dialog rows (`stoandl-smoke: perms key=status, …`), read-only;
+`WatchPage` logs the firmware answer (`stoandl-smoke: firmware checking=… kind=… update=…`), opens the
+details dialog and logs its firmware state, forces a re-check (both only with a watch connected), hands
+the pairing dialog the daemon's search states (the bare `pending:` and a pause note) and pushes
+`BatteryPage` even with no watch connected; with the daemon down the tick presses "Start daemon". The
+Quiet Time round trip writes the watch's own window back afterwards (the hook also runs against a real
+daemon). With `STOANDL_SMOKE_FLASH=1` the `WatchPage` hook also flashes a `.pbz` that doesn't exist, as
+Settings → Diagnostics & developer does (the mock walks any path, a real daemon refuses a missing file),
+and the app prints every normalised `firmwareStatus → <kind>` line — how the `prf` handling is checked
+end to end (run with a `STOANDL_SMOKE_MS` of ~2400 so the ~11 s walk ends before the quit, ~1900 to reach
+Settings → Diagnostics & developer while the watch is in recovery). This harness is how the
 delegate-binding scope trap below was caught, so it is worth keeping honest. The mock's
-`GetConfigSchema` is the daemon's `GUI_CONFIG_FIELDS` row for row, so the `general loaded N keys in G
-groups` line counts the real schema. Mock switches for the states a healthy
+`GetConfigSchema` is the daemon's own (`tools/config-schema.tsv`, written by its ConfigSchemaTest) and its
+watch-pref sections, help and requires are too (`tools/watch-pref-text.tsv`), so the `schema page '<page>'
+N keys in S sections` lines count the real schema. A clean walk prints no warning but Kirigami's own six
+"Could not create delegate for ToolBarLayout" lines at start-up. Mock switches for the states a healthy
 mock never reaches: `MOCK_NO_WATCH=1` (paired, nothing connected — also the only way to walk "Pair new
 watch", since the daemon opens no window while a watch is connected), `MOCK_PAIR_PAUSE=bt|busy|slept`
 (each pairing window starts with that "can't discover" note), `MOCK_HB_UNKNOWN=1` (unverified heartbeat
@@ -203,9 +272,11 @@ that late without blocking the mock's other calls, like the daemon fetching an u
 list; the mock prints each check as `mock: CheckFirmware #n`, so a smoke log shows how often the GUI asked).
 
 ## Hard rules
-- **The interface has SEVEN signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
-  `LanguageProgress`/`ExtensionsChanged`/`ExtensionStateChanged`/`CalendarsChanged`) that augment
-  polling — polling stays as the fallback.** (`CalendarsChanged` → `refreshCalendars()`: the daemon
+- **The interface has ten signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
+  `LanguageProgress`/`ExtensionsChanged`/`ExtensionStateChanged`/`CalendarsChanged`/`PluginsChanged`/
+  `PermissionRequestsChanged`/`ConfigChanged`) that augment polling — polling stays as the fallback.**
+  (`ConfigChanged(s key)` → `configChanged(key)`: the settings pages re-read, the cached schema is
+  dropped, and `forwarding` follows notification.forward.) (`CalendarsChanged` → `refreshCalendars()`: the daemon
   pokes it when an async sync adds/drops calendars after a source CRUD, so the Calendars page updates
   when the data's ready; the page also keeps a short post-mutation settle-timer as the fallback.)
   The daemon is NOT D-Bus-activated, so a late or reconnecting client can miss a signal; therefore
@@ -254,7 +325,7 @@ the activity tracking and timeout at the first `prf`, holds the phase across `no
 the flash from recovery ends the op — like the CLI's `pollFirmwareStatus`)
 
 ## Daemon hooks (added this milestone)
-Seven reactive **signals** — `WatchesChanged()` (re-call ListWatches), `FirmwareProgress(s phase,
+Reactive **signals** — `WatchesChanged()` (re-call ListWatches), `FirmwareProgress(s phase,
 i percent, s detail)` (push flash progress, same phase vocabulary as `FirmwareStatus`),
 `LockerChanged()` (re-call ListApps), `LanguageProgress(s phase, i percent, s detail)` (push
 language-install progress, same phase vocabulary as `LanguageStatus`), `ExtensionsChanged()`
@@ -262,12 +333,18 @@ language-install progress, same phase vocabulary as `LanguageStatus`), `Extensio
 `ExtensionsChanged`: an unsolicited per-extension run-state transition — `state` ∈
 `ready`/`exited`/`quarantined` — that the list-level poke can't catch, so a crashed/quarantined
 extension shows live instead of a stale "running"), and `CalendarsChanged()` (re-call ListCalendars —
-the daemon pokes it when an async sync adds/drops calendars after a source CRUD) — consumed on top of
+the daemon pokes it when an async sync adds/drops calendars after a source CRUD), `PluginsChanged()` /
+`PermissionRequestsChanged()` (re-call PluginList / PermPending) and `ConfigChanged(s key)` (a
+stoandl.conf key was written, by any client or the daemon: re-call GetConfig) — consumed on top of
 polling (see Hard rules).
 The GUI also consumes daemon-side hooks beyond the original 51 methods: `transport` on ListWatches +
-`synced` on ListApps (#4); `GetSyncStatus`/`SetSyncEnabled` (#5); `ExtList.config` + `ExtOpenConfig` +
+`synced` on ListApps (#4); `GetSyncStatus` (#5; its 5th column `key` names the service's master key —
+`SetSyncEnabled` is an alias for SetConfig of it, and the GUI no longer calls it); `ExtList.config` + `ExtOpenConfig` +
 `ExtConfigSchema`/`ExtGetConfig`/`ExtSetConfig` (#7); `GetHealthSummary`/`GetHealthSeries` (#8);
-`SetWatchNickname` (#9); `GetConfigSchema`/`GetConfig`/`SetConfig` (#10); `WatchDetails`; notification
+`SetWatchNickname` (#9); `GetConfigSchema` (16 columns) /`GetConfig`/`SetConfig` (#10), `Restart`,
+`ListWatchPrefs` columns 8–10 (section, help, requires) and `ResetWatchPrefs`; `VoiceModels`' 9th column
+`kind` (stt|tts), `TtsStatus`/`Speak`/`StopSpeaking`; a manifest field's optional `description`/`help`
+in `ExtConfigSchema`; `WatchDetails`; notification
 regex filters; the per-app app-name placement (`NotifSetAppName` + `NotifList`'s 7th column, the
 override of `notification.app_name`; empty = follows it); a changelog URL on `CheckFirmware`. All are
 implemented in the mock (`tools/mock_stoandl.py`) and must be grown in the real Kotlin daemon to match.
