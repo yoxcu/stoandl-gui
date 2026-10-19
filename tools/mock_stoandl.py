@@ -1081,13 +1081,14 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def ExtList(self):
-        # HOOK #7: `config` (none|url|schema) + `description` + `author` + `version` in the record.
+        # HOOK #7: `config` (none|schema) + `description` + `author` + `version` + the last stderr line.
         return [rec(e["name"],
                     "installed" if e["installed"] else "missing",
                     "enabled" if e["enabled"] else "disabled",
                     "running" if e["running"] else "stopped",
                     e["config"], e["description"],
-                    e.get("author", ""), e.get("version", "")) for e in self.exts]
+                    e.get("author", ""), e.get("version", ""),
+                    e.get("stderr", "") if e["running"] else "") for e in self.exts]
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def ExtEnable(self, query):
