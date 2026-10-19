@@ -149,11 +149,11 @@ Kirigami.ApplicationWindow {
                 console.log("stoandl-smoke: daemon down (" + StoandlClient.daemonState + "), pressing Start daemon");
                 StoandlClient.startDaemon();
             }
+            // A page's walk can queue more than a tick holds (Settings pushes every sub-page): the next
+            // tab, and the quit, wait until it is done, so every exercise runs on its page while it shows.
+            if (root.smokeQueue.length > 0)
+                return;
             if (smokeTimer.step >= root.pageComponents.length) {
-                // A page's walk can queue more than a tick holds (Settings pushes every sub-page): quit
-                // only after it.
-                if (root.smokeQueue.length > 0)
-                    return;
                 smokeTimer.running = false;
                 // Once every exercise ran and the settings rows are built: destroy the pushed pages now
                 // (a pop only animates them away) and quit. (The kept tab pages go back to tabPark.)
@@ -182,6 +182,24 @@ Kirigami.ApplicationWindow {
             root.showPassiveNotification("Could not start stoandl: " + message, "long");
         }
         function onTaskFinished(kind, r) { root.reportTask(kind, r); }
+    }
+
+    // The two ways notifications stop reaching the watch on purpose, and their fixes, for the Alerts
+    // and Watch tabs: notification.forward off, and the temporary mute of every app.
+    function turnOnForwarding() {
+        var r = StoandlClient.setConfig("notification.forward", "true");
+        root.showPassiveNotification(r.ok ? "Notifications are forwarded again"
+                                          : "Could not turn forwarding on: " + (r.tail || r.kind));
+    }
+    function resumeNotifications() {
+        var r = StoandlClient.notifSetMuteAll("never");
+        root.showPassiveNotification(r.ok ? r.tail : "Could not resume: " + (r.tail || r.kind));
+    }
+    // When a mute ends: "14:30" today, "Tue 21 Oct 14:30" later (epoch seconds).
+    function formatUntil(epoch) {
+        var d = new Date(epoch * 1000);
+        return new Date().toDateString() === d.toDateString() ? Qt.formatTime(d, "HH:mm")
+                                                              : d.toLocaleString(Qt.locale(), "ddd d MMM HH:mm");
     }
 
     function reportTask(kind, r) {

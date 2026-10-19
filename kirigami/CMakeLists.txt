@@ -56,6 +56,7 @@ qt_add_qml_module(stoandl-gui
     QML_FILES
         qml/Main.qml
         qml/StatusChip.qml
+        qml/ActionChip.qml
         qml/FormTextRow.qml
         qml/FormSpinRow.qml
         qml/FormListRow.qml

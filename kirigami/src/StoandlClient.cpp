@@ -26,6 +26,7 @@
 #include <memory>
 
 #include <algorithm>
+#include <limits>
 
 namespace {
 // Service contract — the daemon's docs/dbus-interface.md §"Service summary".
@@ -248,6 +249,10 @@ StoandlClient::StoandlClient(QObject *parent)
     m_langTimer = new QTimer(this);
     m_langTimer->setInterval(LANG_INTERVAL_MS);
     connect(m_langTimer, &QTimer::timeout, this, &StoandlClient::languagePollOnce);
+
+    m_muteEndTimer = new QTimer(this);
+    m_muteEndTimer->setSingleShot(true);
+    connect(m_muteEndTimer, &QTimer::timeout, this, [this] { setMutedUntil(0); });
 
     m_taskTimer = new QTimer(this);
     m_taskTimer->setInterval(TASK_POLL_MS);
@@ -1895,10 +1900,15 @@ QVariant notifRows(const QVariantList &records)
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         const QString mute = f.value(1);
+        // `muted-until <ISO instant>` is a temporary mute; the others name a standing state.
+        const bool until = mute.startsWith(QLatin1String("muted-until "));
+        const QDateTime ends = until ? QDateTime::fromString(mute.mid(12), Qt::ISODateWithMs) : QDateTime();
         QVariantMap m;
         m[QStringLiteral("name")]         = f.value(0);
         m[QStringLiteral("mute")]         = mute;
         m[QStringLiteral("muted")]        = (mute != QStringLiteral("never"));
+        m[QStringLiteral("muteKind")]     = until ? QStringLiteral("until") : mute;
+        m[QStringLiteral("mutedUntil")]   = ends.isValid() ? ends.toSecsSinceEpoch() : 0;
         m[QStringLiteral("color")]        = f.value(2);
         m[QStringLiteral("icon")]         = f.value(3);
         m[QStringLiteral("vibe")]         = f.value(4);
@@ -1922,7 +1932,36 @@ QVariantMap StoandlClient::notifSetMute(const QString &name, const QString &spec
 }
 QVariantMap StoandlClient::notifSetMuteAll(const QString &spec)
 {
-    return statusMap(callStatus(QStringLiteral("NotifSetMuteAll"), {spec}));
+    const QVariantMap r = statusMap(callStatus(QStringLiteral("NotifSetMuteAll"), {spec}));
+    refreshMuteAll();
+    return r;
+}
+
+void StoandlClient::refreshMuteAll()
+{
+    if (!m_daemonUp)
+        return setMutedUntil(0);
+    readAsync(QStringLiteral("notifMuteAllStatus"), {}, nullptr, [this](const QVariant &v) {
+        const QVariantMap m = v.toMap();
+        // An older daemon (no such method) answers an error: nothing is muted that way there.
+        if (m_daemonUp)
+            setMutedUntil(m.value(QStringLiteral("until")).toLongLong());
+    });
+}
+
+void StoandlClient::setMutedUntil(qint64 epochSeconds)
+{
+    const qint64 left = epochSeconds - QDateTime::currentSecsSinceEpoch();
+    if (left <= 0)
+        epochSeconds = 0;
+    if (epochSeconds > 0)
+        m_muteEndTimer->start(int(std::min<qint64>(left * 1000, std::numeric_limits<int>::max())));
+    else
+        m_muteEndTimer->stop();
+    if (epochSeconds != m_mutedUntil) {
+        m_mutedUntil = epochSeconds;
+        Q_EMIT mutedUntilChanged();
+    }
 }
 QVariantMap StoandlClient::notifSetStyle(const QString &name, const QString &color,
                                          const QString &icon, const QString &vibe)
@@ -2267,6 +2306,7 @@ void StoandlClient::setDaemonUp(bool up)
     }
     if (up) {
         refreshForwarding();
+        refreshMuteAll();
         callAsync(methodCall(QStringLiteral("Version"), {}), nullptr, [this](const QDBusMessage &reply) {
             const QString v = reply.type() == QDBusMessage::ErrorMessage || !m_daemonUp
                 ? QString() : reply.arguments().value(0).toString();
@@ -2275,9 +2315,12 @@ void StoandlClient::setDaemonUp(bool up)
                 Q_EMIT daemonVersionChanged();
             }
         });
-    } else if (!m_daemonVersion.isEmpty()) {
-        m_daemonVersion.clear();
-        Q_EMIT daemonVersionChanged();
+    } else {
+        setMutedUntil(0);
+        if (!m_daemonVersion.isEmpty()) {
+            m_daemonVersion.clear();
+            Q_EMIT daemonVersionChanged();
+        }
     }
     if (!up && !m_forwarding) {
         m_forwarding = true;        // unknown again: no banner while the daemon is away

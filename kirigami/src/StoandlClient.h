@@ -77,6 +77,10 @@ class StoandlClient : public QObject
     // stoandl.conf keys set here (setConfig) that the daemon only applies when it starts again, in the
     // order they were set. Cleared when the daemon goes or comes (its restart applied them).
     Q_PROPERTY(QStringList restartPending READ restartPending NOTIFY restartPendingChanged)
+    // When the temporary mute of every app (NotifSetMuteAll) ends, epoch seconds; 0 while nothing is muted
+    // that way. Read when the daemon comes up, after notifSetMuteAll() and on refreshMuteAll(); drops to 0
+    // by itself when the time comes (the daemon sends no signal for it).
+    Q_PROPERTY(qint64 mutedUntil READ mutedUntil NOTIFY mutedUntilChanged)
     // The running daemon's Version(), read when it comes up; "" while it is down or before the answer.
     Q_PROPERTY(QString daemonVersion READ daemonVersion NOTIFY daemonVersionChanged)
     // Typed reads whose last D-Bus call failed: read name ("notifList", …) → why, in the words errorText()
@@ -105,6 +109,7 @@ public:
     bool forwarding() const { return m_forwarding; }
     QStringList restartPending() const { return m_restartPending; }
     QString daemonVersion() const { return m_daemonVersion; }
+    qint64 mutedUntil() const { return m_mutedUntil; }
     QVariantMap readErrors() const { return m_readErrors; }
     static QString guiVersion();
 
@@ -276,9 +281,12 @@ public:
     Q_INVOKABLE QVariantList heartbeatMetrics(const QString &watch = QString());
 
     // --- typed wrappers: Notifications screen ------------------------------
-    Q_INVOKABLE QVariantList notifList();                // -> [{name,mute,muted,color,icon,vibe,lastNotified,appNamePlacement,imagesOff}]
+    // -> [{name,mute,muted,muteKind,mutedUntil,color,icon,vibe,lastNotified,appNamePlacement,imagesOff}]; muteKind is
+    // never|always|weekdays|weekends|until (mutedUntil = epoch seconds it ends, for `until`).
+    Q_INVOKABLE QVariantList notifList();
     Q_INVOKABLE QVariantMap  notifSetMute(const QString &name, const QString &spec);   // NotifSetMute(s,s)
-    Q_INVOKABLE QVariantMap  notifSetMuteAll(const QString &spec);                      // NotifSetMuteAll(s)
+    Q_INVOKABLE QVariantMap  notifSetMuteAll(const QString &spec);                      // NotifSetMuteAll(s), then mutedUntil
+    Q_INVOKABLE void         refreshMuteAll();           // NotifMuteAllStatus() → mutedUntil (async)
     Q_INVOKABLE QVariantMap  notifSetStyle(const QString &name, const QString &color,
                                            const QString &icon, const QString &vibe);   // NotifSetStyle(s,s,s,s)
     // -> {vibes:[{text,value,pattern,custom}], icons:[{text,value}]}; cached for the daemon running now.
@@ -386,6 +394,7 @@ Q_SIGNALS:
     void forwardingChanged();
     void restartPendingChanged();
     void daemonVersionChanged();
+    void mutedUntilChanged();
     void readErrorsChanged();
     void tasksChanged();
     // A watch task this GUI started ended: its TaskStatus result as a status map, plus {path, width, height}
@@ -474,6 +483,7 @@ private:
     // Ask systemd why the daemon isn't running (m_serviceState), unless it is up or starting.
     void         probeService();
     void         setInstanceUp(bool up);
+    void         setMutedUntil(qint64 epochSeconds);
 
     QDBusConnection m_bus;
     bool            m_daemonUp = false;
@@ -547,6 +557,8 @@ private:
     bool        m_forwarding = true;
     QStringList m_restartPending;
     QString     m_daemonVersion;
+    qint64      m_mutedUntil = 0;
+    QTimer     *m_muteEndTimer = nullptr;   // drops mutedUntil to 0 when it passes
     QVariantMap m_readErrors;
     // The cached reads' answers (readSpec's `cached`: the config schema, the notification styles) for the
     // daemon running now; m_cacheGeneration drops an answer to a call that started before a drop.

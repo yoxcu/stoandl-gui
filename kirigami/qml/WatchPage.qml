@@ -215,6 +215,23 @@ Kirigami.ScrollablePage {
             page.resumeLink();
             applicationWindow().smokeWhenIdle(function () {
                 console.log("stoandl-smoke: link pause " + before + " disconnect=" + held + " resumed=" + !page.pausedByHand);
+                page.smokeChips();
+            });
+        });
+    }
+
+    // The notification chips (mock only: a real daemon would hold notifications back meanwhile): mute every
+    // app for 30 minutes, then the chip's Resume.
+    function smokeChips() {
+        if (StoandlClient.daemonVersion.indexOf("mock") !== 0)
+            return;
+        StoandlClient.notifSetMuteAll("30m");
+        applicationWindow().smokeWhenIdle(function () {
+            console.log("stoandl-smoke: watch chips muted=" + mutedChip.visible + " '" + mutedChip.text
+                        + "' forwarding=" + forwardingChip.visible);
+            mutedChip.triggered();
+            applicationWindow().smokeWhenIdle(function () {
+                console.log("stoandl-smoke: watch chips after Resume shown=" + notifChips.visible);
             });
         });
     }
@@ -277,9 +294,36 @@ Kirigami.ScrollablePage {
             text: "Bluetooth is off — turn it on to connect your Pebble. The daemon reconnects automatically."
         }
 
-        // --- notification.forward off (its control is in Settings → Notifications) ---
-        ForwardingBanner {
+        // --- notifications held back on purpose: forwarding off, every app muted for a while. A chip each,
+        // with its fix; the chip itself goes to the Alerts tab (notification.forward's control is in
+        // Settings → Notifications).
+        Flow {
+            id: notifChips
+            visible: StoandlClient.daemonUp && (!StoandlClient.forwarding || StoandlClient.mutedUntil > 0)
             Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.largeSpacing
+            Layout.leftMargin: Kirigami.Units.largeSpacing
+            Layout.rightMargin: Kirigami.Units.largeSpacing
+            spacing: Kirigami.Units.smallSpacing
+
+            ActionChip {
+                id: forwardingChip
+                visible: !StoandlClient.forwarding
+                text: "Forwarding off"
+                icon.name: "notifications-disabled-symbolic"
+                actionText: "Turn on"
+                onTriggered: applicationWindow().turnOnForwarding()
+                onClicked: applicationWindow().showTab(3)
+            }
+            ActionChip {
+                id: mutedChip
+                visible: StoandlClient.mutedUntil > 0
+                text: "Muted until " + applicationWindow().formatUntil(StoandlClient.mutedUntil)
+                icon.name: "notifications-disabled-symbolic"
+                actionText: "Resume"
+                onTriggered: applicationWindow().resumeNotifications()
+                onClicked: applicationWindow().showTab(3)
+            }
         }
 
         // --- link paused: by hand (Disconnect), or for Quiet Time --------------

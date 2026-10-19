@@ -4,15 +4,12 @@ import org.kde.kirigami as Kirigami
 import org.stoandl.gui
 
 // "Forwarding is off" with Turn on, while notification.forward is off (StoandlClient.forwarding). Shown on
-// the Watch and Alerts tabs; the key's own control is the first row of Settings → Notifications.
+// the Alerts tab (the Watch tab has a chip with the same fix); the key's own control is the first row of
+// Settings → Notifications.
 Kirigami.InlineMessage {
     id: banner
 
-    function turnOn() {
-        var r = StoandlClient.setConfig("notification.forward", "true");
-        applicationWindow().showPassiveNotification(r.ok ? "Notifications are forwarded again"
-                                                         : "Could not turn forwarding on: " + (r.tail || r.kind));
-    }
+    function turnOn() { applicationWindow().turnOnForwarding(); }
 
     visible: StoandlClient.daemonUp && !StoandlClient.forwarding
     Layout.topMargin: Kirigami.Units.largeSpacing

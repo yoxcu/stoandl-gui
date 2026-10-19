@@ -491,7 +491,7 @@ class MockStoandl(dbus.service.Object):
         # per-app notification.app_name override (small|subtitle|off), "" = follows the global setting.
         self.notif_apps = [
             {"name": "Signal",   "mute": "never",  "color": "default", "icon": "default", "vibe": "Double",   "last": 1718900000, "app_name": ""},
-            {"name": "Matrix",   "mute": "never",  "color": "default", "icon": "default", "vibe": "Standard", "last": 1718901200, "app_name": ""},
+            {"name": "Matrix",   "mute": "weekdays", "color": "default", "icon": "default", "vibe": "Standard", "last": 1718901200, "app_name": ""},
             {"name": "Gmail",    "mute": "never",  "color": "default", "icon": "default", "vibe": "Subtle",   "last": 1718890000, "app_name": "subtitle"},
             {"name": "Phone",    "mute": "never",  "color": "default", "icon": "default", "vibe": "Long",     "last": 1718880000, "app_name": "off"},
             {"name": "Calendar", "mute": "always", "color": "default", "icon": "calendar","vibe": "Standard", "last": 1718800000, "app_name": ""},
@@ -1524,18 +1524,53 @@ class MockStoandl(dbus.service.Object):
         hits = [a for a in self.notif_apps if query.lower() in a["name"].lower()]
         return hits[0] if len(hits) == 1 else None
 
+    @staticmethod
+    def _mute_label(a):
+        # The daemon's muteLabel: never/always/weekdays/weekends, or `muted-until <instant>` (Kotlin's
+        # Instant.toString, UTC) while a temporary mute runs; an expired one reads never.
+        until = a.get("until", 0)
+        if until:
+            if until <= time.time():
+                return "never"
+            return "muted-until " + datetime.datetime.fromtimestamp(until, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return a["mute"]
+
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def NotifList(self):
-        return [rec(a["name"], a["mute"], a["color"], a["icon"], a["vibe"], a["last"], a["app_name"])
+        return [rec(a["name"], self._mute_label(a), a["color"], a["icon"], a["vibe"], a["last"], a["app_name"],
+                    "off" if a.get("images_off") else "")
                 for a in self.notif_apps]
 
     @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
     def NotifSetMute(self, query, spec):
+        # The daemon's parseSpec: always/on/mute, never/off/unmute, weekdays, weekends, or a duration
+        # (a temporary always). There is no `today` for one app.
         a = self._resolve_notif(query)
         if a is None:
             return f"notfound:no app matching '{query}'"
-        a["mute"] = spec if spec else "never"
-        return f"ok:{a['name']} mute = {a['mute']}"
+        s = (spec or "").strip().lower()
+        states = {"": "always", "always": "always", "on": "always", "mute": "always", "never": "never",
+                  "off": "never", "unmute": "never", "weekdays": "weekdays", "weekends": "weekends"}
+        if s in states:
+            a["mute"], a["until"] = states[s], 0
+            return f"ok:{'Unmuted ' + a['name'] if a['mute'] == 'never' else 'Muted ' + a['name']}" + \
+                (f" on {a['mute']}" if a["mute"] in ("weekdays", "weekends") else "")
+        m = re.fullmatch(r"(\d+)\s*([smhd])", s)
+        if not m:
+            return f"error:Unknown mute '{spec}' (use always, never, weekdays, weekends or a time like 30m)"
+        a["mute"], a["until"] = "always", time.time() + int(m.group(1)) * {"s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
+        return f"ok:Muted {a['name']} until {self._mute_label(a)[12:]} (temporary)"
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s")
+    def NotifSetImages(self, query, mode):
+        a = self._resolve_notif(query)
+        if a is None:
+            return f"notfound:no app matching '{query}'"
+        m = mode.strip().lower()
+        if m not in ("on", "off", "default", ""):
+            return f"error:Unknown images mode '{mode}' (use on, off or default)"
+        a["images_off"] = m == "off"
+        return f"ok:{a['name']} images {'off' if a['images_off'] else 'follow notification.images'}"
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def NotifSetMuteAll(self, spec):
