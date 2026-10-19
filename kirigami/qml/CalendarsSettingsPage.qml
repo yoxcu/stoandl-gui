@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls as QQC2
+import QtQuick.Dialogs as Dialogs
 import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
@@ -16,7 +17,7 @@ Kirigami.ScrollablePage {
     objectName: "calendars"
     title: "Accounts and feeds"
 
-    property var sources: []      // [{id,type,url,username,label}]  (from ListCalendarSources)
+    property var sources: []      // [{id,type,url,username,label,lastError,lastSync}]  (from ListCalendarSources)
     property var calendars: []    // [{id,name,enabled,accountId}]   (from ListCalendars)
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
@@ -54,6 +55,16 @@ Kirigami.ScrollablePage {
         if (type === "ics")    return "folder-symbolic";
         return "edit-find-symbolic";
     }
+    // "10 min ago" for a source's last good read (epoch seconds; 0 = none since stoandl started).
+    function ago(epoch) {
+        var d = Math.floor(Date.now() / 1000) - epoch;
+        return d < 60 ? "just now" : d < 3600 ? Math.floor(d / 60) + " min ago"
+             : d < 86400 ? Math.floor(d / 3600) + " h ago" : Math.floor(d / 86400) + " days ago";
+    }
+
+    // A local path from a file dialog's URL (the daemon reads it here, on the same machine).
+    function localPath(url) { return decodeURIComponent(String(url).replace(/^file:\/\//, "")); }
+
     function sourceTypeLabel(type) {
         if (type === "caldav") return "CalDAV account";
         if (type === "ical")   return "iCal feed";
@@ -122,6 +133,13 @@ Kirigami.ScrollablePage {
     }
 
     Component.onCompleted: page.reload()
+
+    // Smoke hook (Settings → Calendar's link runs it): each source's line on how its last read went.
+    function smokeExercise() {
+        console.log("stoandl-smoke: calendar sources " + page.sources.map(function (src) {
+            return src.label + "=" + (src.lastError !== "" ? src.lastError : src.lastSync > 0 ? "synced " + page.ago(src.lastSync) : "-");
+        }).join(", "));
+    }
 
     actions: [
         Kirigami.Action {
@@ -204,6 +222,18 @@ Kirigami.ScrollablePage {
                                 }
                                 elide: Text.ElideRight
                                 opacity: 0.7
+                                font: Kirigami.Theme.smallFont
+                            }
+                            // How its last read went: the problem while there is one, else when it last worked.
+                            QQC2.Label {
+                                Layout.fillWidth: true
+                                readonly property var src: groupCard.modelData.source
+                                visible: groupCard.modelData.isSource && (src.lastError !== "" || src.lastSync > 0)
+                                text: src.lastError !== "" ? src.lastError
+                                    : src.lastSync > 0 ? "Last synced " + page.ago(src.lastSync) : ""
+                                color: src.lastError !== "" ? Kirigami.Theme.negativeTextColor : Kirigami.Theme.textColor
+                                opacity: src.lastError !== "" ? 1 : 0.7
+                                wrapMode: Text.Wrap
                                 font: Kirigami.Theme.smallFont
                             }
                         }
@@ -295,6 +325,19 @@ Kirigami.ScrollablePage {
                      : sourceDialog.type === "ical" ? "Feed URL (https://…/calendar.ics)"
                      : "Account URL (https://dav.example.com/…)"
             }
+            // A local calendar: pick the .ics file, or a folder of them, instead of typing the path.
+            FormCard.FormButtonDelegate {
+                visible: sourceDialog.type === "ics"
+                text: "Choose a file…"
+                icon.name: "document-open-symbolic"
+                onClicked: icsFileDialog.open()
+            }
+            FormCard.FormButtonDelegate {
+                visible: sourceDialog.type === "ics"
+                text: "Choose a folder…"
+                icon.name: "folder-open-symbolic"
+                onClicked: icsFolderDialog.open()
+            }
             FormTextRow {
                 id: userField
                 visible: sourceDialog.type === "caldav"
@@ -321,6 +364,18 @@ Kirigami.ScrollablePage {
                 onTriggered: sourceDialog.close()
             }
         ]
+    }
+
+    Dialogs.FileDialog {
+        id: icsFileDialog
+        title: "Choose a calendar file"
+        nameFilters: ["Calendars (*.ics)", "All files (*)"]
+        onAccepted: urlField.value = page.localPath(selectedFile)
+    }
+    Dialogs.FolderDialog {
+        id: icsFolderDialog
+        title: "Choose a folder of calendars"
+        onAccepted: urlField.value = page.localPath(selectedFolder)
     }
 
     // The type picker, built on first use.
