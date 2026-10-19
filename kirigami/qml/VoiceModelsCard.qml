@@ -28,8 +28,11 @@ ColumnLayout {
     readonly property bool anyInstalled: models.some(m => m.state === "installed")
     readonly property var downloading: models.find(m => m.state === "downloading") || null
     readonly property var recommended: models.find(m => m.recommended) || null
+    // Text to speech already works with some voice (espeak-ng needs no download, or a remote engine):
+    // then a missing Piper and no downloaded voice are nothing to warn about.
+    readonly property bool ttsReady: tts && status.kind === "ready"
     // The engine ships with its program; when the recommended model's is missing, so is the engine.
-    readonly property bool engineMissing: recommended !== null && !recommended.engineOk
+    readonly property bool engineMissing: recommended !== null && !recommended.engineOk && !ttsReady
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
@@ -100,7 +103,7 @@ ColumnLayout {
         visible: card.engineMissing
         type: Kirigami.MessageType.Warning
         text: card.tts
-            ? "Piper isn't installed. Install it (postmarketOS/Alpine edge: sudo apk add piper-tts), then "
+            ? "Piper isn't installed. Install it (sudo apk add piper-tts, from Alpine edge's testing repository), then "
               + "download a voice; or install espeak-ng (sudo apk add espeak-ng), which needs no download."
             : "The speech engine isn't installed. Install whisper.cpp (postmarketOS/Alpine: "
               + "sudo apk add whisper.cpp, Arch: whisper.cpp from the AUR), then download a model."
@@ -111,7 +114,7 @@ ColumnLayout {
         Layout.leftMargin: Kirigami.Units.largeSpacing
         Layout.rightMargin: Kirigami.Units.largeSpacing
         Layout.topMargin: Kirigami.Units.smallSpacing
-        visible: !card.anyInstalled && card.downloading === null && card.recommended !== null
+        visible: !card.anyInstalled && !card.ttsReady && card.downloading === null && card.recommended !== null
         type: Kirigami.MessageType.Information
         text: card.recommended
             ? (card.tts ? "No voice yet. " : "No speech model yet. ") + card.recommended.name + " ("
