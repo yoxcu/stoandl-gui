@@ -551,6 +551,7 @@ private:
     // poll of TaskStatus for a TaskChanged this client missed.
     QVariantMap m_tasks;
     QHash<QString, QElapsedTimer> m_taskAge;
+    QSet<QString> m_taskPolling;   // kinds whose TaskStatus poll is in flight
     QTimer *m_taskTimer = nullptr;
     // fetch(): the latest fetch per owner (an older one's answer is dropped).
     QHash<QObject *, quint64> m_fetchSeq;

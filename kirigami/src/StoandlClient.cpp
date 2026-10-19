@@ -1449,7 +1449,17 @@ void StoandlClient::pollTasks()
             taskStatusSeen(kind, QStringLiteral("timeout:it took longer than ten minutes"));
             continue;
         }
+        if (m_taskPolling.contains(kind))   // the last poll hasn't answered yet (a busy daemon)
+            continue;
+        m_taskPolling.insert(kind);
         readAsync(QStringLiteral("taskStatus"), {kind}, nullptr, [this, kind](const QVariant &v) {
+            m_taskPolling.remove(kind);
+            // A D-Bus failure is no answer about the task, unless the daemon is gone (and the task with it).
+            if (m_readErrors.contains(QStringLiteral("taskStatus"))) {
+                if (!m_daemonUp)
+                    taskStatusSeen(kind, QStringLiteral("error:stoandl stopped before it finished"));
+                return;
+            }
             const QVariantMap m = v.toMap();
             const QString tail = m.value(QStringLiteral("tail")).toString();
             taskStatusSeen(kind, m.value(QStringLiteral("kind")).toString() + QLatin1Char(':') + tail);
@@ -2853,7 +2863,7 @@ void StoandlClient::afterRead(const QString &name, const QVariant &value)
 {
     if (name == QLatin1String("updateFirmware") && value.toMap().value(QStringLiteral("ok")).toBool()) {
         startFirmwarePoll();
-    } else if (name == QLatin1String("voiceModels")) {
+    } else if (name == QLatin1String("voiceModels") && !m_readErrors.contains(name)) {
         // The schema's model and voice dropdowns list what is installed: a download or removal changes them.
         QString installed = QStringLiteral("#");   // never null: null means "not read yet"
         for (const QVariant &row : value.toList()) {
