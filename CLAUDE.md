@@ -82,13 +82,16 @@ holds only icons: **Watch preferences** (`WatchSettingsPage`), one entry per **s
 (Notifications, Weather, Calendar, Music, Voice, Health & battery, Apps & plugins, Connection & power,
 Firmware & language — `SchemaSettingsPage { pageName }`), **Backup & restore**, **Diagnostics &
 developer** (`DebugSettingsPage`, with the schema page "Developer" on top) and **About** (GUI and daemon
-versions, licence, a copyable support line). A schema page's description is its section titles (Advanced
+versions, licence, a copyable support line; the GUI version is CMake's `STOANDL_GUI_VERSION`, which the
+APKBUILD sets to its pkgver and the release CI to the tag in the Flatpak manifest, else `git describe` of
+the gui checkout itself, else `project()`'s VERSION — keep that in step with the tags). A schema page's description is its section titles (Advanced
 ones left out) joined by " · "; a schema page the list doesn't name shows up under **More**, so a page
 the daemon adds is never dropped. A `Kirigami.SearchField` on top (200 ms debounce) matches every word
-in a key's label, description, help or key, and — read on the field's first focus, since it can block
-5 s daemon-side — a watch pref's name, description, help or id; a hit ("Label — Page › Section") pushes
-its page with `focusKey`/`focusId`, which builds that page's rows at once, scrolls to the row and flashes
-it (`FocusFlash`). `Main.qml`'s `showTab()` pops pushed sub-pages on tab-switch and on re-tapping the
+in a key's label, description, help or key, and — read on the field's focus, since it can block 5 s
+daemon-side, and asked again on the next focus or watch-list change while the answer is empty (no watch
+yet) — a watch pref's name, description, help or id; a hit ("Label — Page › Section") pushes
+its page with `focusKey`/`focusId`, which builds that page's rows and cards at once, scrolls to the row and
+flashes it (`FocusFlash`, which scrolls back to the row while it flashes if the page's height changes). `Main.qml`'s `showTab()` pops pushed sub-pages on tab-switch and on re-tapping the
 active tab.
 
 **Schema pages** (`SchemaSettingsPage` = a ScrollablePage around **`SchemaSections`**, which Debug also
@@ -101,7 +104,10 @@ Kinds: `toggle`→`FormSwitchRow`, `combo`→`FormOptionRow`, `int`→`FormSpinR
 FormHeader+FormCard sections; sections titled `Advanced …` (a page's last) sit behind one "Advanced
 settings (N)" row, collapsed, and their row Loaders are inactive until it opens. A row whose `requires`
 (`key=value|key!=value` alternatives in GetConfig's spelling, parsed in `StoandlClient`) doesn't hold is
-**disabled, not hidden**, and its subtitle ends "· Used when “Label” is value". A service's master row
+**locked, not hidden** (`locked`: the control is off but the row's help still opens — `enabled: false`
+would disable the (?) with it), and its subtitle ends "· Used when “Label” is value". A master whose
+service has nothing to read yet (GetSyncStatus `no source`) says "No place yet" / "No calendar source
+yet", not "Not available here". A service's master row
 (GetSyncStatus' `key` column) adds its "Last sync · …" or, for Music, what plays; Weather, Calendar and
 Health & battery get a "Sync now" page action. A key that applies after a restart says "(after restart)"
 in its subtitle, and setting one shows `RestartMessage` ("Restart stoandl to apply: … [Restart now]" →
@@ -117,7 +123,9 @@ debounce), so `stoandl daemon set` and other clients show at once.
 **Row help** (the KDE HIG pattern: one line inline, the rest behind "?"). Every row component
 (`FormSwitchRow`, `FormOptionRow`, `FormTextRow`, `FormSpinRow`, `FormListRow`) takes `help` and builds one
 `RowHelp` (Kirigami.ContextualHelpButton: switch → trailing, option row → before the value, the others →
-next to the label), hidden while `help` is empty. A long press (on the label for text/spin/list rows,
+next to the label), hidden while `help` is empty, and `locked` (the control off, the help still on; the
+option row emits `activated`, not a bare `clicked`, so a locked one opens no picker — `FormSwitchRow` is
+our own row for the same reason: FormSwitchDelegate's inner Switch follows only `enabled`). A long press (on the label for text/spin/list rows,
 whose field owns the rest), a right click or F1/Menu open the same tooltip; a long press opens it on
 release (a tooltip opened during the press closes on the release) and, with pressAndHold connected,
 neither flips a switch nor opens a picker. `Accessible.description` is the description plus the help. A
@@ -196,7 +204,7 @@ applies the pick; the row shows only the stored value, so a refused pick needs n
 first section's row Loaders are synchronous (the screen the page opens on is complete in its first
 frame), the rest `asynchronous` (holding a placeholder height until ready): a fully synchronous build
 blocked ~0.35 s (Watch) / ~0.9 s (the old one-page daemon configuration) on x86, more than the push
-animation can hide. The cards are created once at page level (asynchronously) and moved into the
+animation can hide. The cards are created once at page level (asynchronously, except for a search hit) and moved into the
 `cardSlot` of the section holding their anchor key. Destroying a page while its rows are still incubating can leave Qt's
 in-progress-creation count behind (the engine then warns "There are still N items in the process of
 being created" at exit), so the smoke clears the page stack and quits only once nothing incubates.
@@ -232,7 +240,8 @@ and waits for the daemon to come back with nothing pending. `WatchSettingsPage` 
 sections, a row its `requires` disables, `notifWindowTimeout` in seconds and a help text, resets to
 defaults (mock only), presses `qlBack`'s row and picks the stored option in the picker
 (`stoandl-smoke: picker …`), and round-trips a Quiet Time window. Each schema page (`SchemaSections`)
-logs where its cards and anchors sit and which rows are disabled and why, opens its first row's help as
+logs where its cards and anchors sit and which rows are locked and why, opens a locked row's help
+(`stoandl-smoke: locked <key> help enabled=true shown=true`), opens its first row's help as
 a long press does (`stoandl-smoke: help <key> shown=true · <text>`), long-presses its first combo row
 (help, no picker) and then does the picker round trip on it, runs a read-only city search on Weather,
 speaks the test sentence and stops it on Voice (`stoandl-smoke: tts …`), and follows its links
@@ -242,7 +251,8 @@ support line. `NotificationsPage` fires the send-test, turns forwarding off (moc
 banner, presses its Turn on, then opens the per-app dialog, writes its app-name placement back unchanged
 and logs its preview for that override and for Default (each preview as `stoandl-smoke: preview
 <placement>: title=… | small=… | …`); `AppsPage` opens an extension's settings form and logs its fields
-(`[desc]`/`[help]`) and the values Save would send, the permission request banners (`stoandl-smoke: perm
+(`[desc]`/`[help]`) and the values Save would send, then opens it again (`reopened same=true`: the rows
+are built against the stored values, not the previous open's), the permission request banners (`stoandl-smoke: perm
 banners …`) and one app's permission dialog rows (`stoandl-smoke: perms key=status, …`), read-only;
 `WatchPage` logs the firmware answer (`stoandl-smoke: firmware checking=… kind=… update=…`), opens the
 details dialog and logs its firmware state, forces a re-check (both only with a watch connected), hands
