@@ -25,7 +25,7 @@ front-end used to ship alongside; it was retired on 2026-10-15.)
   reuses the cached answer or joins the call in flight, so the Watch tab coming back doesn't
   re-ask; an `error:` answer or a timeout only for a minute, like the daemon's failed lookups), the
   answer lands in the `firmwareInfo`/`firmwareChecking` properties the banner and
-  `WatchDetailsDialog` bind to, and Sync now / Check for updates call `forceFirmwareCheck()`
+  `WatchDetailsDialog` bind to, and Check for updates calls `forceFirmwareCheck()`
   (`CheckFirmwareForce`, falling back to `CheckFirmware` on `UnknownMethod`). With `firmware.github`
   on and the release list uncached, the daemon takes ~8 s on a phone: a blocking call there froze the
   first frame past Plasma Mobile’s 8 s launch splash, which then looked like a crash.
@@ -46,18 +46,48 @@ front-end used to ship alongside; it was retired on 2026-10-15.)
   synchronous `Q_INVOKABLE`. Each read is described once in `readSpec()` (the D-Bus method, a leading
   argument such as GetHealthSeries' metric, the argument types, the parser); the synchronous wrapper
   runs the same entry through `read()`, so a read is fetchable once it has a row there. Latest wins per
-  owner, and nothing is delivered after the owner died. Health, Battery (from the rows the Watch page
-  passes, then `watchesChanged`), Alerts, Watch preferences and the schema settings pages load this way, and
-  `refreshApps/Extensions/Plugins()` are asynchronous too (their signals arrive later). A settings
-  edit still re-reads synchronously, so its handler can put the control back at once. Per-refresh
-  `NameHasOwner` is gone: `NameOwnerChanged` tracks the daemon after the start-up probe.
-- **The config schema is cached** in `StoandlClient` (`configSchema`, through `read()` and `fetch()`
-  alike) for the daemon running now: dropped when the daemon goes or comes, on every `ConfigChanged`,
-  and when `voiceModels()` sees the installed set change (the model and voice dropdowns list them). A
-  page open costs a GetConfig (and GetSyncStatus), not the schema. `StoandlClient.forwarding`
-  (notification.forward, read on daemonUp and its ConfigChanged) drives the "Forwarding is off" banner,
-  and `restartPending` lists the keys `setConfig()` was told apply after a restart (cleared when the
-  daemon goes or comes).
+  owner, and nothing is delivered after the owner died. Every page load goes this way (Diagnostics, the
+  heartbeat, the health profile, the watch details, the calendar accounts, the voice cards' download
+  poll too), and `refreshWatches/Apps/Extensions/Plugins/Calendars()` are asynchronous as well (their
+  signals arrive later; `refreshWatches()` runs ListWatches, BluetoothStatus and LinkPause in parallel).
+  A settings edit still re-reads synchronously, so its handler can put the control back at once.
+  Per-refresh `NameHasOwner` is gone: `NameOwnerChanged` tracks the daemon after the start-up probe.
+- **Slow actions run, not block.** `StoandlClient.run(owner, ["name", args…], callback)` runs one
+  `readSpec()` row without blocking, like a one-read `fetch()` but never dropped for a newer call: the
+  syncs, the city search, `LaunchApp`, `UpdateFirmware`, `Ping` and `Transcribe` (their rows carry the
+  CLI's 120 s timeout; `afterRead()` starts the flash poll for UpdateFirmware on either path).
+  `callsInFlight` counts every asynchronous call; its `userCallsInFlight` part (fetch and run, what
+  someone waits for) drives Main.qml's one thin indeterminate bar along the top (after 300 ms).
+- **Watch tasks.** Sideload, screenshot, watch logs and core dump only start on the daemon
+  (`ok:started`, with an empty path the daemon picks the file under Pictures/Screenshots or
+  Documents/stoandl). `StoandlClient` follows the ones it started through `TaskChanged` (a 2 s
+  `TaskStatus` poll is the fallback, ten minutes the ceiling), lists them in `tasks` and ends each with
+  `taskFinished(kind, result)`; Main.qml reports every result, whichever page started it: a screenshot
+  opens `ScreenshotDialog` (Open / Open folder / Take another), logs and dumps toast with Open folder.
+- **D-Bus failures are worded once**, in `StoandlClient`'s `errorText()`: no reply → "stoandl didn't
+  answer in time (it may still be working)", unknown method → "Your stoandl daemon is older than this
+  app", an unowned name → "stoandl isn't running" or, while the daemon holds its private
+  `de.yoxcu.stoandl.Instance` name but not yet the public one (it takes that last), "still starting".
+  The raw error is logged. A status call carries it as `{kind: error, tail}`; a list read that failed
+  is named in `readErrors` (read name → why), which `ReadErrorMessage` shows so a page doesn't pass it
+  off as an empty list. `daemonState` (up / starting / flatpak / nosystemd / notinstalled / startlimit /
+  failed / stopped, the last four from `systemctl --user show stoandl`) words `DaemonPlaceholder`.
+- **Cached reads.** A `readSpec()` row marked `cached` is answered from `StoandlClient` for the daemon
+  running now (through `read()` and `fetch()` alike): the config schema and `NotifStyleChoices`. All are
+  dropped when the daemon goes or comes; the schema also on every `ConfigChanged` and when a
+  `voiceModels` read sees the installed set change (the model and voice dropdowns list them), and both
+  when `notifSetVibePattern()` changes a custom vibration. A page open costs a GetConfig (and
+  GetSyncStatus), not the schema. `StoandlClient.forwarding` (notification.forward, read on daemonUp and
+  its ConfigChanged) and `mutedUntil` (the mute-all's end, `NotifMuteAllStatus`, read on daemonUp, after
+  `notifSetMuteAll()` and on `refreshMuteAll()`, dropping to 0 by itself) drive the Alerts banner and the
+  Watch tab's chips; `restartPending` lists the keys `setConfig()` was told apply after a restart
+  (cleared when the daemon goes or comes), and `busyOp` (pairing / firmware / language) the op poll that
+  keeps "Restart now" waiting.
+- **Main.qml holds the window-wide pieces:** `confirm(heading, text, actionText, icon, onConfirm)` (one
+  `ConfirmDialog` for what can't be put back; what can be acts at once with Undo on its toast),
+  `dialogWidth(units)` (every dialog's width, never wider than the window), `turnOnForwarding()`,
+  `resumeNotifications()` and `formatUntil(epoch)`. `ConfigKey { key }` is how an empty state offers the
+  one switch that fills it, with the schema's label and egress ("Contacts …").
 - **Sub-pages are pushed with `Main.pushPage(component, props)`**, never `pageStack.push(Component)`:
   Kirigami creates a pushed Component with a QtObject parent, which makes Qt warn "Created graphical
   object was not placed in the graphics scene" for every page. `pushPage` creates it without a parent
@@ -148,10 +178,22 @@ note. Its Diagnostics group also pushes **`HeartbeatPage`**: the watch's hourly 
 reports `known=0` it shows *why* nothing is decoded instead of guessed values. It reads the daemon's
 stored record, but the daemon resolves the watch argument among *connected* watches only — with none
 connected it answers `unknown:` — so the row is gated like the other Debug tools and the page tells "no
-watch connected" apart from "nothing captured"). The Alerts tab keeps temporary mute, the per-app list
-and filters, a "Notification settings" action to Settings → Notifications, and — like the Watch tab — a
+watch connected" apart from "nothing captured"; Testing also has Ping the watch). The Alerts tab keeps
+the temporary mute of every app ("Muted until 15:00 [Resume now]"), the per-app list (a search field,
+Recent / By name; each row says its mute — "Muted until 14:30", "Muted on weekdays" — from `muteKind`,
+and its switch toggles only on/off, opening the app's dialog for a schedule or a mute that ends) and
+filters (a deleted one has Undo), a "Notification settings" action to Settings → Notifications, and a
 `ForwardingBanner` ("Forwarding is off … [Turn on]") while notification.forward is off; the key's one
-control is the first row of Settings → Notifications.
+control is the first row of Settings → Notifications. The per-app dialog has a Mute row (Unmuted /
+Muted / Muted on weekdays / Muted at weekends, notification.default_mute's words), 30 min / 1 hr / Today
+(a duration to midnight), the vibrations with a custom-vibration editor (NotifSetVibePattern), and icon,
+colour and app-name rows on the page's OptionPicker that show the stored values. The Watch tab shows
+the same two states as `ActionChip`s ("Forwarding off [Turn on]", "Muted until 15:00 [Resume]"); its
+pairing dialog says how to pair (Settings → Bluetooth on the watch), offers "Turn on Bluetooth Classic"
+(SetConfig + Restart, then opens again) before it searches while classic.discover is off, and Retry
+after a timeout; Re-pair (a disconnected watch's row, the watch details) asks first. Sync now runs the
+weather, calendar and health syncs that are on; Check for updates is its own action. Pull to refresh on
+Watch, Health, Apps, Alerts and Accounts and feeds re-reads that page and nothing else.
 
 **Health is period-based** (mirrors the official Pebble app's `HealthTimeRange`). One selector
 (Daily/Weekly/Monthly) + one navigator (`periodType`/`periodOffset`) drive all three sections.
@@ -223,11 +265,13 @@ read only the Loader's properties.
 page that defines one, and quit — so `QT_QPA_PLATFORM=offscreen tools/run-with-mock.sh` proves
 QML → `StoandlClient` → D-Bus → mock → render end-to-end and self-terminates. The env var is read via `StoandlClient.smokeMs`.
 Exercises and the quit go through `Main.smokeWhenIdle(fn)`: queued and run once
-`StoandlClient.callsInFlight` and `incubatingObjects()` are both 0, so a hook sees the data its page's
+`StoandlClient.callsInFlight`, its `tasks` and `incubatingObjects()` are all empty, so a hook sees the data its page's
 asynchronous loads fetched and the rows built from it. One fn runs per 50 ms check, so the D-Bus signals
 a fn's calls cause (ConfigChanged …) are dispatched, and their reads started, before the next looks; and
 the queue is **depth first**: what a running fn queues runs before the rest, so a page's walk (and what
-its hooks queue in turn) ends before the next step pops that page. The quit waits for an empty queue. A
+its hooks queue in turn) ends before the next step pops that page. The next tab, and the quit, wait for
+an empty queue, so every exercise runs while its page shows. `STOANDL_SMOKE_SIZE=360x740` (with
+`QT_QUICK_CONTROLS_MOBILE=1`) walks at a phone's size and mode. A
 hook that pushes a page and then reads it (SettingsPage's sub-pages, the WatchPage's BatteryPage) goes
 through it as well; a hook that pushes a page pops it again (one page at a time, as someone would).
 
@@ -247,17 +291,24 @@ a long press does (`stoandl-smoke: help <key> shown=true · <text>`), long-press
 speaks the test sentence and stops it on Voice (`stoandl-smoke: tts …`), and follows its links
 (Accounts and feeds, Health profile, whose hook does a Units picker round trip). `DebugSettingsPage`
 runs the Developer keys' hook and pushes `HeartbeatPage`, which filters; `AboutSettingsPage` logs its
-support line. `NotificationsPage` fires the send-test, turns forwarding off (mock only) and logs the
-banner, presses its Turn on, then opens the per-app dialog, writes its app-name placement back unchanged
-and logs its preview for that override and for Default (each preview as `stoandl-smoke: preview
-<placement>: title=… | small=… | …`); `AppsPage` opens an extension's settings form and logs its fields
+support line; it also starts a watch-logs and a core-dump task and pings (each result is logged as
+`stoandl-smoke: task <kind> -> …`). `HealthPage` logs its Health data offer and a pull to refresh.
+`NotificationsPage` fires the send-test, logs the per-app rows' mutes and a search, turns forwarding off
+(mock only) and logs the banner, presses its Turn on, mutes all for 30 minutes and resumes (mock only),
+then opens the per-app dialog, logs its rows, writes its app-name placement to Default and back and
+logs the preview for each (`stoandl-smoke: preview <placement>: title=… | small=… | …`), and (mock only)
+saves and removes a custom vibration; `AppsPage` logs its plugins offer, opens and cancels a confirm, starts
+a sideload task (mock only), crashes and restarts an extension (mock only, its last stderr line), opens an extension's settings form and logs its fields
 (`[desc]`/`[help]`) and the values Save would send, then opens it again (`reopened same=true`: the rows
 are built against the stored values, not the previous open's), the permission request banners (`stoandl-smoke: perm
 banners …`) and one app's permission dialog rows (`stoandl-smoke: perms key=status, …`), read-only;
 `WatchPage` logs the firmware answer (`stoandl-smoke: firmware checking=… kind=… update=…`), opens the
-details dialog and logs its firmware state, forces a re-check (both only with a watch connected), hands
-the pairing dialog the daemon's search states (the bare `pending:` and a pause note) and pushes
-`BatteryPage` even with no watch connected; with the daemon down the tick presses "Start daemon". The
+details dialog and logs its firmware state, forces a re-check, runs Sync now and takes a screenshot
+(whose preview Main.qml opens and closes) (all only with a watch connected), hands the pairing dialog the
+daemon's search states (the bare `pending:`, a pause note, a timeout's hint and Retry) and (mock only)
+opens it with Bluetooth Classic off, pushes `BatteryPage` even with no watch connected, walks
+Disconnect → Connect and (mock only) the mute chip's Resume; with the daemon down the tick logs
+`daemonState` and presses "Start daemon". The
 Quiet Time round trip writes the watch's own window back afterwards (the hook also runs against a real
 daemon). With `STOANDL_SMOKE_FLASH=1` the `WatchPage` hook also flashes a `.pbz` that doesn't exist, as
 Settings → Diagnostics & developer does (the mock walks any path, a real daemon refuses a missing file),
@@ -267,10 +318,11 @@ Settings → Diagnostics & developer while the watch is in recovery). This harne
 delegate-binding scope trap below was caught, so it is worth keeping honest. The mock's
 `GetConfigSchema` is the daemon's own (`tools/config-schema.tsv`, written by its ConfigSchemaTest) and its
 watch-pref sections, help and requires are too (`tools/watch-pref-text.tsv`), so the `schema page '<page>'
-N keys in S sections` lines count the real schema. A clean walk prints no warning but Kirigami's own six
-"Could not create delegate for ToolBarLayout" lines at start-up. Mock switches for the states a healthy
-mock never reaches: `MOCK_NO_WATCH=1` (paired, nothing connected — also the only way to walk "Pair new
-watch", since the daemon opens no window while a watch is connected), `MOCK_PAIR_PAUSE=bt|busy|slept`
+N keys in S sections` lines count the real schema. A clean walk prints no warning at all. (Kirigami's
+"Could not create delegate for ToolBarLayout" lines came from a page action turning visible while the
+header toolbar still built its buttons: keep a page's actions in place and change their text or
+`enabled` instead, as the Watch tab's Disconnect/Connect does.) Mock switches for the states a healthy
+mock never reaches: `MOCK_NO_WATCH=1` (paired, nothing connected), `MOCK_PAIR_PAUSE=bt|busy|slept`
 (each pairing window starts with that "can't discover" note), `MOCK_HB_UNKNOWN=1` (unverified heartbeat
 layout), `MOCK_FW_DOWNGRADE=1` (every sideload is a downgrade through recovery; the watch lists as
 `recovery` while it is flashed there, like on the daemon), `MOCK_FW_DOWNGRADE=drop` (the same, but the watch
@@ -282,9 +334,10 @@ that late without blocking the mock's other calls, like the daemon fetching an u
 list; the mock prints each check as `mock: CheckFirmware #n`, so a smoke log shows how often the GUI asked).
 
 ## Hard rules
-- **The interface has ten signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
+- **The interface has eleven signals (`WatchesChanged`/`FirmwareProgress`/`LockerChanged`/
   `LanguageProgress`/`ExtensionsChanged`/`ExtensionStateChanged`/`CalendarsChanged`/`PluginsChanged`/
-  `PermissionRequestsChanged`/`ConfigChanged`) that augment polling — polling stays as the fallback.**
+  `PermissionRequestsChanged`/`ConfigChanged`/`TaskChanged`) that augment polling — polling stays as the
+  fallback.** (`TaskChanged(s kind, s status)` → the watch tasks above.)
   (`ConfigChanged(s key)` → `configChanged(key)`: the settings pages re-read, the cached schema is
   dropped, and `forwarding` follows notification.forward.) (`CalendarsChanged` → `refreshCalendars()`: the daemon
   pokes it when an async sync adds/drops calendars after a source CRUD, so the Calendars page updates
@@ -306,10 +359,12 @@ list; the mock prints each check as `mock: CheckFirmware #n`, so a smoke log sho
   rely on `LockerChanged` alone; the daemon pokes it for every locker uuid or active-face change.)
 - Returns are either `kind:message` (split on first `:`) or tab-separated `as` records. Parse in
   `StoandlClient`, never in QML. Handle `notready` as the "no watch / not ready" empty state.
-- The daemon is NOT D-Bus-activated. If the bus name is unowned → show "daemon not running", offer
-  "Start daemon": `systemctl --user reset-failed stoandl`, then `systemctl --user start stoandl` (the
-  unit's `StartLimitBurst` refuses a plain start once tripped, silently from a button), and toast a
-  failed start with systemctl's own first stderr line (`daemonStartFailed`). Never assume it's up.
+- The daemon is NOT D-Bus-activated. If the bus name is unowned → `DaemonPlaceholder` says why
+  (`daemonState`), and where systemd can start it here offers "Start daemon": `systemctl --user
+  reset-failed stoandl`, then `systemctl --user start stoandl` (the unit's `StartLimitBurst` refuses a
+  plain start once tripped, silently from a button), and toasts a failed start with systemctl's own first
+  stderr line (`daemonStartFailed`). In the Flatpak, without systemctl or without the unit it shows the
+  command instead. Never assume it's up.
 - Paths passed to SideloadApp/SideloadFirmware/etc. are **absolute, daemon-side**.
 - **Actions stay on the page `actions` (Kirigami renders them: header on desktop, footer toolbar on
   mobile); never hand-place them, NO round floating FAB.** Pages keep their `title`. A page's
@@ -349,14 +404,17 @@ stoandl.conf key was written, by any client or the daemon: re-call GetConfig) �
 polling (see Hard rules).
 The GUI also consumes daemon-side hooks beyond the original 51 methods: `transport` on ListWatches +
 `synced` on ListApps (#4); `GetSyncStatus` (#5; its 5th column `key` names the service's master key —
-`SetSyncEnabled` is an alias for SetConfig of it, and the GUI no longer calls it); `ExtList.config` + `ExtOpenConfig` +
+`SetSyncEnabled` is an alias for SetConfig of it, and the GUI no longer calls it); `ExtList.config` (and its 9th column, the last stderr line) +
 `ExtConfigSchema`/`ExtGetConfig`/`ExtSetConfig` (#7); `GetHealthSummary`/`GetHealthSeries` (#8);
 `SetWatchNickname` (#9); `GetConfigSchema` (16 columns) /`GetConfig`/`SetConfig` (#10), `Restart`,
 `ListWatchPrefs` columns 8–10 (section, help, requires) and `ResetWatchPrefs`; `VoiceModels`' 9th column
 `kind` (stt|tts), `TtsStatus`/`Speak`/`StopSpeaking`; a manifest field's optional `description`/`help`
 in `ExtConfigSchema`; `WatchDetails`; notification
 regex filters; the per-app app-name placement (`NotifSetAppName` + `NotifList`'s 7th column, the
-override of `notification.app_name`; empty = follows it); a changelog URL on `CheckFirmware`. All are
+override of `notification.app_name`; empty = follows it); a changelog URL on `CheckFirmware`; the watch
+tasks (`TaskStatus`/`TaskChanged`, SideloadApp/TakeScreenshot/GatherLogs/GetCoreDump answering
+`ok:started`); `NotifMuteAllStatus`; `NotifSetVibePattern`/`NotifVibeTest`; `Ping`; `Transcribe`;
+`ListCalendarSources`' `lastError`/`lastSync` columns. All are
 implemented in the mock (`tools/mock_stoandl.py`) and must be grown in the real Kotlin daemon to match.
 (Notification quiet-hours hooks were dropped — superseded by the daemon's `dnd.sync`.)
 
