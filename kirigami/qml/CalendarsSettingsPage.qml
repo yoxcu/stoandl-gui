@@ -73,7 +73,7 @@ Kirigami.ScrollablePage {
     }
 
     function reload() {
-        if (!StoandlClient.daemonUp) { page.sources = []; page.calendars = []; return; }
+        if (!StoandlClient.daemonUp) { page.sources = []; page.calendars = []; page.refreshing = false; return; }
         StoandlClient.fetch(page, [["listCalendarSources"], ["listCalendars"]], function (r) {
             page.sources = r[0];
             page.calendars = r[1];

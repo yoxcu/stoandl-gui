@@ -91,8 +91,10 @@ Kirigami.ScrollablePage {
 
     // Asynchronous (one round of parallel reads); the latest call wins. An unchanged list keeps its rows.
     function reload() {
-        if (!StoandlClient.daemonUp)
+        if (!StoandlClient.daemonUp) {
+            page.refreshing = false;
             return;
+        }
         StoandlClient.refreshMuteAll();
         StoandlClient.fetch(page, [["notifList"], ["notifListFilters"], ["getConfig"]], function (r) {
             if (JSON.stringify(r[0]) !== JSON.stringify(page.apps)) page.apps = r[0];

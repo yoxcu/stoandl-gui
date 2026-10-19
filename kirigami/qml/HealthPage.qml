@@ -50,6 +50,7 @@ Kirigami.ScrollablePage {
             page.summary = ({});
             page.sleepSegments = []; page.heartSamples = [];
             page.stepBarData = []; page.sleepBarData = []; page.heartBarData = [];
+            page.refreshing = false;
             return;
         }
         // One asynchronous round: the summary, steps (hourly buckets for a day, per-day bars for a

@@ -199,6 +199,14 @@ Kirigami.ScrollablePage {
         if (!StoandlClient.daemonUp) return;
         console.log("stoandl-smoke: plugins key known=" + pluginsKey.known + " on=" + pluginsKey.isOn
                     + " offer='Turn on " + pluginsKey.label + "' · " + pluginsKey.egressText);
+        // The offer's button (mock only, put back after): the key turns on and the offer goes.
+        if (StoandlClient.daemonVersion.indexOf("mock") === 0 && pluginsKey.known && !pluginsKey.isOn) {
+            pluginsKey.turnOn();
+            applicationWindow().smokeWhenIdle(function () {
+                console.log("stoandl-smoke: plugins turned on=" + pluginsKey.isOn);
+                StoandlClient.setConfig("plugins.enabled", "false");
+            });
+        }
         // "Restore default order" asks first (Main.confirm); Cancel leaves the order alone.
         var dlg = applicationWindow().confirm("Restore default order", "smoke", "Restore", "", function () {
             console.log("stoandl-smoke: restore order confirmed (unexpected)");
