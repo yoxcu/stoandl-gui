@@ -185,22 +185,33 @@ Kirigami.ScrollablePage {
     Component.onCompleted: page.reload()
 
     // Read-only (it also runs against a real daemon): an extension's settings form (its fields' subtitles,
-    // help and the values Save would send), the request banners, then one app's permission dialog.
+    // help and the values Save would send, then opened again: the rows are rebuilt against the stored
+    // values, not the previous open's), the request banners, then one app's permission dialog. Each step
+    // waits until the last one's rows are built: a dialog closed while its footer still incubates warns.
     function smokeExercise() {
         if (!StoandlClient.daemonUp) return;
         var ext = page.extensions.find(function (e) { return e.config === "schema" && e.installed; });
-        if (ext) {
-            extConfigDialog.openFor(ext.name);
-            var saved = JSON.stringify(extConfigDialog.collect());
-            console.log("stoandl-smoke: ext config " + ext.name + " " + extConfigDialog.fields.map(function (f) {
-                return f.key + (f.description ? "[desc]" : "") + (f.help ? "[help]" : ""); }).join(", ")
-                + " · save " + saved);
+        if (!ext) return page.smokePerms();
+        var win = applicationWindow();
+        extConfigDialog.openFor(ext.name);
+        var saved = JSON.stringify(extConfigDialog.collect());
+        console.log("stoandl-smoke: ext config " + ext.name + " " + extConfigDialog.fields.map(function (f) {
+            return f.key + (f.description ? "[desc]" : "") + (f.help ? "[help]" : ""); }).join(", ")
+            + " · save " + saved);
+        win.smokeWhenIdle(function () {
             extConfigDialog.close();
-            // Opened again, the form shows the stored values, not the previous open's rows.
-            extConfigDialog.openFor(ext.name);
-            console.log("stoandl-smoke: ext config reopened same=" + (JSON.stringify(extConfigDialog.collect()) === saved));
-            extConfigDialog.close();
-        }
+            win.smokeWhenIdle(function () {
+                extConfigDialog.openFor(ext.name);
+                win.smokeWhenIdle(function () {
+                    console.log("stoandl-smoke: ext config reopened same="
+                                + (JSON.stringify(extConfigDialog.collect()) === saved));
+                    extConfigDialog.close();
+                    page.smokePerms();
+                });
+            });
+        });
+    }
+    function smokePerms() {
         console.log("stoandl-smoke: perm banners " + page.permGroups.map(function (g) {
             return g.appName + (g.running ? "" : "(closed)") }).join(", ") + " · waiting apps " + page.permWaitingApps.length);
         var uuid = page.permWaitingApps.length > 0 ? page.permWaitingApps[0] : (page.apps.length > 0 ? page.apps[0].uuid : "");
