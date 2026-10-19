@@ -31,6 +31,12 @@ class StoandlClient : public QObject
     QML_SINGLETON
 
     Q_PROPERTY(bool daemonUp READ daemonUp NOTIFY daemonUpChanged)
+    // Why the daemon isn't there, for the "not running" placeholder: `up`; `starting` (it holds its
+    // instance name, not yet the public one); `flatpak` (this GUI runs in a Flatpak and can't ask the host's
+    // systemd); `nosystemd` (no `systemctl` here, e.g. OpenRC); else what `systemctl --user show stoandl`
+    // says: `notinstalled` (no unit), `startlimit` (it crashed too often and systemd gave up), `failed`
+    // or `stopped`.
+    Q_PROPERTY(QString daemonState READ daemonState NOTIFY daemonStateChanged)
     // Host Bluetooth on/usable (BluetoothStatus, polled on the 20 s watch tick). The daemon detects
     // adapter-off / rfkill / airplane-mode; the GUI shows a "Bluetooth is off" state when this is false.
     Q_PROPERTY(bool bluetoothOn READ bluetoothOn NOTIFY bluetoothOnChanged)
@@ -76,6 +82,7 @@ public:
     explicit StoandlClient(QObject *parent = nullptr);
 
     bool daemonUp() const { return m_daemonUp; }
+    QString daemonState() const;
     bool bluetoothOn() const { return m_bluetoothOn; }
     QString linkPause() const { return m_linkPause; }
     static int smokeMs() { return qEnvironmentVariableIntValue("STOANDL_SMOKE_MS"); }
@@ -327,6 +334,7 @@ public:
 
 Q_SIGNALS:
     void daemonUpChanged();
+    void daemonStateChanged();
     void bluetoothOnChanged();                       // host Bluetooth on/off (BluetoothStatus, watch tick)
     void linkPauseChanged();
     void watchesChanged(const QVariantList &rows);   // WatchesChanged signal + 20 s safety-net poll
@@ -417,15 +425,20 @@ private:
     void         refreshForwarding();
     void         dropConfigSchema();
     void         runCli(const QString &op, const QStringList &args);
-    // Run `systemctl --user <args>` asynchronously; `done` gets (exit 0, first stderr line / reason).
+    // Run `systemctl --user <args>` asynchronously; `done` gets (exit 0, first stderr line / reason, stdout).
     void         runSystemctl(const QStringList &args,
-                              const std::function<void(bool ok, const QString &message)> &done);
+                              const std::function<void(bool ok, const QString &message, const QString &out)> &done);
+    // Ask systemd why the daemon isn't running (m_serviceState), unless it is up or starting.
+    void         probeService();
+    void         setInstanceUp(bool up);
 
     QDBusConnection m_bus;
     bool            m_daemonUp = false;
     // The daemon's private instance name is owned: it is running, and starting when the public name
     // isn't owned yet (the daemon takes that last).
     bool            m_instanceUp = false;
+    // probeService()'s answer: stopped | failed | startlimit | notinstalled | nosystemd.
+    QString         m_serviceState = QStringLiteral("stopped");
     bool            m_bluetoothOn = true;   // assume on until the first BluetoothStatus poll says otherwise
     QString         m_linkPause;
 

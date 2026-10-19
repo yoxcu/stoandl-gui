@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QDir>
+#include <QFile>
 #include <QDBusMessage>
 #include <QDBusPendingCall>
 #include <QDBusPendingReply>
@@ -2089,8 +2090,9 @@ void StoandlClient::recheckDaemon()
         const QDBusMessage r = m_bus.call(m, QDBus::Block, NAME_TIMEOUT_MS);
         return r.type() != QDBusMessage::ErrorMessage && r.arguments().value(0).toBool();
     };
-    m_instanceUp = owned(INSTANCE);
+    setInstanceUp(owned(INSTANCE));
     setDaemonUp(owned(SERVICE));
+    probeService();
 }
 
 void StoandlClient::setDaemonUp(bool up)
@@ -2129,7 +2131,10 @@ void StoandlClient::setDaemonUp(bool up)
     // A daemon that went away (or a new one) owes us a fresh firmware answer.
     if (m_fwHaveInfo || !m_fwInfo.isEmpty() || m_fwCheckInFlight)
         clearFirmwareInfo(true);
+    if (!up)
+        probeService();
     Q_EMIT daemonUpChanged();
+    Q_EMIT daemonStateChanged();
 }
 
 void StoandlClient::dropConfigSchema()
@@ -2166,9 +2171,63 @@ void StoandlClient::onConfigChanged(const QString &key)
 void StoandlClient::onNameOwnerChanged(const QString &name, const QString &, const QString &newOwner)
 {
     if (name == QLatin1String(INSTANCE))
-        m_instanceUp = !newOwner.isEmpty();
+        setInstanceUp(!newOwner.isEmpty());
     else if (name == QLatin1String(SERVICE))
         setDaemonUp(!newOwner.isEmpty());
+}
+
+void StoandlClient::setInstanceUp(bool up)
+{
+    if (up == m_instanceUp)
+        return;
+    m_instanceUp = up;
+    if (!up)
+        probeService();
+    Q_EMIT daemonStateChanged();
+}
+
+namespace {
+bool inFlatpak() { return QFile::exists(QStringLiteral("/.flatpak-info")); }
+} // namespace
+
+QString StoandlClient::daemonState() const
+{
+    if (m_daemonUp)
+        return QStringLiteral("up");
+    if (m_instanceUp)
+        return QStringLiteral("starting");
+    if (inFlatpak())
+        return QStringLiteral("flatpak");
+    return m_serviceState;
+}
+
+void StoandlClient::probeService()
+{
+    if (m_daemonUp || m_instanceUp || inFlatpak())
+        return;
+    runSystemctl({ QStringLiteral("show"), QStringLiteral("-p"), QStringLiteral("LoadState"),
+                   QStringLiteral("-p"), QStringLiteral("ActiveState"), QStringLiteral("-p"), QStringLiteral("Result"),
+                   QStringLiteral("stoandl") },
+                 [this](bool ok, const QString &message, const QString &out) {
+        QString state = QStringLiteral("stopped");
+        if (message.startsWith(QLatin1String("could not run systemctl"))) {
+            state = QStringLiteral("nosystemd");
+        } else if (ok) {
+            QHash<QString, QString> props;
+            for (const QString &line : out.split(QLatin1Char('\n'), Qt::SkipEmptyParts))
+                props.insert(line.section(QLatin1Char('='), 0, 0), line.section(QLatin1Char('='), 1));
+            if (props.value(QStringLiteral("LoadState")) == QLatin1String("not-found"))
+                state = QStringLiteral("notinstalled");
+            else if (props.value(QStringLiteral("Result")) == QLatin1String("start-limit-hit"))
+                state = QStringLiteral("startlimit");
+            else if (props.value(QStringLiteral("ActiveState")) == QLatin1String("failed"))
+                state = QStringLiteral("failed");
+        }
+        if (state != m_serviceState) {
+            m_serviceState = state;
+            Q_EMIT daemonStateChanged();
+        }
+    });
 }
 
 // --- reactive signals (de.yoxcu.stoandl.Control) ---------------------------
@@ -2224,14 +2283,14 @@ void StoandlClient::onExtensionStateChanged(const QString &name, const QString &
 }
 
 void StoandlClient::runSystemctl(const QStringList &args,
-                                 const std::function<void(bool ok, const QString &message)> &done)
+                                 const std::function<void(bool ok, const QString &message, const QString &out)> &done)
 {
     auto *p = new QProcess(this);
     // FailedToStart never reaches finished(), so each outcome reports exactly once.
     connect(p, &QProcess::errorOccurred, this, [p, done](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart)
             return;
-        done(false, QStringLiteral("could not run systemctl (%1)").arg(p->errorString()));
+        done(false, QStringLiteral("could not run systemctl (%1)").arg(p->errorString()), QString());
         p->deleteLater();
     });
     connect(p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
@@ -2241,7 +2300,7 @@ void StoandlClient::runSystemctl(const QStringList &args,
         QString msg = QString::fromUtf8(p->readAllStandardError()).trimmed().section(QLatin1Char('\n'), 0, 0);
         if (msg.isEmpty())
             msg = QStringLiteral("systemctl exited with code %1").arg(code);
-        done(st == QProcess::NormalExit && code == 0, msg);
+        done(st == QProcess::NormalExit && code == 0, msg, QString::fromUtf8(p->readAllStandardOutput()));
         p->deleteLater();
     });
     p->start(QStringLiteral("systemctl"), QStringList{ QStringLiteral("--user") } + args);
@@ -2253,11 +2312,12 @@ void StoandlClient::startDaemon()
     // first: the unit allows StartLimitBurst=5 starts per 300 s, and once that trips a plain
     // `start` is refused until `reset-failed`, however long ago the crashes were. The reset's own
     // outcome doesn't matter (it fails harmlessly on a unit that isn't failed) — the start's does.
-    runSystemctl({ QStringLiteral("reset-failed"), QStringLiteral("stoandl") }, [this](bool, const QString &) {
-        runSystemctl({ QStringLiteral("start"), QStringLiteral("stoandl") }, [this](bool ok, const QString &message) {
+    runSystemctl({ QStringLiteral("reset-failed"), QStringLiteral("stoandl") }, [this](bool, const QString &, const QString &) {
+        runSystemctl({ QStringLiteral("start"), QStringLiteral("stoandl") }, [this](bool ok, const QString &message, const QString &) {
             if (!ok) {
                 qCWarning(lcStoandl).noquote() << "systemctl --user start stoandl failed:" << message;
                 Q_EMIT daemonStartFailed(message);
+                probeService();
                 return;
             }
             // NameOwnerChanged should fire, but re-probe a couple of times as a fallback.

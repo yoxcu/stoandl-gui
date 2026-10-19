@@ -146,7 +146,7 @@ Kirigami.ApplicationWindow {
             // Daemon down: press "Start daemon" once, as DaemonPlaceholder's action does (a failed
             // start is logged by StoandlClient and toasted by the handler below).
             if (smokeTimer.step === 0 && !StoandlClient.daemonUp) {
-                console.log("stoandl-smoke: daemon down, pressing Start daemon");
+                console.log("stoandl-smoke: daemon down (" + StoandlClient.daemonState + "), pressing Start daemon");
                 StoandlClient.startDaemon();
             }
             if (smokeTimer.step >= root.pageComponents.length) {

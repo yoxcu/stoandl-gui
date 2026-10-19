@@ -148,18 +148,21 @@ Kirigami.ScrollablePage {
     }
 
     // --- empty states ------------------------------------------------------
+    DaemonPlaceholder {
+        anchors.centerIn: parent
+        width: parent.width - Kirigami.Units.gridUnit * 4
+        visible: !StoandlClient.daemonUp
+    }
     Kirigami.PlaceholderMessage {
         anchors.centerIn: parent
         width: parent.width - Kirigami.Units.gridUnit * 4
-        visible: !page.hasInsights
+        visible: StoandlClient.daemonUp && !page.hasInsights
         icon.name: page.insights && page.insights.kind === "notready" ? "battery-missing-symbolic" : "battery-symbolic"
         // notready: only when both captures are off; unknown: with nothing connected is the other empty case.
-        text: !StoandlClient.daemonUp ? "Daemon not running"
-              : (page.insights && page.insights.kind === "notready") ? "Battery capture is off"
+        text: (page.insights && page.insights.kind === "notready") ? "Battery capture is off"
               : (page.insights && page.insights.kind === "unknown" && !page.watchConnected) ? "No watch connected"
               : "No battery data yet"
-        explanation: !StoandlClient.daemonUp ? "Start it with: systemctl --user reset-failed stoandl; systemctl --user start stoandl"
-              : (page.insights && page.insights.kind === "notready")
+        explanation: (page.insights && page.insights.kind === "notready")
                 ? "stoandl records neither the analytics heartbeat nor the battery level. Turn on “Battery insights” or “Battery level log” in Settings → Health & battery."
               : (page.insights && page.insights.kind === "unknown" && !page.watchConnected)
                 ? "Battery insights are for the connected watch. Connect it to see its battery."
