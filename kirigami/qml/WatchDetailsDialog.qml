@@ -15,6 +15,8 @@ Kirigami.Dialog {
 
     signal forgetRequested(string name)
     signal repairRequested(string name)
+    // Check for updates: the Watch page asks and toasts the answer (its own action does the same).
+    signal updateCheckRequested()
 
     // 'main' | 'language'
     property string view: "main"
@@ -31,7 +33,6 @@ Kirigami.Dialog {
     readonly property string fwState: StoandlClient.firmwareChecking ? "checking…"
         : fw.kind === "ok" ? (fw.updateAvailable ? fw.latest + " available" : "up to date")
         : ""
-    property bool fwCheckRequested: false
 
     title: view === "language" ? "Watch language"
          : (details.name ? (details.name + (details.code ? " · " + details.code : "")) : "Watch")
@@ -71,16 +72,6 @@ Kirigami.Dialog {
 
     Connections {
         target: StoandlClient
-        function onFirmwareInfoChanged() {
-            if (!dialog.fwCheckRequested || StoandlClient.firmwareChecking)
-                return;
-            dialog.fwCheckRequested = false;
-            if (dialog.fw.kind === "ok")
-                dialog.toast(dialog.fw.updateAvailable ? ("PebbleOS " + dialog.fw.latest + " available")
-                                                       : "Firmware up to date");
-            else if (dialog.fw.kind)
-                dialog.toast("Firmware: " + (dialog.fw.tail || dialog.fw.kind));
-        }
         function onLanguageStatus(kind, percent, detail) {
             if (kind === "success") { dialog.langBusy = false; dialog.langPercent = -1; dialog.toast("Language pack installed"); dialog.loadLanguages(); }
             else if (kind === "failed") { dialog.langBusy = false; dialog.langPercent = -1; dialog.toast("Language install failed: " + detail); }
@@ -257,11 +248,8 @@ Kirigami.Dialog {
             ActionRow {
                 text: StoandlClient.firmwareChecking ? "Checking for updates…" : "Check for updates"
                 iconName: "view-refresh-symbolic"
-                enabled: StoandlClient.daemonUp && !dialog.fwCheckRequested
-                onClicked: {
-                    dialog.fwCheckRequested = true;   // the answer is toasted by onFirmwareInfoChanged
-                    StoandlClient.forceFirmwareCheck();
-                }
+                enabled: StoandlClient.daemonUp && !StoandlClient.firmwareChecking
+                onClicked: dialog.updateCheckRequested()
             }
             ActionRow {
                 text: "Re-pair watch…"; iconName: "network-bluetooth-symbolic"

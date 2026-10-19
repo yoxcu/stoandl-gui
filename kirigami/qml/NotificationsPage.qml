@@ -101,11 +101,15 @@ Kirigami.ScrollablePage {
             page.appNameGlobal = dialogPreview.placementOf(values["notification.app_name"]);
             var img = values["notification.images"];
             page.imagesGlobal = img === undefined || String(img).toLowerCase() !== "false";
+            page.refreshing = false;
         });
     }
 
     // Kept while another tab shows (Main.qml): re-read when it comes back.
     function refreshOnShow() { page.reload(); }
+
+    supportsRefreshing: true
+    onRefreshingChanged: if (refreshing) page.reload()
 
     Component { id: notificationSettingsPage; SchemaSettingsPage { pageName: "Notifications" } }
 

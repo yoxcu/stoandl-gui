@@ -58,6 +58,10 @@ Kirigami.ScrollablePage {
     // Kept while another tab shows (Main.qml): re-read when it comes back.
     function refreshOnShow() { page.reload(); }
 
+    // Pull to refresh re-reads the locker, the extensions and the plugins (it ends with the locker's answer).
+    supportsRefreshing: true
+    onRefreshingChanged: if (refreshing) page.reload()
+
     // --- Permissions ---------------------------------------------------------
     function answer(group, allow) {
         var failed = 0;
@@ -167,7 +171,10 @@ Kirigami.ScrollablePage {
         target: StoandlClient
         // An unchanged list (the re-read on show, a LockerChanged that only confirms a refresh) keeps
         // the rows instead of rebuilding them.
-        function onAppsChanged(rows) { if (JSON.stringify(rows) !== JSON.stringify(page.apps)) page.apps = rows; }
+        function onAppsChanged(rows) {
+            if (JSON.stringify(rows) !== JSON.stringify(page.apps)) page.apps = rows;
+            page.refreshing = false;
+        }
         function onExtensionsChanged(rows) { page.extensions = rows; }
         function onPluginsChanged(rows) { page.plugins = rows; }
         function onPermissionRequestsChanged(rows) { page.permRequests = rows; }
@@ -265,14 +272,6 @@ Kirigami.ScrollablePage {
             visible: page.extSegment
             enabled: StoandlClient.daemonUp
             onTriggered: extFolderDialog.open()
-        },
-        Kirigami.Action {
-            icon.name: "view-refresh-symbolic"
-            // Re-reads the locker from the daemon (ListApps) — the watch↔locker sync is automatic, so
-            // this only refreshes what's shown here, hence "Refresh" rather than "Sync".
-            text: "Refresh"
-            enabled: StoandlClient.daemonUp
-            onTriggered: { page.reload(); page.toast("Refreshed"); }
         },
         Kirigami.Action {
             icon.name: "edit-reset-symbolic"

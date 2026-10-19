@@ -66,8 +66,13 @@ Kirigami.ScrollablePage {
         StoandlClient.fetch(page, [["listCalendarSources"], ["listCalendars"]], function (r) {
             page.sources = r[0];
             page.calendars = r[1];
+            page.refreshing = false;
         });
     }
+
+    // Pull to refresh re-reads the sources and calendars; Sync now fetches them from their servers.
+    supportsRefreshing: true
+    onRefreshingChanged: if (refreshing) page.reload()
 
     function toggleCalendar(id, on) {
         var r = StoandlClient.setCalendarEnabled(id, on);

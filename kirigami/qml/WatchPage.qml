@@ -30,6 +30,58 @@ Kirigami.ScrollablePage {
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
+    // Pull to refresh re-reads the watch list here (never the firmware check, which may go online).
+    supportsRefreshing: true
+    onRefreshingChanged: if (refreshing) StoandlClient.refreshWatches()
+
+    // Sync now: weather, calendar and health, each one that is on, at once (they wait on the network and the
+    // watch, so without blocking); one toast when all have answered.
+    property bool syncing: false
+    readonly property var syncReads: ({ weather: "syncWeather", calendar: "syncCalendar", health: "syncHealth" })
+    function syncNow() {
+        page.syncing = true;
+        StoandlClient.fetch(page, ["getSyncStatus"], function (rows) {
+            var services = rows.filter(function (r) { return r.enabled && page.syncReads[r.service] !== undefined; });
+            if (services.length === 0) {
+                page.syncing = false;
+                page.toast("Weather, calendar and health are all off (Settings)");
+                return;
+            }
+            var answered = 0, failed = [];
+            services.forEach(function (svc) {
+                StoandlClient.run(page, [page.syncReads[svc.service]], function (r) {
+                    if (!r.ok)
+                        failed.push(svc.service + ": " + (r.tail || r.kind));
+                    if (++answered < services.length)
+                        return;
+                    page.syncing = false;
+                    page.toast(failed.length > 0 ? "Sync: " + failed.join("; ")
+                               : "Synced " + services.map(function (x) { return x.service; }).join(", "));
+                });
+            });
+        });
+    }
+
+    // Check for updates (here and in the watch details): past both caches, and the answer is toasted.
+    property bool fwCheckRequested: false
+    function checkForUpdates() {
+        page.fwCheckRequested = true;
+        StoandlClient.forceFirmwareCheck();
+    }
+    Connections {
+        target: StoandlClient
+        function onFirmwareInfoChanged() {
+            if (!page.fwCheckRequested || StoandlClient.firmwareChecking)
+                return;
+            page.fwCheckRequested = false;
+            var fw = StoandlClient.firmwareInfo;
+            if (fw.kind === "ok")
+                page.toast(fw.updateAvailable ? ("PebbleOS " + fw.latest + " available") : "Firmware up to date");
+            else if (fw.kind)
+                page.toast("Firmware: " + (fw.tail || fw.kind));
+        }
+    }
+
     // The initial loads (watch list + firmware check) wait for the window's first frame, so the
     // window maps before any D-Bus round trip; see the Connections/Timer below.
     property bool loadsStarted: false
@@ -130,7 +182,7 @@ Kirigami.ScrollablePage {
     Connections {
         target: StoandlClient
         enabled: page.visible
-        function onWatchesChanged(rows) { page.applyWatches(rows); }
+        function onWatchesChanged(rows) { page.applyWatches(rows); page.refreshing = false; }
         function onDaemonUpChanged() {
             if (StoandlClient.daemonUp && page.loadsStarted)
                 StoandlClient.refreshWatches();   // → applyWatches → the firmware check
@@ -205,8 +257,10 @@ Kirigami.ScrollablePage {
             dd.openFor();
             console.log("stoandl-smoke: details dialog firmware='" + dd.fwState + "'");
             dd.close();
-            StoandlClient.forceFirmwareCheck();   // Sync now / Check for updates: re-asks past the cache
+            page.checkForUpdates();   // Check for updates: re-asks past the cache
             console.log("stoandl-smoke: firmware forced checking=" + StoandlClient.firmwareChecking);
+            page.syncNow();
+            applicationWindow().smokeWhenIdle(function () { console.log("stoandl-smoke: sync now done syncing=" + page.syncing); });
             // A watch task: started here, its result reported by Main.qml (smokeWhenIdle waits for it).
             var shot = StoandlClient.takeScreenshot();
             console.log("stoandl-smoke: screenshot start " + shot.kind + ":" + shot.tail
@@ -288,8 +342,15 @@ Kirigami.ScrollablePage {
         Kirigami.Action {
             icon.name: "view-refresh-symbolic"
             text: "Sync now"
-            enabled: StoandlClient.daemonUp
-            onTriggered: { StoandlClient.refreshWatches(); StoandlClient.forceFirmwareCheck(); page.toast("Refreshed"); }
+            tooltip: "Fetch weather, calendar and health data now"
+            enabled: StoandlClient.daemonUp && !page.syncing
+            onTriggered: page.syncNow()
+        },
+        Kirigami.Action {
+            icon.name: "update-low-symbolic"
+            text: StoandlClient.firmwareChecking ? "Checking for updates…" : "Check for updates"
+            enabled: StoandlClient.daemonUp && page.connectedWatch !== null && !page.fwCheckRequested
+            onTriggered: page.checkForUpdates()
         }
     ]
 
@@ -662,6 +723,7 @@ Kirigami.ScrollablePage {
         active: false
         sourceComponent: WatchDetailsDialog {
             onForgetRequested: function(name) { page.forgetDialogItem().openFor(name); }
+            onUpdateCheckRequested: page.checkForUpdates()
             onRepairRequested: function(name) { page.repairDialogItem().openFor(name); }
         }
     }

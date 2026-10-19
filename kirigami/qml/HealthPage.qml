@@ -66,11 +66,16 @@ Kirigami.ScrollablePage {
             page.heartSamples = day ? heart : [];
             page.sleepBarData = day ? [] : r[2];
             page.heartBarData = day ? [] : heart;
+            page.refreshing = false;
         });
     }
 
     // Kept while another tab shows (Main.qml): re-read when it comes back.
     function refreshOnShow() { page.reload(); }
+
+    // Pull to refresh re-reads what is stored here; Sync health asks the watch.
+    supportsRefreshing: true
+    onRefreshingChanged: if (refreshing) page.reload()
 
     function maxOffsetFor(t) { return t === "day" ? 30 : t === "week" ? 12 : 11; }
 
@@ -243,6 +248,8 @@ Kirigami.ScrollablePage {
     function smokeExercise() {
         console.log("stoandl-smoke: health data=" + page.hasData + " key " + healthKey.key + " known=" + healthKey.known
                     + " on=" + healthKey.isOn + " label='" + healthKey.label + "' · " + healthKey.egressText);
+        page.refreshing = true;   // as a pull does
+        applicationWindow().smokeWhenIdle(function () { console.log("stoandl-smoke: health pulled, refreshing=" + page.refreshing); });
     }
 
     // "Health data" (health.sync): the empty state offers it when it is off.
