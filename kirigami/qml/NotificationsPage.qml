@@ -124,6 +124,22 @@ Kirigami.ScrollablePage {
         page.reload();
     }
 
+    // A filter goes at once; Undo on the toast adds it back (its pattern and action are all it is).
+    function removeFilter(f) {
+        var r = StoandlClient.notifRemoveFilter(f.pattern);
+        if (r.ok) {
+            applicationWindow().showPassiveNotification("Removed filter " + f.pattern, "long", "Undo", function () {
+                var back = StoandlClient.notifAddFilter(f.pattern, f.action);
+                if (!back.ok)
+                    page.toast("Could not add it back: " + (back.tail || back.kind));
+                page.reload();
+            });
+        } else {
+            page.toast("Remove failed: " + (r.tail || r.kind));
+        }
+        page.reload();
+    }
+
     // The page's one option picker (the dialog's rows), built on first use.
     function pick(title, options, index, onPicked) {
         pickerLoader.active = true;
@@ -493,12 +509,7 @@ Kirigami.ScrollablePage {
                             display: QQC2.AbstractButton.IconOnly
                             QQC2.ToolTip.text: "Remove filter"
                             QQC2.ToolTip.visible: hovered
-                            onClicked: {
-                                var r = StoandlClient.notifRemoveFilter(filterRow.modelData.pattern);
-                                if (!r.ok)
-                                    page.toast("Remove failed: " + (r.tail || r.kind));
-                                page.reload();
-                            }
+                            onClicked: page.removeFilter(filterRow.modelData)
                         }
                     }
                 }

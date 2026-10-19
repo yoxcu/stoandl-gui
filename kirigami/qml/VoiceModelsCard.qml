@@ -229,7 +229,10 @@ ColumnLayout {
                             text: "Remove " + row.modelData.name
                             QQC2.ToolTip.text: text
                             QQC2.ToolTip.visible: hovered
-                            onClicked: card.remove(row.modelData.id)
+                            onClicked: applicationWindow().confirm(text,
+                                "Remove " + row.modelData.name + "? Using it again means downloading its "
+                                + row.modelData.sizeMb + " MB again.", "Remove", "edit-delete-symbolic",
+                                function () { card.remove(row.modelData.id); })
                         }
                     }
 

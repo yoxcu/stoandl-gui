@@ -566,7 +566,11 @@ ColumnLayout {
                                     visible: cfgLoader.value === "set"
                                     enabled: cfgLoader.row.enabled
                                     text: "Remove " + (cfgLoader.field.label || "")
-                                    onClicked: page.applyConfig(cfgLoader.key, "")
+                                    // No Undo: the stored value is write-only, this page never has it to put back.
+                                    onClicked: applicationWindow().confirm(text,
+                                        "Remove the stored " + (cfgLoader.field.label || "secret") + "? To use it again "
+                                        + "you have to enter it again.", "Remove", "edit-delete-symbolic",
+                                        function () { page.applyConfig(cfgLoader.key, ""); })
                                 }
                             }
                         }

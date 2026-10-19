@@ -229,6 +229,19 @@ Kirigami.ApplicationWindow {
         }
     }
 
+    // Ask before an action that can't be put back (ConfirmDialog, built on first use): `onConfirm` runs on
+    // the action's button, nothing on Cancel. Actions that can be undone act at once with Undo on the toast.
+    function confirm(heading, text, actionText, actionIcon, onConfirm) {
+        confirmLoader.active = true;
+        confirmLoader.item.ask(heading, text, actionText, actionIcon, onConfirm);
+        return confirmLoader.item;
+    }
+    Loader {
+        id: confirmLoader
+        active: false
+        sourceComponent: ConfirmDialog {}
+    }
+
     // The screenshot preview (Open / Open folder / Take another), built on the first screenshot.
     Loader {
         id: screenshotLoader

@@ -183,6 +183,12 @@ Kirigami.ScrollablePage {
     // waits until the last one's rows are built: a dialog closed while its footer still incubates warns.
     function smokeExercise() {
         if (!StoandlClient.daemonUp) return;
+        // "Restore default order" asks first (Main.confirm); Cancel leaves the order alone.
+        var dlg = applicationWindow().confirm("Restore default order", "smoke", "Restore", "", function () {
+            console.log("stoandl-smoke: restore order confirmed (unexpected)");
+        });
+        console.log("stoandl-smoke: confirm '" + dlg.title + "' shown=" + dlg.visible + " action='" + dlg.actionText + "'");
+        dlg.close();
         // A sideload is a watch task (Main.qml reports it); only the mock takes a file that isn't there.
         if (StoandlClient.daemonVersion.indexOf("mock") === 0)
             console.log("stoandl-smoke: sideload start " + StoandlClient.sideloadApp("file:///nonexistent/smoke.pbw").kind);
@@ -242,11 +248,13 @@ Kirigami.ScrollablePage {
             text: "Restore default order"
             visible: !page.extSegment
             enabled: StoandlClient.daemonUp
-            onTriggered: {
-                var r = StoandlClient.restoreSystemAppOrder();
-                page.toast(r.ok ? "System apps restored to default order" : ("Reset failed: " + (r.tail || r.kind)));
-                StoandlClient.refreshApps();
-            }
+            onTriggered: applicationWindow().confirm(text,
+                "Put the built-in apps and faces back in their original order? The order you arranged for them "
+                + "is lost; sideloaded ones keep their places.", "Restore", "edit-reset-symbolic", function () {
+                    var r = StoandlClient.restoreSystemAppOrder();
+                    page.toast(r.ok ? "System apps restored to default order" : ("Reset failed: " + (r.tail || r.kind)));
+                    StoandlClient.refreshApps();
+                })
         }
     ]
 

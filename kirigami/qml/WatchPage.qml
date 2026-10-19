@@ -465,7 +465,9 @@ Kirigami.ScrollablePage {
                 Kirigami.Action {
                     icon.name: "install-symbolic"
                     text: "Update now"
-                    onTriggered: page.updateFirmware()
+                    onTriggered: applicationWindow().confirm("Update firmware",
+                        "Update the watch to PebbleOS " + page.fwInfo.latest + "? Keep it on charge and in range; "
+                        + "don’t power it off during the update.", "Update now", "install-symbolic", page.updateFirmware)
                 },
                 Kirigami.Action {
                     icon.name: "globe-symbolic"
