@@ -5,31 +5,38 @@ import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
 
-// The speech models for Settings → Voice (VoiceModels / VoiceDownloadModel / VoiceRemoveModel): what is
-// installed, a one-tap download of the recommended model while none is, and per-model Download, Cancel
-// and Remove. The daemon makes a freshly downloaded model the active one when voice was off or local, so
-// `changed()` asks the page to re-read its config (the schema's "Model" dropdown lists installed models).
+// The downloadable models of one kind for Settings → Voice (VoiceModels / VoiceDownloadModel /
+// VoiceRemoveModel, one store for both): speech-to-text models (`kind: "stt"`) or text-to-speech voices
+// (`kind: "tts"`). It shows what is installed, a one-tap download of the recommended one while none is,
+// and per-model Download, Cancel and Remove. The daemon makes a freshly downloaded model the active one
+// (voice.local_model or tts.local_voice, turning its backend to Local model when it was off), so
+// `changed()` asks the page to re-read its config. The voices card also plays a test sentence on this
+// computer (Speak), with whichever engine tts.backend names.
 ColumnLayout {
     id: card
     spacing: 0
 
+    /** "stt" (speech models) or "tts" (voices). */
+    property string kind: "stt"
+
     signal changed()
 
-    property var models: []        // StoandlClient.voiceModels()
-    property var status: ({})      // StoandlClient.voiceStatus()
+    property var models: []        // this kind's StoandlClient.voiceModels() rows
+    property var status: ({})      // StoandlClient.voiceStatus() or ttsStatus()
 
+    readonly property bool tts: card.kind === "tts"
     readonly property bool anyInstalled: models.some(m => m.state === "installed")
     readonly property var downloading: models.find(m => m.state === "downloading") || null
     readonly property var recommended: models.find(m => m.recommended) || null
-    // whisper.cpp ships both programs; when the recommended one is missing, so is the engine.
+    // The engine ships with its program; when the recommended model's is missing, so is the engine.
     readonly property bool engineMissing: recommended !== null && !recommended.engineOk
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
     function reload() {
         var wasDownloading = card.downloading !== null;
-        card.models = StoandlClient.voiceModels();
-        card.status = StoandlClient.voiceStatus();
+        card.models = StoandlClient.voiceModels().filter(function (m) { return m.kind === card.kind; });
+        card.status = card.tts ? StoandlClient.ttsStatus() : StoandlClient.voiceStatus();
         if (wasDownloading && card.downloading === null) card.changed();
     }
 
@@ -47,7 +54,34 @@ ColumnLayout {
         card.changed();
     }
 
+    // Plays on this computer, not the watch: the watch speaker is reached through the assistant app.
+    function testVoice() {
+        var r = StoandlClient.speak("This is stoandl speaking.");
+        card.toast(r.ok ? "Speaking…" : r.kind === "off" ? "Text to speech is off: choose an engine above"
+                                      : "Can't speak: " + (r.tail || r.kind));
+        return r;
+    }
+
+    // Smoke hook (SchemaSections runs it): the test sentence, as the button sends it, then stopped.
+    function smokeExercise() {
+        var r = card.testVoice();
+        var st = StoandlClient.stopSpeaking();
+        console.log("stoandl-smoke: tts status=" + card.status.kind + " voices=" + card.models.length
+                    + " speak=" + r.kind + " stop=" + st.kind);
+    }
+
     Component.onCompleted: reload()
+
+    // A change elsewhere (the CLI, another client, this page) can switch the engine: re-read the status.
+    Connections {
+        target: StoandlClient
+        function onConfigChanged(key) { statusTimer.restart(); }
+    }
+    Timer {
+        id: statusTimer
+        interval: 200
+        onTriggered: card.status = card.tts ? StoandlClient.ttsStatus() : StoandlClient.voiceStatus()
+    }
 
     // Progress comes from polling: one download at a time, a few minutes long, so 1 s is plenty.
     Timer {
@@ -57,7 +91,7 @@ ColumnLayout {
         onTriggered: card.reload()
     }
 
-    FormCard.FormHeader { title: "Speech models" }
+    FormCard.FormHeader { title: card.tts ? "Voices" : "Speech models" }
 
     Kirigami.InlineMessage {
         Layout.fillWidth: true
@@ -65,8 +99,11 @@ ColumnLayout {
         Layout.rightMargin: Kirigami.Units.largeSpacing
         visible: card.engineMissing
         type: Kirigami.MessageType.Warning
-        text: "The speech engine isn't installed. Install whisper.cpp (postmarketOS/Alpine: "
-            + "sudo apk add whisper.cpp, Arch: whisper.cpp from the AUR), then download a model."
+        text: card.tts
+            ? "Piper isn't installed. Install it (postmarketOS/Alpine edge: sudo apk add piper-tts), then "
+              + "download a voice; or install espeak-ng (sudo apk add espeak-ng), which needs no download."
+            : "The speech engine isn't installed. Install whisper.cpp (postmarketOS/Alpine: "
+              + "sudo apk add whisper.cpp, Arch: whisper.cpp from the AUR), then download a model."
     }
 
     Kirigami.InlineMessage {
@@ -77,8 +114,9 @@ ColumnLayout {
         visible: !card.anyInstalled && card.downloading === null && card.recommended !== null
         type: Kirigami.MessageType.Information
         text: card.recommended
-            ? "No speech model yet. " + card.recommended.name + " (" + card.recommended.sizeMb
-              + " MB) is recommended: " + card.recommended.note + ". It runs on this device; the audio never leaves it."
+            ? (card.tts ? "No voice yet. " : "No speech model yet. ") + card.recommended.name + " ("
+              + card.recommended.sizeMb + " MB) is recommended: " + card.recommended.note + ". It runs on "
+              + "this device; " + (card.tts ? "the text never leaves it." : "the audio never leaves it.")
             : ""
         actions: [
             Kirigami.Action {
@@ -93,11 +131,33 @@ ColumnLayout {
         Layout.topMargin: Kirigami.Units.smallSpacing
 
         FormCard.FormTextDelegate {
-            text: "Voice"
+            text: card.tts ? "Text to speech" : "Speech to text"
             description: card.status.kind === "ready" ? "Ready — " + (card.status.tail || "").split("\t").join(" ")
                        : card.status.kind === "off" ? "Off"
                        : (card.status.tail || "Not available")
-            icon.name: card.status.kind === "ready" ? "audio-input-microphone-symbolic" : "microphone-sensitivity-muted-symbolic"
+            icon.name: card.tts ? (card.status.kind === "ready" ? "audio-speakers-symbolic" : "audio-volume-muted-symbolic")
+                     : card.status.kind === "ready" ? "audio-input-microphone-symbolic" : "microphone-sensitivity-muted-symbolic"
+            trailing: card.tts ? testButtons : null
+
+            RowLayout {
+                id: testButtons
+                visible: card.tts
+                spacing: Kirigami.Units.smallSpacing
+                QQC2.Button {
+                    text: "Test voice"
+                    icon.name: "media-playback-start-symbolic"
+                    enabled: card.status.kind === "ready"
+                    onClicked: card.testVoice()
+                }
+                QQC2.ToolButton {
+                    icon.name: "media-playback-stop-symbolic"
+                    display: QQC2.AbstractButton.IconOnly
+                    text: "Stop"
+                    QQC2.ToolTip.text: text
+                    QQC2.ToolTip.visible: hovered
+                    onClicked: StoandlClient.stopSpeaking()
+                }
+            }
         }
 
         Repeater {
@@ -181,7 +241,11 @@ ColumnLayout {
     }
 
     FormCard.FormSectionText {
-        text: "Models are saved under ~/.local/share/stoandl/stt. A download is the only time stoandl contacts "
-            + "huggingface.co for voice; recognition runs on this device."
+        text: card.tts
+            ? "Voices are saved under ~/.local/share/stoandl/tts. A download is the only time stoandl contacts "
+              + "huggingface.co for them; speech is made on this device. Test voice plays here; answers play on "
+              + "the watch speaker through the assistant app."
+            : "Models are saved under ~/.local/share/stoandl/stt. A download is the only time stoandl contacts "
+              + "huggingface.co for voice; recognition runs on this device."
     }
 }
