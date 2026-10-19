@@ -67,7 +67,7 @@ Kirigami.ScrollablePage {
     }
 
     // The Battery page starts from this page's watch list (and follows watchesChanged after that).
-    function openBattery() { return applicationWindow().pageStack.push(batteryPageComponent, { watchRows: page.watches }); }
+    function openBattery() { return applicationWindow().pushPage(batteryPageComponent, { watchRows: page.watches }); }
 
     // The three dialogs are built on first use, not with the page (a Loader each, below).
     function detailsDialogItem() { detailsLoader.active = true; return detailsLoader.item; }
@@ -186,7 +186,7 @@ Kirigami.ScrollablePage {
         var held = page.pausedByHand;
         page.resumeLink();
         console.log("stoandl-smoke: link pause " + before + " disconnect=" + held + " resumed=" + !page.pausedByHand);
-        // STOANDL_SMOKE_FLASH=1: start a flash the way Settings → Debug does (sideloadFirmware, which
+        // STOANDL_SMOKE_FLASH=1: start a flash the way Settings → Diagnostics & developer does (sideloadFirmware, which
         // arms the firmware poll), so the phase handling — the prf walk with MOCK_FW_DOWNGRADE=1 or
         // drop — runs end to end and lands on this page's banner. The path doesn't exist: the mock
         // walks any path, a real daemon refuses it.
@@ -252,6 +252,11 @@ Kirigami.ScrollablePage {
             type: Kirigami.MessageType.Warning
             icon.source: "network-bluetooth-inactive-symbolic"
             text: "Bluetooth is off — turn it on to connect your Pebble. The daemon reconnects automatically."
+        }
+
+        // --- notification.forward off (its control is in Settings → Notifications) ---
+        ForwardingBanner {
+            Layout.fillWidth: true
         }
 
         // --- link paused: by hand (Disconnect), or for Quiet Time --------------
@@ -515,7 +520,7 @@ Kirigami.ScrollablePage {
                             QQC2.Label {
                                 Layout.fillWidth: true
                                 // A watch in recovery (PRF) is connected, but only for a firmware flash
-                                // (Settings → Debug), a core dump and its logs.
+                                // (Settings → Diagnostics & developer), a core dump and its logs.
                                 text: watchRow.modelData.state === "connected"
                                       ? (page.transportLabel(watchRow.modelData.transport)
                                          + (watchRow.modelData.battery !== "" ? " · " + watchRow.modelData.battery + "%" : ""))

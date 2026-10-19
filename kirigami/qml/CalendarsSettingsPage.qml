@@ -9,15 +9,15 @@ import org.stoandl.gui
 // their synced calendars grouped underneath their account. A CalDAV account fans out to many calendars
 // (each toggleable); an iCal feed / .ics path is a single calendar. Passwords are write-only — the
 // daemon stores them in the system keyring (or a local 0600 file) and never returns them, so the edit
-// form's password field is blank ("leave blank to keep").
+// form's password field is blank ("leave blank to keep"). Whether local calendars are found on their own
+// (calendar.discover) is a stoandl.conf key, on Settings → Calendar, which links here.
 Kirigami.ScrollablePage {
     id: page
     objectName: "calendars"
-    title: "Calendars"
+    title: "Accounts and feeds"
 
     property var sources: []      // [{id,type,url,username,label}]  (from ListCalendarSources)
     property var calendars: []    // [{id,name,enabled,accountId}]   (from ListCalendars)
-    property bool discoverOn: false
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
@@ -64,8 +64,6 @@ Kirigami.ScrollablePage {
     function reload() {
         if (!StoandlClient.daemonUp) { page.sources = []; page.calendars = []; return; }
         page.sources = StoandlClient.listCalendarSources();
-        var c = StoandlClient.getConfig();
-        page.discoverOn = (((c && c.values) ? c.values : {})["calendar.discover"]) === "true";
         StoandlClient.refreshCalendars();   // -> calendarsChanged(rows)
     }
 
@@ -73,13 +71,6 @@ Kirigami.ScrollablePage {
         var r = StoandlClient.setCalendarEnabled(id, on);
         if (!r.ok) page.toast("Calendar: " + (r.tail || r.kind));
         StoandlClient.refreshCalendars();
-    }
-
-    function setDiscover(on) {
-        var r = StoandlClient.setConfig("calendar.discover", on ? "true" : "false");
-        if (!r.ok) page.toast("Config: " + (r.tail || r.kind));
-        page.reload();
-        page.settle();   // discovered calendars appear/disappear on the next sync
     }
 
     function openAdd()       { sourceDialog.openAdd(); }
@@ -151,18 +142,6 @@ Kirigami.ScrollablePage {
             visible: !StoandlClient.daemonUp
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
-        }
-
-        // Auto-discovery of the desktop's local .ics calendars (a master toggle, not a source).
-        FormCard.FormCard {
-            visible: StoandlClient.daemonUp
-            Layout.topMargin: Kirigami.Units.largeSpacing
-            FormCard.FormSwitchDelegate {
-                text: "Auto-discover local calendars"
-                description: "Find the desktop's local .ics calendars (Calindori, ~/.calendars). No egress."
-                checked: page.discoverOn
-                onToggled: page.setDiscover(checked)
-            }
         }
 
         Kirigami.PlaceholderMessage {

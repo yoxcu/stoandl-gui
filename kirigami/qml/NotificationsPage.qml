@@ -5,17 +5,17 @@ import org.kde.kirigami as Kirigami
 import org.kde.kirigamiaddons.formcard as FormCard
 import org.stoandl.gui
 
-// Notifications screen. Master forward toggle + temp-mute + where the app name goes on the watch (with a
-// WatchCardPreview), per-app list (each row opens a deeper Kirigami.Dialog), and regex filters. Everything
-// is polled/re-fetched in reload() — the interface has no change events, so every mutation re-fetches its
-// slice (handoff hard rules).
+// Notifications screen. Temp-mute, the per-app list (each row opens a deeper Kirigami.Dialog) and regex
+// filters; the stoandl.conf side (forwarding, the app name on the watch, …) is Settings → Notifications,
+// one toolbar action away. While notification.forward is off, a banner says so with a Turn on button (the
+// key's one control is in Settings; StoandlClient.forwarding follows it). Everything is re-fetched in
+// reload(): every mutation re-fetches its slice (handoff hard rules).
 Kirigami.ScrollablePage {
     id: page
     objectName: "notifications"
     title: "Alerts"   // matches the (shortened) nav tab label
 
     // --- live snapshots (all re-fetched in reload()) -----------------------
-    property bool forward: false           // master "Forward notifications"
     property var apps: []                   // notifList() rows
     property var filters: []                // notifListFilters() rows
 
@@ -24,17 +24,10 @@ Kirigami.ScrollablePage {
     // getter, so this stays correct across reload / per-app mutes / external changes.
     readonly property bool allMuted: page.apps.length > 0 && page.apps.every(function (a) { return a.muted === true; })
 
-    // Where an app's name goes on the watch: notification.app_name's options. `text` is the label GetConfig
-    // reports and SetConfig takes, `value` the placement token (WatchCardPreview's, and NotifSetAppName's
-    // for the per-app override).
-    readonly property var appNamePlacements: [
-        { text: "Small line", value: "small" },
-        { text: "Subtitle",   value: "subtitle" },
-        { text: "Off",        value: "off" }
-    ]
-    // notification.app_name as a token: the Alerts preview's placement and what an app on "Default"
-    // follows. reload() reads it with GetConfig; "" until then (or from a daemon without the key), which
-    // hides the row and its preview.
+    // notification.app_name's options (WatchCardPreview's table: label and placement token).
+    readonly property var appNamePlacements: dialogPreview.placements
+    // notification.app_name as a token: what an app on "Default" follows. reload() reads it with
+    // GetConfig; "" until then (or from a daemon without the key).
     property string appNameGlobal: ""
     // notification.images, for the per-app images switch's hint; reload() reads it.
     property bool imagesGlobal: true
@@ -48,13 +41,12 @@ Kirigami.ScrollablePage {
     }
 
     // Index of the option whose value is `v` (case-insensitive, like the daemon's TimelineColor.findByName);
-    // -1 when none is. `byLabel` also accepts the label: only for GetConfig, which answers a combo with
-    // its label. NotifList's colour and placement are values, and matching their labels would pick the
-    // wrong colour ("Yellow" is ChromeYellow's label but its own TimelineColor).
-    function optionIndex(options, v, byLabel) {
+    // -1 when none is. Values only: NotifList reports colours and placements by value, and matching labels
+    // too would pick the wrong colour ("Yellow" is ChromeYellow's label but its own TimelineColor).
+    function optionIndex(options, v) {
         var s = String(v || "").toLowerCase();
         for (var i = 0; i < options.length; ++i) {
-            if (options[i].value.toLowerCase() === s || (byLabel && options[i].text.toLowerCase() === s))
+            if (options[i].value.toLowerCase() === s)
                 return i;
         }
         return -1;
@@ -64,45 +56,20 @@ Kirigami.ScrollablePage {
     function reload() {
         if (!StoandlClient.daemonUp)
             return;
-        StoandlClient.fetch(page, [["getSyncStatus"], ["notifList"], ["notifListFilters"], ["getConfig"]], function (r) {
-            // Master forward state lives in the sync-status table.
-            var ss = r[0];
-            var fwd = false;
-            for (var i = 0; i < ss.length; ++i) {
-                if (ss[i].service === "notifications") { fwd = ss[i].enabled === true; break; }
-            }
-            page.forward = fwd;
-            // Set, not only bound: FormSwitchDelegate drops its `checked` binding on the first change, and
-            // this page is kept across tab visits (Main.qml), so a change made elsewhere (Settings → Sync,
-            // the CLI) or a refused toggle would otherwise leave the switch showing the old state.
-            forwardSwitch.checked = fwd;
-            page.apps = r[1];
-            page.filters = r[2];
-            // The combo is set imperatively, not bound, like the per-app combos (see appDialog.showChoices()).
-            var values = (r[3] && r[3].values) ? r[3].values : {};
-            var g = page.optionIndex(page.appNamePlacements, values["notification.app_name"], true);
-            page.appNameGlobal = g >= 0 ? page.appNamePlacements[g].value : "";
+        StoandlClient.fetch(page, [["notifList"], ["notifListFilters"], ["getConfig"]], function (r) {
+            page.apps = r[0];
+            page.filters = r[1];
+            var values = (r[2] && r[2].values) ? r[2].values : {};
+            page.appNameGlobal = dialogPreview.placementOf(values["notification.app_name"]);
             var img = values["notification.images"];
             page.imagesGlobal = img === undefined || String(img).toLowerCase() !== "false";
-            appNameGlobalCombo.currentIndex = g;
         });
     }
 
     // Kept while another tab shows (Main.qml): re-read when it comes back.
     function refreshOnShow() { page.reload(); }
 
-    // The same key as Settings → Daemon configuration's row, written as its label. The preview follows
-    // the pick before the write lands.
-    function setAppNameGlobal(index) {
-        var o = page.appNamePlacements[index];
-        page.appNameGlobal = o.value;
-        var r = StoandlClient.setConfig("notification.app_name", o.text);
-        if (r.ok)
-            page.toast("App name · " + o.text);
-        else
-            page.toast("App name: " + (r.tail || r.kind));
-        page.reload();
-    }
+    Component { id: notificationSettingsPage; SchemaSettingsPage { pageName: "Notifications" } }
 
     // Master mute (30m / 1h / today / never). Re-reads the per-app list since the
     // daemon reflects mute-all in each app's state.
@@ -122,6 +89,8 @@ Kirigami.ScrollablePage {
         target: StoandlClient
         enabled: page.visible
         function onDaemonUpChanged() { if (StoandlClient.daemonUp) page.reload(); }
+        // notification.app_name or .images changed (Settings, the CLI): the per-app dialog follows them.
+        function onConfigChanged(key) { if (key.indexOf("notification.") === 0) page.reload(); }
     }
 
     Component.onCompleted: page.reload()
@@ -147,26 +116,24 @@ Kirigami.ScrollablePage {
     }
 
     // Headless smoke harness (STOANDL_SMOKE_MS) — see Main.qml. Covers the send-test path, the only
-    // control on this page that goes through SendTestNotification, the app-name choice with its preview
-    // and the per-app dialog, which only a click reaches.
+    // control on this page that goes through SendTestNotification, the forwarding-off banner and the
+    // per-app dialog, which only a click reaches.
     function smokeExercise() {
         // Guarded like the action itself: with the daemon down the button is disabled, so firing it
         // here would exercise a path a user cannot reach and log a misleading D-Bus error.
         if (StoandlClient.daemonUp)
             page.sendTest();
-        // The global app name: the preview for each placement (without the write), then the stored
-        // value written back unchanged (a no-op, also against a real daemon).
-        var stored = page.appNameGlobal;
-        if (StoandlClient.daemonUp && stored !== "") {
-            for (var i = 0; i < page.appNamePlacements.length; ++i) {
-                page.appNameGlobal = page.appNamePlacements[i].value;
-                page.smokePreview(alertsPreview);
-            }
-            page.appNameGlobal = stored;
-            var label = page.appNameLabel(stored);
-            var g = StoandlClient.setConfig("notification.app_name", label);
-            console.log("stoandl-smoke: notif app name global = " + label + " (" + g.kind + ")");
-            page.reload();
+        // Forwarding off (as Settings or the CLI would), the banner, its Turn on. Only against the mock:
+        // a real daemon would drop notifications meanwhile.
+        if (StoandlClient.daemonUp && StoandlClient.forwarding && StoandlClient.daemonVersion().indexOf("mock") === 0) {
+            StoandlClient.setConfig("notification.forward", "false");
+            applicationWindow().smokeWhenIdle(function () {
+                console.log("stoandl-smoke: forwarding off banner=" + forwardBanner.visible);
+                forwardBanner.turnOn();
+                applicationWindow().smokeWhenIdle(function () {
+                    console.log("stoandl-smoke: forwarding on again banner=" + forwardBanner.visible);
+                });
+            });
         }
         // The per-app dialog, for an app with an app-name override if there is one: its preselection
         // comes from NotifList's 7th column, and the same value goes back through NotifSetAppName
@@ -194,6 +161,12 @@ Kirigami.ScrollablePage {
             onTriggered: page.sendTest()
         },
         Kirigami.Action {
+            icon.name: "settings-configure-symbolic"
+            text: "Notification settings"
+            enabled: StoandlClient.daemonUp
+            onTriggered: applicationWindow().pushPage(notificationSettingsPage)
+        },
+        Kirigami.Action {
             icon.name: "list-add"
             text: "Add filter"
             enabled: StoandlClient.daemonUp
@@ -211,32 +184,19 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.gridUnit * 4
         }
 
-        // ============ MASTER + TEMP MUTE ============
+        // ============ FORWARDING OFF + TEMP MUTE ============
+        ForwardingBanner {
+            id: forwardBanner
+            Layout.fillWidth: true
+        }
+
         FormCard.FormHeader {
             visible: StoandlClient.daemonUp
-            title: "Forwarding"
+            title: "All apps"
         }
 
         FormCard.FormCard {
             visible: StoandlClient.daemonUp
-
-            FormCard.FormSwitchDelegate {
-                id: forwardSwitch
-                text: "Forward notifications"
-                description: "Send phone notifications to the watch"
-                checked: page.forward
-                onToggled: {
-                    var r = StoandlClient.setSyncEnabled("notifications", checked);
-                    if (r.ok) {
-                        page.toast(checked ? "Notifications on" : "Notifications paused");
-                    } else {
-                        page.toast("Could not change forwarding: " + (r.tail || r.kind));
-                    }
-                    page.reload();   // re-read master state after mutation
-                }
-            }
-
-            FormCard.FormDelegateSeparator {}
 
             // Temporary mute (30m / 1h / today) or Resume.
             FormCard.AbstractFormDelegate {
@@ -275,31 +235,6 @@ Kirigami.ScrollablePage {
                         }
                     }
                 }
-            }
-
-            FormCard.FormDelegateSeparator { visible: appNameGlobalCombo.visible }
-
-            // notification.app_name (also a row in Settings → Daemon configuration); apps override it in
-            // their own dialog.
-            FormCard.FormComboBoxDelegate {
-                id: appNameGlobalCombo
-                visible: page.appNameGlobal !== ""
-                text: "App name on the watch"
-                description: "Where an app's name goes on a notification. Each app can override it."
-                textRole: "text"
-                valueRole: "value"
-                model: page.appNamePlacements
-                onActivated: (index) => page.setAppNameGlobal(index)
-            }
-
-            WatchCardPreview {
-                id: alertsPreview
-                visible: appNameGlobalCombo.visible
-                Layout.alignment: Qt.AlignHCenter
-                Layout.topMargin: Kirigami.Units.smallSpacing
-                Layout.bottomMargin: Kirigami.Units.largeSpacing
-                appName: "NeoChat"
-                placement: page.appNameGlobal
             }
         }
 
@@ -458,11 +393,6 @@ Kirigami.ScrollablePage {
             font: Kirigami.Theme.smallFont
             opacity: 0.7
             wrapMode: Text.WordWrap
-        }
-
-        FormCard.FormSectionText {
-            visible: StoandlClient.daemonUp
-            text: "This screen covers notifications forwarded from desktop apps. stoandl's own alerts — pairing problems, a Bluetooth scan blocking reconnects, an extension that needs setup, firmware updates — are under Settings → Daemon configuration."
         }
     }
 
@@ -725,7 +655,7 @@ Kirigami.ScrollablePage {
                 id: appNameCombo
                 Layout.fillWidth: true
                 text: "App name"
-                description: "Default follows the Alerts page"
+                description: "Default follows Settings → Notifications"
                              + (page.appNameGlobal !== "" ? ", now " + page.appNameLabel(page.appNameGlobal) : "") + "."
                 textRole: "text"
                 valueRole: "value"
@@ -747,7 +677,7 @@ Kirigami.ScrollablePage {
                 Layout.fillWidth: true
                 text: "Send images"
                 description: page.imagesGlobal ? "Pictures this app attaches, on watches that show them."
-                                               : "Pictures are off for every app (Settings → Daemon configuration → Pictures on the watch)."
+                                               : "Pictures are off for every app (Settings → Notifications → Pictures)."
                 onToggled: {
                     var r = StoandlClient.notifSetImages(appDialog.appName, checked ? "on" : "off");
                     if (r.ok)
