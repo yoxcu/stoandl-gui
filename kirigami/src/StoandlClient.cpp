@@ -32,6 +32,9 @@ namespace {
 constexpr auto SERVICE = "de.yoxcu.stoandl";
 constexpr auto PATH    = "/de/yoxcu/stoandl";
 constexpr auto IFACE   = "de.yoxcu.stoandl.Control";
+// Held by a running daemon from its first moment (the public SERVICE name only once it is ready); not for
+// calls, only to tell "starting" from "not running".
+constexpr auto INSTANCE = "de.yoxcu.stoandl.Instance";
 
 // org.freedesktop.DBus (the bus daemon itself) — for NameHasOwner / NameOwnerChanged.
 constexpr auto DBUS_SERVICE = "org.freedesktop.DBus";
@@ -143,14 +146,38 @@ QVariantList parseRequires(const QString &raw)
     return out;
 }
 
-// A reply as a Status; failures (D-Bus errors, daemon error/failed/timeout kinds) are logged.
-Status statusFromReply(const QString &method, const QDBusMessage &reply)
+// What a failed D-Bus call means, in words for a toast or a page: the one place the GUI words D-Bus
+// errors (callers log the raw name and message). `starting` = the daemon holds its instance name but not
+// yet the public one (it takes that last, once everything is up).
+QString errorText(const QDBusMessage &reply, bool starting)
+{
+    const QString name = reply.errorName();
+    const auto is = [&name](const char *suffix) {
+        return name == QLatin1String("org.freedesktop.DBus.Error.") + QLatin1String(suffix);
+    };
+    if (is("NoReply") || is("Timeout") || is("TimedOut"))
+        return QStringLiteral("stoandl didn't answer in time (it may still be working)");
+    if (is("UnknownMethod") || is("UnknownInterface"))
+        return QStringLiteral("Your stoandl daemon is older than this app");
+    if (is("ServiceUnknown") || is("NameHasNoOwner") || is("UnknownObject"))
+        return starting ? QStringLiteral("stoandl is still starting — try again in a moment")
+                        : QStringLiteral("stoandl isn't running");
+    return reply.errorMessage();
+}
+
+void logDbusError(const QString &method, const QDBusMessage &reply)
+{
+    qCWarning(lcStoandl).noquote().nospace()
+        << "D-Bus " << method << " failed: " << reply.errorName() << " — " << reply.errorMessage();
+}
+
+// A reply as a Status; failures (D-Bus errors, daemon error/failed/timeout kinds) are logged. A D-Bus
+// error becomes kind `error` with errorText() as its tail.
+Status statusFromReply(const QString &method, const QDBusMessage &reply, bool starting = false)
 {
     if (reply.type() == QDBusMessage::ErrorMessage) {
-        qCWarning(lcStoandl).noquote().nospace()
-            << "D-Bus " << method << " failed: " << reply.errorName()
-            << " — " << reply.errorMessage();
-        return { QStringLiteral("error"), reply.errorMessage(), {} };
+        logDbusError(method, reply);
+        return { QStringLiteral("error"), errorText(reply, starting), {} };
     }
     const Status st = parseStatus(reply.arguments().value(0).toString());
     // Daemon-reported failures (a valid reply whose status kind is an error) also
@@ -168,9 +195,7 @@ QVariantList recordsFromReply(const QString &method, const QDBusMessage &reply)
 {
     QVariantList out;
     if (reply.type() == QDBusMessage::ErrorMessage) {
-        qCWarning(lcStoandl).noquote().nospace()
-            << "D-Bus " << method << " failed: " << reply.errorName()
-            << " — " << reply.errorMessage();
+        logDbusError(method, reply);
         return out;
     }
     const QStringList rows = reply.arguments().value(0).toStringList();
@@ -263,7 +288,8 @@ StoandlClient::Status StoandlClient::callStatus(const QString &method, const QVa
 {
     // Build the message by hand (no QDBusInterface) so a missing daemon can't
     // block us on introspection — an unowned name just yields an error reply.
-    return statusFromReply(method, m_bus.call(methodCall(method, args), QDBus::Block, CALL_TIMEOUT_MS));
+    return statusFromReply(method, m_bus.call(methodCall(method, args), QDBus::Block, CALL_TIMEOUT_MS),
+                           m_instanceUp);
 }
 
 // --- generic ---------------------------------------------------------------
@@ -849,7 +875,7 @@ void StoandlClient::startFirmwareCheck(bool force)
         }
         // A reply from before the cache was dropped (daemon restart, a finished flash) is stale.
         if (generation == m_fwGeneration) {
-            m_fwInfo = firmwareInfoMap(statusFromReply(method, reply));
+            m_fwInfo = firmwareInfoMap(statusFromReply(method, reply, m_instanceUp));
             m_fwInfoKey = key;
             m_fwHaveInfo = true;
             m_fwInfoAge.start();
@@ -1564,12 +1590,6 @@ QVariantMap StoandlClient::restartDaemon()
     return statusMap(callStatus(QStringLiteral("Restart")));
 }
 
-QString StoandlClient::daemonVersion()
-{
-    const QDBusMessage r = m_bus.call(methodCall(QStringLiteral("Version"), {}), QDBus::Block, CALL_TIMEOUT_MS);
-    return r.type() == QDBusMessage::ErrorMessage ? QString() : r.arguments().value(0).toString();
-}
-
 QString StoandlClient::guiVersion()
 {
     return QStringLiteral(STOANDL_GUI_VERSION);
@@ -2062,12 +2082,15 @@ void StoandlClient::pollPairOnce()
 
 void StoandlClient::recheckDaemon()
 {
-    QDBusMessage m = QDBusMessage::createMethodCall(DBUS_SERVICE, DBUS_PATH, DBUS_IFACE,
-                                                    QStringLiteral("NameHasOwner"));
-    m.setArguments({ QString::fromLatin1(SERVICE) });
-    const QDBusMessage r = m_bus.call(m, QDBus::Block, NAME_TIMEOUT_MS);
-    const bool up = (r.type() != QDBusMessage::ErrorMessage) && r.arguments().value(0).toBool();
-    setDaemonUp(up);
+    const auto owned = [this](const char *name) {
+        QDBusMessage m = QDBusMessage::createMethodCall(DBUS_SERVICE, DBUS_PATH, DBUS_IFACE,
+                                                        QStringLiteral("NameHasOwner"));
+        m.setArguments({ QString::fromLatin1(name) });
+        const QDBusMessage r = m_bus.call(m, QDBus::Block, NAME_TIMEOUT_MS);
+        return r.type() != QDBusMessage::ErrorMessage && r.arguments().value(0).toBool();
+    };
+    m_instanceUp = owned(INSTANCE);
+    setDaemonUp(owned(SERVICE));
 }
 
 void StoandlClient::setDaemonUp(bool up)
@@ -2077,13 +2100,29 @@ void StoandlClient::setDaemonUp(bool up)
     m_daemonUp = up;
     m_fwForceUnsupported = false;   // a restarted daemon may be a newer one
     dropConfigSchema();             // … with other keys, or other installed models
+    if (!m_readErrors.isEmpty()) {  // failures of the daemon before say nothing about this one
+        m_readErrors.clear();
+        Q_EMIT readErrorsChanged();
+    }
     if (!m_restartPending.isEmpty()) {   // a daemon that went or came read stoandl.conf anew
         m_restartPending.clear();
         Q_EMIT restartPendingChanged();
     }
     if (up) {
         refreshForwarding();
-    } else if (!m_forwarding) {
+        callAsync(methodCall(QStringLiteral("Version"), {}), nullptr, [this](const QDBusMessage &reply) {
+            const QString v = reply.type() == QDBusMessage::ErrorMessage || !m_daemonUp
+                ? QString() : reply.arguments().value(0).toString();
+            if (v != m_daemonVersion) {
+                m_daemonVersion = v;
+                Q_EMIT daemonVersionChanged();
+            }
+        });
+    } else if (!m_daemonVersion.isEmpty()) {
+        m_daemonVersion.clear();
+        Q_EMIT daemonVersionChanged();
+    }
+    if (!up && !m_forwarding) {
         m_forwarding = true;        // unknown again: no banner while the daemon is away
         Q_EMIT forwardingChanged();
     }
@@ -2126,10 +2165,10 @@ void StoandlClient::onConfigChanged(const QString &key)
 
 void StoandlClient::onNameOwnerChanged(const QString &name, const QString &, const QString &newOwner)
 {
-    if (name != QLatin1String(SERVICE))
-        return;
-    const bool up = !newOwner.isEmpty();
-    setDaemonUp(up);
+    if (name == QLatin1String(INSTANCE))
+        m_instanceUp = !newOwner.isEmpty();
+    else if (name == QLatin1String(SERVICE))
+        setDaemonUp(!newOwner.isEmpty());
 }
 
 // --- reactive signals (de.yoxcu.stoandl.Control) ---------------------------
@@ -2435,11 +2474,11 @@ QVariantList readArgs(const ReadSpec &spec, const QVariantList &args)
     return out;
 }
 
-QVariant parseRead(const ReadSpec &spec, const QDBusMessage &reply)
+QVariant parseRead(const ReadSpec &spec, const QDBusMessage &reply, bool starting)
 {
     const QString method = QString::fromLatin1(spec.method);
     return spec.records ? spec.records(recordsFromReply(method, reply))
-                        : spec.status(statusFromReply(method, reply));
+                        : spec.status(statusFromReply(method, reply, starting));
 }
 
 // A QML value as a list: arrays nested in a JS array can arrive wrapped as QJSValue.
@@ -2467,7 +2506,8 @@ QVariant StoandlClient::read(const QString &name, const QVariantList &args)
         return m_schema;
     const QDBusMessage reply = m_bus.call(methodCall(QString::fromLatin1(spec->method), readArgs(*spec, args)),
                                           QDBus::Block, CALL_TIMEOUT_MS);
-    const QVariant value = parseRead(*spec, reply);
+    noteReadResult(name, reply);
+    const QVariant value = parseRead(*spec, reply, m_instanceUp);
     if (name == SCHEMA_READ && reply.type() != QDBusMessage::ErrorMessage)
         m_schema = value;
     return value;
@@ -2496,13 +2536,27 @@ void StoandlClient::readAsync(const QString &name, const QVariantList &args, QOb
     }
     const quint64 generation = m_schemaGeneration;
     callAsync(methodCall(QString::fromLatin1(spec->method), readArgs(*spec, args)), context,
-              [this, spec, done, schema, generation](const QDBusMessage &reply) {
-        const QVariant value = parseRead(*spec, reply);
+              [this, name, spec, done, schema, generation](const QDBusMessage &reply) {
+        noteReadResult(name, reply);
+        const QVariant value = parseRead(*spec, reply, m_instanceUp);
         // Not an answer from before the cache was dropped (it may list the old keys or models).
         if (schema && reply.type() != QDBusMessage::ErrorMessage && generation == m_schemaGeneration)
             m_schema = value;
         done(value);
     });
+}
+
+void StoandlClient::noteReadResult(const QString &name, const QDBusMessage &reply)
+{
+    if (reply.type() == QDBusMessage::ErrorMessage) {
+        const QString why = errorText(reply, m_instanceUp);
+        if (m_readErrors.value(name).toString() != why) {
+            m_readErrors.insert(name, why);
+            Q_EMIT readErrorsChanged();
+        }
+    } else if (m_readErrors.remove(name) > 0) {
+        Q_EMIT readErrorsChanged();
+    }
 }
 
 void StoandlClient::callAsync(const QDBusMessage &message, QObject *context,

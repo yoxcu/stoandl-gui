@@ -83,6 +83,7 @@ qt_add_qml_module(stoandl-gui
         qml/FocusFlash.qml
         qml/AboutSettingsPage.qml
         qml/ForwardingBanner.qml
+        qml/ReadErrorMessage.qml
         qml/SaveFileDialog.qml
         qml/VoiceModelsCard.qml
         qml/WeatherSearchCard.qml

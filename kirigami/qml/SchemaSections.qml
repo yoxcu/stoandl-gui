@@ -388,8 +388,15 @@ ColumnLayout {
         keyInfo: page.keyInfo
     }
 
+    ReadErrorMessage {
+        id: readError
+        Layout.fillWidth: true
+        reads: ["configSchema", "getConfig"]
+        what: "settings"
+    }
+
     Kirigami.PlaceholderMessage {
-        visible: StoandlClient.daemonUp && page.loadedOnce && page.cfgShape.length === 0
+        visible: StoandlClient.daemonUp && !readError.failed && page.loadedOnce && page.cfgShape.length === 0
         Layout.fillWidth: true
         Layout.topMargin: Kirigami.Units.gridUnit * 4
         icon.name: "settings-configure-symbolic"

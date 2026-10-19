@@ -65,6 +65,12 @@ class StoandlClient : public QObject
     // stoandl.conf keys set here (setConfig) that the daemon only applies when it starts again, in the
     // order they were set. Cleared when the daemon goes or comes (its restart applied them).
     Q_PROPERTY(QStringList restartPending READ restartPending NOTIFY restartPendingChanged)
+    // The running daemon's Version(), read when it comes up; "" while it is down or before the answer.
+    Q_PROPERTY(QString daemonVersion READ daemonVersion NOTIFY daemonVersionChanged)
+    // Typed reads whose last D-Bus call failed: read name ("notifList", …) → why, in the words errorText()
+    // gives it. A read that succeeds drops its entry. Lets a page say "couldn't read" rather than show an
+    // empty list; a status read carries its failure in its own value ({kind: "error", tail: why}).
+    Q_PROPERTY(QVariantMap readErrors READ readErrors NOTIFY readErrorsChanged)
 
 public:
     explicit StoandlClient(QObject *parent = nullptr);
@@ -83,6 +89,8 @@ public:
     int callsInFlight() const { return m_callsInFlight; }
     bool forwarding() const { return m_forwarding; }
     QStringList restartPending() const { return m_restartPending; }
+    QString daemonVersion() const { return m_daemonVersion; }
+    QVariantMap readErrors() const { return m_readErrors; }
     static QString guiVersion();
 
     // Parsed status string: "kind:tail", tail tab-split into fields.
@@ -230,7 +238,6 @@ public:
     Q_INVOKABLE QVariantMap  setConfig(const QString &key, const QString &value); // SetConfig(s,s)
     // Restart() -> ok:restarting <unit> | busy:<why> | error:<how to restart by hand>.
     Q_INVOKABLE QVariantMap  restartDaemon();
-    Q_INVOKABLE QString      daemonVersion();            // Version(), "" when it can't be read
 
     // --- typed wrappers: Settings -> Debug -> Heartbeat --------------------
     // Header of the most recent captured hourly analytics heartbeat.
@@ -346,6 +353,8 @@ Q_SIGNALS:
     void configChanged(const QString &key);
     void forwardingChanged();
     void restartPendingChanged();
+    void daemonVersionChanged();
+    void readErrorsChanged();
 
 private Q_SLOTS:
     void onNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
@@ -370,6 +379,8 @@ private Q_SLOTS:
 private:
     QDBusMessage methodCall(const QString &method, const QVariantList &args) const;
     Status       callStatus(const QString &method, const QVariantList &args = {});
+    // Record (or clear) the D-Bus failure of the typed read `name` in readErrors.
+    void         noteReadResult(const QString &name, const QDBusMessage &reply);
     // The typed reads fetch() can run (readSpec() in the .cpp: each one's D-Bus call and parser). The
     // synchronous Q_INVOKABLE of that name runs it through read(), so both paths share one description.
     QVariant     read(const QString &name, const QVariantList &args = {});
@@ -412,6 +423,9 @@ private:
 
     QDBusConnection m_bus;
     bool            m_daemonUp = false;
+    // The daemon's private instance name is owned: it is running, and starting when the public name
+    // isn't owned yet (the daemon takes that last).
+    bool            m_instanceUp = false;
     bool            m_bluetoothOn = true;   // assume on until the first BluetoothStatus poll says otherwise
     QString         m_linkPause;
 
@@ -468,6 +482,8 @@ private:
 
     bool        m_forwarding = true;
     QStringList m_restartPending;
+    QString     m_daemonVersion;
+    QVariantMap m_readErrors;
     // GetConfigSchema's parsed rows for the daemon running now; m_schemaGeneration drops an answer to a
     // call that started before the cache was invalidated.
     QVariant    m_schema;

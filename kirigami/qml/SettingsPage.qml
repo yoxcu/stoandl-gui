@@ -189,7 +189,7 @@ Kirigami.ScrollablePage {
         // A key that applies after a restart, written back unchanged: the restart message names it, and its
         // Restart now restarts the daemon. Against the mock only.
         win.smokeWhenIdle(function () {
-            if (StoandlClient.daemonVersion().indexOf("mock") !== 0) return;
+            if (StoandlClient.daemonVersion.indexOf("mock") !== 0) return;
             var c = StoandlClient.getConfig();
             StoandlClient.setConfig("classic.discover", (c.values || {})["classic.discover"] || "true");
             console.log("stoandl-smoke: restart message visible=" + restartMessage.visible + " '" + restartMessage.text + "'");

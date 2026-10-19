@@ -155,7 +155,7 @@ Kirigami.ScrollablePage {
                     + (nwt ? " · notifWindowTimeout " + nwt.currentInt + " " + nwt.unit + " ×" + nwt.scale : "")
                     + (mask ? " · help mask: " + mask.helpText : ""));
         // Reset to defaults, against the mock only (a real daemon would reset the user's watch).
-        if (StoandlClient.daemonVersion().indexOf("mock") === 0) {
+        if (StoandlClient.daemonVersion.indexOf("mock") === 0) {
             resetConfirm.accepted();
             console.log("stoandl-smoke: watch reset, qlUp now '" + page.prefMap["qlUp"].qlCurrentLabel + "'");
         }
@@ -287,10 +287,17 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.gridUnit * 4
         }
 
+        ReadErrorMessage {
+            id: readError
+            Layout.fillWidth: true
+            reads: ["listWatchPrefs"]
+            what: "watch preferences"
+        }
+
         // No watch connected (or no prefs synced yet). Same top-level placeholder style as the
         // Watch/Health/Apps/Notifications pages.
         Kirigami.PlaceholderMessage {
-            visible: StoandlClient.daemonUp && page.watchPrefs.length === 0
+            visible: StoandlClient.daemonUp && !readError.failed && page.watchPrefs.length === 0
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             icon.name: "chronometer-symbolic"

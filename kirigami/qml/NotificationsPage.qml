@@ -125,7 +125,7 @@ Kirigami.ScrollablePage {
             page.sendTest();
         // Forwarding off (as Settings or the CLI would), the banner, its Turn on. Only against the mock:
         // a real daemon would drop notifications meanwhile.
-        if (StoandlClient.daemonUp && StoandlClient.forwarding && StoandlClient.daemonVersion().indexOf("mock") === 0) {
+        if (StoandlClient.daemonUp && StoandlClient.forwarding && StoandlClient.daemonVersion.indexOf("mock") === 0) {
             StoandlClient.setConfig("notification.forward", "false");
             applicationWindow().smokeWhenIdle(function () {
                 console.log("stoandl-smoke: forwarding off banner=" + forwardBanner.visible);
@@ -182,6 +182,13 @@ Kirigami.ScrollablePage {
             visible: !StoandlClient.daemonUp
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
+        }
+
+        ReadErrorMessage {
+            id: readError
+            Layout.fillWidth: true
+            reads: ["notifList", "notifListFilters"]
+            what: "notification settings"
         }
 
         // ============ FORWARDING OFF + TEMP MUTE ============
@@ -319,7 +326,7 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp
 
             Kirigami.PlaceholderMessage {
-                visible: page.filters.length === 0
+                visible: page.filters.length === 0 && !readError.failed
                 Layout.fillWidth: true
                 Layout.topMargin: Kirigami.Units.largeSpacing
                 Layout.bottomMargin: Kirigami.Units.largeSpacing

@@ -476,9 +476,16 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.gridUnit * 4
         }
 
+        ReadErrorMessage {
+            id: readError
+            Layout.fillWidth: true
+            reads: page.extSegment ? ["extList", "pluginList"] : ["listApps"]
+            what: page.extSegment ? "plugins and extensions" : "apps on the watch"
+        }
+
         // --- Faces / Apps empty state --------------------------------------
         Kirigami.PlaceholderMessage {
-            visible: StoandlClient.daemonUp && page.segment === "faces" && page.faces.length === 0
+            visible: StoandlClient.daemonUp && !readError.failed && page.segment === "faces" && page.faces.length === 0
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             icon.name: "preferences-desktop-theme-symbolic"
@@ -492,7 +499,7 @@ Kirigami.ScrollablePage {
         }
 
         Kirigami.PlaceholderMessage {
-            visible: StoandlClient.daemonUp && page.segment === "apps" && page.others.length === 0
+            visible: StoandlClient.daemonUp && !readError.failed && page.segment === "apps" && page.others.length === 0
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             icon.name: "application-x-executable-symbolic"
@@ -506,7 +513,7 @@ Kirigami.ScrollablePage {
         }
 
         Kirigami.PlaceholderMessage {
-            visible: StoandlClient.daemonUp && page.extSegment && page.extensions.length === 0
+            visible: StoandlClient.daemonUp && !readError.failed && page.extSegment && page.extensions.length === 0
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             icon.name: "preferences-plugin-symbolic"

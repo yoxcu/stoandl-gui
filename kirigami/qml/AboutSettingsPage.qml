@@ -12,20 +12,13 @@ Kirigami.ScrollablePage {
     objectName: "aboutSettings"
     title: "About"
 
-    property string daemonVersion: ""
+    // Read by StoandlClient when the daemon comes up; "" while it is down.
+    readonly property string daemonVersion: StoandlClient.daemonVersion
 
     readonly property string supportLine: "stoandl " + (page.daemonVersion || "not running")
                                           + " · stoandl-gui " + StoandlClient.guiVersion
 
-    function reload() { page.daemonVersion = StoandlClient.daemonUp ? StoandlClient.daemonVersion() : ""; }
-
     function smokeExercise() { console.log("stoandl-smoke: about '" + page.supportLine + "'"); }
-
-    Connections {
-        target: StoandlClient
-        function onDaemonUpChanged() { page.reload(); }
-    }
-    Component.onCompleted: page.reload()
 
     ColumnLayout {
         spacing: 0
