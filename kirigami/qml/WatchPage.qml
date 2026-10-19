@@ -327,12 +327,18 @@ Kirigami.ScrollablePage {
             enabled: StoandlClient.daemonUp && page.connectedWatch !== null
             onTriggered: StoandlClient.findWatch()
         },
+        // Disconnect, or Connect while disconnected by hand: one action whose words change, never one that
+        // comes and goes. (An action turning visible while the header's toolbar still builds its buttons,
+        // as the first watch list arrives, makes Kirigami's ToolBarLayout warn "Could not create delegate".)
         Kirigami.Action {
-            icon.name: "network-disconnect-symbolic"
-            text: "Disconnect"
-            tooltip: "Keep the watch disconnected until you connect it again"
-            visible: StoandlClient.daemonUp && page.connectedWatch !== null && !page.pausedByHand
+            icon.name: page.pausedByHand ? "network-connect-symbolic" : "network-disconnect-symbolic"
+            text: page.pausedByHand ? "Connect" : "Disconnect"
+            tooltip: page.pausedByHand ? "Let the watch connect again"
+                                       : "Keep the watch disconnected until you connect it again"
+            enabled: StoandlClient.daemonUp && (page.pausedByHand || page.connectedWatch !== null)
             onTriggered: {
+                if (page.pausedByHand)
+                    return page.resumeLink();
                 var r = StoandlClient.disconnectWatch();
                 if (!r.ok)
                     page.toast("Disconnect failed: " + (r.tail || r.kind));
@@ -740,7 +746,7 @@ Kirigami.ScrollablePage {
             title: "Pair watch"
             standardButtons: QQC2.Dialog.Cancel
             showCloseButton: true
-            preferredWidth: Math.min(Kirigami.Units.gridUnit * 24, page.width - Kirigami.Units.gridUnit * 2)
+            preferredWidth: applicationWindow().dialogWidth(24)
 
             property string statusKind: ""
             property string statusMsg: ""
@@ -977,7 +983,7 @@ Kirigami.ScrollablePage {
             id: repairDialog
             title: "Re-pair watch"
             standardButtons: QQC2.Dialog.NoButton
-            preferredWidth: Math.min(Kirigami.Units.gridUnit * 24, page.width - Kirigami.Units.gridUnit * 2)
+            preferredWidth: applicationWindow().dialogWidth(24)
 
             property string watchName: ""
 

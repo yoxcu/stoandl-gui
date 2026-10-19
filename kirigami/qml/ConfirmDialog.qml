@@ -13,7 +13,7 @@ Kirigami.PromptDialog {
     property var _onConfirm: null
 
     standardButtons: QQC2.Dialog.NoButton
-    preferredWidth: Math.min(Kirigami.Units.gridUnit * 24, applicationWindow().width - Kirigami.Units.gridUnit * 2)
+    preferredWidth: applicationWindow().dialogWidth(24)
 
     function ask(heading, text, actionText, actionIcon, onConfirm) {
         dialog.title = heading;

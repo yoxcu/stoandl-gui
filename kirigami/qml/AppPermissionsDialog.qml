@@ -17,7 +17,7 @@ Kirigami.Dialog {
     property int unseenWaiting: 0
 
     title: appTitle !== "" ? appTitle + " · Permissions" : "Permissions"
-    preferredWidth: Kirigami.Units.gridUnit * 28
+    preferredWidth: applicationWindow().dialogWidth(28)
     standardButtons: QQC2.Dialog.Close
     showCloseButton: true
 
@@ -74,7 +74,7 @@ Kirigami.Dialog {
 
     ColumnLayout {
         spacing: 0
-        Layout.preferredWidth: Kirigami.Units.gridUnit * 28
+        Layout.preferredWidth: applicationWindow().dialogWidth(28)
 
         Kirigami.InlineMessage {
             Layout.fillWidth: true

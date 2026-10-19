@@ -826,7 +826,7 @@ Kirigami.ScrollablePage {
     Kirigami.Dialog {
         id: extConfigDialog
         title: "Extension settings"
-        preferredWidth: Kirigami.Units.gridUnit * 25
+        preferredWidth: applicationWindow().dialogWidth(25)
         standardButtons: QQC2.Dialog.NoButton
         showCloseButton: true
 
@@ -870,7 +870,7 @@ Kirigami.ScrollablePage {
         }
 
         FormCard.FormCard {
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 25
+            Layout.preferredWidth: applicationWindow().dialogWidth(25)
 
             Repeater {
                 id: fieldRepeater

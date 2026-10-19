@@ -11,6 +11,7 @@
 #include <QSet>
 #include <QUrl>
 #include <QJSValue>
+#include <QSize>
 
 #include <functional>
 
@@ -52,6 +53,9 @@ class StoandlClient : public QObject
     // that doesn't exist, so the GUI-started firmware path runs end to end against the mock, which walks
     // any path (MOCK_FW_DOWNGRADE=1|drop picks the walk). A real daemon refuses the missing file.
     Q_PROPERTY(bool smokeFlash READ smokeFlash CONSTANT)
+    // STOANDL_SMOKE_SIZE=<w>x<h> (e.g. 360x740, a phone): the window size Main.qml starts the smoke walk at;
+    // invalid when unset.
+    Q_PROPERTY(QSize smokeSize READ smokeSize CONSTANT)
     // The last CheckFirmware result for the watches the Watch page last asked about (see
     // requestFirmwareCheck): {kind, tail, ok, notready, board, current, latest, asset,
     // updateAvailable, source, changelogUrl}, or {} before the first answer. Owned here, not by the
@@ -100,6 +104,11 @@ public:
     QString linkPause() const { return m_linkPause; }
     static int smokeMs() { return qEnvironmentVariableIntValue("STOANDL_SMOKE_MS"); }
     static bool smokeFlash() { return smokeMs() > 0 && qEnvironmentVariableIntValue("STOANDL_SMOKE_FLASH") == 1; }
+    static QSize smokeSize()
+    {
+        const QStringList wh = qEnvironmentVariable("STOANDL_SMOKE_SIZE").split(QLatin1Char('x'));
+        return wh.size() == 2 ? QSize(wh.at(0).toInt(), wh.at(1).toInt()) : QSize();
+    }
     // Smoke harness: objects the QML engine is still creating asynchronously (the settings pages'
     // row Loaders). The smoke waits for 0 (and callsInFlight 0) before it exercises or destroys a page:
     // destroying rows mid-incubation can leave Qt's in-progress-creation count behind.

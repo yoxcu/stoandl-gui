@@ -592,7 +592,7 @@ Kirigami.ScrollablePage {
         readonly property int colorIndex: Math.max(0, page.optionIndex(appDialog.colorOptions, appDialog.app.color))
 
         title: appName
-        preferredWidth: Math.min(Kirigami.Units.gridUnit * 24, applicationWindow().width - Kirigami.Units.gridUnit * 2)
+        preferredWidth: applicationWindow().dialogWidth(24)
         // Taller than most windows with the preview, so it scrolls. Kirigami.Dialog slides in from 2 gridUnits
         // lower; at the default maximum that runs past the window's bottom, the popup is squeezed to fit, which
         // moves it again (a binding loop on y and a jumpy open). Leave room for the slide.
@@ -628,7 +628,7 @@ Kirigami.ScrollablePage {
 
         ColumnLayout {
             spacing: 0
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 24
+            Layout.preferredWidth: applicationWindow().dialogWidth(24)
 
             // --- the standing mute, then a temporary one ---
             FormOptionRow {
@@ -842,7 +842,7 @@ Kirigami.ScrollablePage {
         id: vibeEditor
         title: editing ? "Edit vibration" : "New vibration"
         standardButtons: QQC2.Dialog.NoButton
-        preferredWidth: Math.min(Kirigami.Units.gridUnit * 22, applicationWindow().width - Kirigami.Units.gridUnit * 2)
+        preferredWidth: applicationWindow().dialogWidth(22)
 
         property bool editing: false
         readonly property string pattern: vibePattern.text.replace(/\s/g, "")

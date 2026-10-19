@@ -252,7 +252,7 @@ Kirigami.ScrollablePage {
     Kirigami.Dialog {
         id: sourceDialog
         title: "Add calendar"
-        preferredWidth: Kirigami.Units.gridUnit * 26
+        preferredWidth: applicationWindow().dialogWidth(26)
         standardButtons: QQC2.Dialog.NoButton
         showCloseButton: true
 
@@ -277,7 +277,7 @@ Kirigami.ScrollablePage {
         }
 
         FormCard.FormCard {
-            Layout.preferredWidth: Kirigami.Units.gridUnit * 26
+            Layout.preferredWidth: applicationWindow().dialogWidth(26)
 
             FormOptionRow {
                 visible: sourceDialog.mode === "add"

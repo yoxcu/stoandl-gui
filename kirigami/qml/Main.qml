@@ -8,10 +8,14 @@ Kirigami.ApplicationWindow {
 
     title: "stoandl"
 
-    minimumWidth: Kirigami.Units.gridUnit * 22
-    minimumHeight: Kirigami.Units.gridUnit * 30
-    width: Kirigami.Units.gridUnit * 30
-    height: Kirigami.Units.gridUnit * 48
+    // A phone's window is the screen, whatever its size: only the desktop keeps a usable minimum.
+    minimumWidth: Kirigami.Settings.isMobile ? 0 : Kirigami.Units.gridUnit * 22
+    minimumHeight: Kirigami.Settings.isMobile ? 0 : Kirigami.Units.gridUnit * 30
+    width: StoandlClient.smokeSize.width > 0 ? StoandlClient.smokeSize.width : Kirigami.Units.gridUnit * 30
+    height: StoandlClient.smokeSize.height > 0 ? StoandlClient.smokeSize.height : Kirigami.Units.gridUnit * 48
+
+    // A dialog's width: `units` grid units, but never wider than the window (a phone held upright).
+    function dialogWidth(units) { return Math.min(Kirigami.Units.gridUnit * units, root.width - Kirigami.Units.gridUnit * 2); }
 
     // Which destination is showing. Watch (0) is the launch view.
     property int currentTab: 0
@@ -149,6 +153,8 @@ Kirigami.ApplicationWindow {
                 console.log("stoandl-smoke: daemon down (" + StoandlClient.daemonState + "), pressing Start daemon");
                 StoandlClient.startDaemon();
             }
+            if (smokeTimer.step === 0)
+                console.log("stoandl-smoke: window " + root.width + "x" + root.height + " mobile=" + Kirigami.Settings.isMobile);
             // A page's walk can queue more than a tick holds (Settings pushes every sub-page): the next
             // tab, and the quit, wait until it is done, so every exercise runs on its page while it shows.
             if (root.smokeQueue.length > 0)

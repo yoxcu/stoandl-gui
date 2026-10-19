@@ -16,7 +16,7 @@ Kirigami.Dialog {
     readonly property bool taking: "screenshot" in StoandlClient.tasks
 
     title: "Watch screenshot"
-    preferredWidth: Math.min(Kirigami.Units.gridUnit * 20, applicationWindow().width - Kirigami.Units.gridUnit * 2)
+    preferredWidth: applicationWindow().dialogWidth(20)
     standardButtons: QQC2.Dialog.Close
     showCloseButton: true
 

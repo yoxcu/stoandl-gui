@@ -37,7 +37,7 @@ Kirigami.Dialog {
     title: view === "language" ? "Watch language"
          : (details.name ? (details.name + (details.code ? " · " + details.code : "")) : "Watch")
 
-    preferredWidth: Math.min(Kirigami.Units.gridUnit * 25, applicationWindow().width - Kirigami.Units.gridUnit * 2)
+    preferredWidth: applicationWindow().dialogWidth(25)
     standardButtons: QQC2.Dialog.Close
     showCloseButton: true
 
@@ -128,7 +128,7 @@ Kirigami.Dialog {
     ColumnLayout {
         spacing: 0
         // Keep the dialog from collapsing when an empty view is hidden.
-        Layout.preferredWidth: Kirigami.Units.gridUnit * 25
+        Layout.preferredWidth: applicationWindow().dialogWidth(25)
 
         // ============ MAIN VIEW ============
         ColumnLayout {
