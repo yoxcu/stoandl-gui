@@ -637,6 +637,8 @@ ColumnLayout {
 
     // Where the cards wait while their section is absent or being rebuilt (invisible, so the layout skips
     // it). They are built asynchronously: they sit under their section, and their first reads block.
+    // Built asynchronously, except for a search hit's page: a card above the hit's row would otherwise
+    // arrive after the scroll and push the row down.
     Item {
         id: cardPark
         visible: false
@@ -646,7 +648,7 @@ ColumnLayout {
         Loader {
             id: sttCard
             Layout.fillWidth: true
-            asynchronous: true
+            asynchronous: page.focusKey === ""
             active: page.cfgFields["voice.local_model"] !== undefined
             sourceComponent: VoiceModelsCard { kind: "stt"; onChanged: page.reload() }
         }
@@ -655,7 +657,7 @@ ColumnLayout {
         Loader {
             id: ttsCard
             Layout.fillWidth: true
-            asynchronous: true
+            asynchronous: page.focusKey === ""
             active: page.cfgFields["tts.local_voice"] !== undefined
             sourceComponent: VoiceModelsCard { kind: "tts"; onChanged: page.reload() }
         }
@@ -664,7 +666,7 @@ ColumnLayout {
         Loader {
             id: weatherCard
             Layout.fillWidth: true
-            asynchronous: true
+            asynchronous: page.focusKey === ""
             active: page.cfgFields["weather.place_search"] !== undefined
             sourceComponent: WeatherSearchCard {
                 searchOn: page.cfgValues["weather.place_search"] === "true"
