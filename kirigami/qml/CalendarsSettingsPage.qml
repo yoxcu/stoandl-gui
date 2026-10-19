@@ -63,8 +63,10 @@ Kirigami.ScrollablePage {
 
     function reload() {
         if (!StoandlClient.daemonUp) { page.sources = []; page.calendars = []; return; }
-        page.sources = StoandlClient.listCalendarSources();
-        StoandlClient.refreshCalendars();   // -> calendarsChanged(rows)
+        StoandlClient.fetch(page, [["listCalendarSources"], ["listCalendars"]], function (r) {
+            page.sources = r[0];
+            page.calendars = r[1];
+        });
     }
 
     function toggleCalendar(id, on) {
@@ -253,9 +255,11 @@ Kirigami.ScrollablePage {
         property string editId: ""
         property string type: "caldav"   // caldav | ical | ics
 
+        readonly property var types: ["caldav", "ical", "ics"]
+        readonly property var typeLabels: ["CalDAV account", "iCal feed URL", "Local .ics file / folder"]
+
         function openAdd() {
             mode = "add"; editId = ""; type = "caldav";
-            typeCombo.currentIndex = 0;
             urlField.value = ""; userField.value = ""; passField.value = "";
             title = "Add calendar";
             open();
@@ -270,13 +274,15 @@ Kirigami.ScrollablePage {
         FormCard.FormCard {
             Layout.preferredWidth: Kirigami.Units.gridUnit * 26
 
-            FormCard.FormComboBoxDelegate {
-                id: typeCombo
+            FormOptionRow {
                 visible: sourceDialog.mode === "add"
                 text: "Type"
-                model: ["CalDAV account", "iCal feed URL", "Local .ics file / folder"]
-                currentIndex: 0
-                onCurrentIndexChanged: sourceDialog.type = ["caldav", "ical", "ics"][currentIndex]
+                value: sourceDialog.typeLabels[sourceDialog.types.indexOf(sourceDialog.type)] || ""
+                onActivated: {
+                    pickerLoader.active = true;
+                    pickerLoader.item.choose(text, sourceDialog.typeLabels, sourceDialog.types.indexOf(sourceDialog.type),
+                                             function (i) { sourceDialog.type = sourceDialog.types[i]; });
+                }
             }
             FormTextRow {
                 id: urlField
@@ -310,6 +316,13 @@ Kirigami.ScrollablePage {
                 onTriggered: sourceDialog.close()
             }
         ]
+    }
+
+    // The type picker, built on first use.
+    Loader {
+        id: pickerLoader
+        active: false
+        sourceComponent: OptionPicker {}
     }
 
     // --- Remove confirmation ------------------------------------------------

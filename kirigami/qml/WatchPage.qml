@@ -193,13 +193,8 @@ Kirigami.ScrollablePage {
         applicationWindow().smokeWhenIdle(function () {
             console.log("stoandl-smoke: battery kind=" + (bp.insights ? bp.insights.kind : "none")
                         + " watchConnected=" + bp.watchConnected + " hasInsights=" + bp.hasInsights);
+            page.smokeLinkPause();
         });
-        // Disconnect → paused banner → Connect (the round trip MOCK_LINK_PAUSE=manual starts halfway).
-        var before = "byHand=" + page.pausedByHand + " quietTime=" + page.pausedForQuietTime;
-        if (!page.pausedByHand) { StoandlClient.disconnectWatch(); StoandlClient.refreshWatches(); }
-        var held = page.pausedByHand;
-        page.resumeLink();
-        console.log("stoandl-smoke: link pause " + before + " disconnect=" + held + " resumed=" + !page.pausedByHand);
         // STOANDL_SMOKE_FLASH=1: start a flash the way Settings → Diagnostics & developer does (sideloadFirmware, which
         // arms the firmware poll), so the phase handling — the prf walk with MOCK_FW_DOWNGRADE=1 or
         // drop — runs end to end and lands on this page's banner. The path doesn't exist: the mock
@@ -208,6 +203,20 @@ Kirigami.ScrollablePage {
             var r = StoandlClient.sideloadFirmware("file:///nonexistent/stoandl-smoke.pbz");
             console.log("stoandl-smoke: sideload " + r.kind);
         }
+    }
+
+    // Disconnect → paused banner → Connect (the round trip MOCK_LINK_PAUSE=manual starts halfway). The watch
+    // list (and LinkPause with it) re-reads asynchronously, hence the waits.
+    function smokeLinkPause() {
+        var before = "byHand=" + page.pausedByHand + " quietTime=" + page.pausedForQuietTime;
+        if (!page.pausedByHand) { StoandlClient.disconnectWatch(); StoandlClient.refreshWatches(); }
+        applicationWindow().smokeWhenIdle(function () {
+            var held = page.pausedByHand;
+            page.resumeLink();
+            applicationWindow().smokeWhenIdle(function () {
+                console.log("stoandl-smoke: link pause " + before + " disconnect=" + held + " resumed=" + !page.pausedByHand);
+            });
+        });
     }
 
     // Page actions: header (desktop) / footer toolbar (mobile). NOT a Material FAB.

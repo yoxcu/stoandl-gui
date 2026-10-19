@@ -49,8 +49,7 @@ Kirigami.ScrollablePage {
                         + ", core dump start " + StoandlClient.getCoreDump().kind);
         }
         var hb = page.open(heartbeatPage);
-        if (hb && typeof hb.smokeExercise === "function")
-            hb.smokeExercise();
+        applicationWindow().smokeWhenIdle(function () { hb.smokeExercise(); });   // once its reads are in
         // Back, as someone would, before the walk goes on.
         applicationWindow().smokeWhenIdle(function () { applicationWindow().pageStack.pop(); });
     }
@@ -66,7 +65,10 @@ Kirigami.ScrollablePage {
     }
 
     function reload() {
-        page.applyWatches(StoandlClient.daemonUp ? StoandlClient.listWatches() : []);
+        if (StoandlClient.daemonUp)
+            StoandlClient.fetch(page, ["listWatches"], page.applyWatches);
+        else
+            page.applyWatches([]);
     }
 
     Connections {

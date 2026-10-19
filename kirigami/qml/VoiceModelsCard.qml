@@ -37,10 +37,12 @@ ColumnLayout {
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
     function reload() {
-        var wasDownloading = card.downloading !== null;
-        card.models = StoandlClient.voiceModels().filter(function (m) { return m.kind === card.kind; });
-        card.status = card.tts ? StoandlClient.ttsStatus() : StoandlClient.voiceStatus();
-        if (wasDownloading && card.downloading === null) card.changed();
+        StoandlClient.fetch(card, [["voiceModels"], [card.tts ? "ttsStatus" : "voiceStatus"]], function (r) {
+            var wasDownloading = card.downloading !== null;
+            card.models = r[0].filter(function (m) { return m.kind === card.kind; });
+            card.status = r[1];
+            if (wasDownloading && card.downloading === null) card.changed();
+        });
     }
 
     function download(id) {
@@ -83,7 +85,7 @@ ColumnLayout {
     Timer {
         id: statusTimer
         interval: 200
-        onTriggered: card.status = card.tts ? StoandlClient.ttsStatus() : StoandlClient.voiceStatus()
+        onTriggered: StoandlClient.fetch(statusTimer, [card.tts ? "ttsStatus" : "voiceStatus"], function (st) { card.status = st; })
     }
 
     // Progress comes from polling: one download at a time, a few minutes long, so 1 s is plenty.

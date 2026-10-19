@@ -40,17 +40,25 @@ Kirigami.Dialog {
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
+    // Opens at once; the facts fill in as their reads answer.
     function openFor() {
         view = "main";
-        var d = StoandlClient.watchDetails();
-        details = (d.kind === "ok") ? d : ({});
-        devOn = StoandlClient.devConnectionStatus().active === true;
-        loadLanguages();
         open();
+        if (!StoandlClient.daemonUp)
+            return;
+        StoandlClient.fetch(dialog, [["watchDetails"], ["devConnectionStatus"], ["listLanguages"]], function (r) {
+            dialog.details = (r[0].kind === "ok") ? r[0] : ({});
+            dialog.devOn = r[1].active === true;
+            dialog.applyLanguages(r[2]);
+        });
     }
 
     function loadLanguages() {
-        var rows = StoandlClient.daemonUp ? StoandlClient.listLanguages() : [];
+        if (StoandlClient.daemonUp)
+            StoandlClient.fetch(dialog, ["listLanguages"], dialog.applyLanguages);
+    }
+
+    function applyLanguages(rows) {
         languages = rows;
         // Reset first so a snapshot with no installed pack doesn't show a stale one.
         currentLang = "—";

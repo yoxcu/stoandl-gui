@@ -21,8 +21,10 @@ Kirigami.ScrollablePage {
 
     function reload() {
         if (!StoandlClient.daemonUp) { page.profile = ({}); page.applyAllowed({}); return; }
-        page.profile = StoandlClient.healthProfile();
-        page.applyAllowed(page.profile);
+        StoandlClient.fetch(page, ["healthProfile"], function (p) {
+            page.profile = p;
+            page.applyAllowed(p);
+        });
     }
 
     // The intervals the daemon accepts right now (GetHealthProfile's third field: 5min only with a
@@ -81,10 +83,15 @@ Kirigami.ScrollablePage {
         function onDaemonUpChanged() { if (StoandlClient.daemonUp) page.reload(); }
         // A watch connecting or leaving changes which intervals the daemon accepts. Only the choices
         // are refreshed, so a half-typed field isn't overwritten.
-        function onWatchesChanged(rows) { if (StoandlClient.daemonUp) page.applyAllowed(StoandlClient.healthProfile()); }
+        function onWatchesChanged(rows) {
+            if (StoandlClient.daemonUp)
+                StoandlClient.fetch(allowedFetch, ["healthProfile"], page.applyAllowed);
+        }
     }
 
     Component.onCompleted: page.reload()
+    // A fetch owner of its own, so a reload() and the allowed-values re-read don't drop each other.
+    QtObject { id: allowedFetch }
 
     readonly property var unitOptions: ["metric", "imperial"]
     readonly property var genderOptions: ["female", "male", "other"]

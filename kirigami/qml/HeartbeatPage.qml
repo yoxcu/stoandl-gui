@@ -68,10 +68,12 @@ Kirigami.ScrollablePage {
 
     function reload() {
         if (!StoandlClient.daemonUp) { page.info = null; page.groups = []; return; }
-        page.applyWatches(StoandlClient.listWatches());
-        page.info = StoandlClient.heartbeatInfo("");
-        // Empty by contract for an unverified layout / a watch with no heartbeat yet.
-        page.groups = StoandlClient.heartbeatMetrics("");
+        StoandlClient.fetch(page, [["listWatches"], ["heartbeatInfo", ""], ["heartbeatMetrics", ""]], function (r) {
+            page.applyWatches(r[0]);
+            page.info = r[1];
+            // Empty by contract for an unverified layout / a watch with no heartbeat yet.
+            page.groups = r[2];
+        });
     }
 
     Connections {

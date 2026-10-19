@@ -320,10 +320,10 @@ QVariantList StoandlClient::list(const QString &method, const QVariantList &args
 
 // --- typed wrappers: Watch -------------------------------------------------
 
-QVariantList StoandlClient::listWatches()
+namespace {
+QVariant watchRows(const QVariantList &records)
 {
     QVariantList rows;
-    const QVariantList records = list(QStringLiteral("ListWatches"));
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         QVariantMap m;
@@ -337,6 +337,12 @@ QVariantList StoandlClient::listWatches()
         rows.append(m);
     }
     return rows;
+}
+} // namespace
+
+QVariantList StoandlClient::listWatches()
+{
+    return read(QStringLiteral("listWatches")).toList();
 }
 
 QVariantMap StoandlClient::battery()                       { return statusMap(callStatus(QStringLiteral("Battery"))); }
@@ -737,11 +743,11 @@ QVariantMap StoandlClient::addWeatherLocation(const QString &name, double lat, d
 QVariantMap StoandlClient::syncCalendar() { return read(QStringLiteral("syncCalendar")).toMap(); }
 QVariantMap StoandlClient::syncHealth()   { return read(QStringLiteral("syncHealth")).toMap(); }
 
-QVariantMap StoandlClient::healthProfile()
+namespace {
+QVariant healthProfileMap(const QVariantList &rows)
 {
     // GetHealthProfile() -> [ [key, value(, allowed)], ... ]  →  { key: value, ..., _allowed: { key: [values] } }
     // A third field is the |-joined values SetHealthProfile accepts for that key right now.
-    const QVariantList rows = list(QStringLiteral("GetHealthProfile"));
     QVariantMap m;
     QVariantMap allowed;
     for (const QVariant &r : rows) {
@@ -755,17 +761,23 @@ QVariantMap StoandlClient::healthProfile()
         m[QStringLiteral("_allowed")] = allowed;
     return m;
 }
+} // namespace
+
+QVariantMap StoandlClient::healthProfile()
+{
+    return read(QStringLiteral("healthProfile")).toMap();
+}
 
 QVariantMap StoandlClient::setHealthProfile(const QString &key, const QString &value)
 {
     return statusMap(callStatus(QStringLiteral("SetHealthProfile"), {key, value}));
 }
 
-QVariantList StoandlClient::listCalendars()
+namespace {
+QVariant calendarRows(const QVariantList &records)
 {
     // Record: id \t name \t enabled|disabled \t accountId  (accountId groups calendars under a source)
     QVariantList rows;
-    const QVariantList records = list(QStringLiteral("ListCalendars"));
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         QVariantMap m;
@@ -778,6 +790,33 @@ QVariantList StoandlClient::listCalendars()
     return rows;
 }
 
+QVariant calendarSourceRows(const QVariantList &records)
+{
+    // Record: id \t type \t url \t username \t label \t lastError \t lastSync  (the password is write-only,
+    // never returned; lastError is empty while the source reads fine, lastSync the epoch seconds of its last
+    // good read or empty — both appended, so empty from an older daemon)
+    QVariantList rows;
+    for (const QVariant &v : records) {
+        const QStringList f = v.toStringList();
+        QVariantMap m;
+        m[QStringLiteral("id")]        = f.value(0);
+        m[QStringLiteral("type")]      = f.value(1);
+        m[QStringLiteral("url")]       = f.value(2);
+        m[QStringLiteral("username")]  = f.value(3);
+        m[QStringLiteral("label")]     = f.value(4);
+        m[QStringLiteral("lastError")] = f.value(5);
+        m[QStringLiteral("lastSync")]  = f.value(6).toLongLong();
+        rows.append(m);
+    }
+    return rows;
+}
+} // namespace
+
+QVariantList StoandlClient::listCalendars()
+{
+    return read(QStringLiteral("listCalendars")).toList();
+}
+
 QVariantMap StoandlClient::setCalendarEnabled(const QString &id, bool enabled)
 {
     return statusMap(callStatus(QStringLiteral("SetCalendarEnabled"), {id, enabled}));
@@ -785,25 +824,20 @@ QVariantMap StoandlClient::setCalendarEnabled(const QString &id, bool enabled)
 
 void StoandlClient::refreshCalendars()
 {
-    Q_EMIT calendarsChanged(m_daemonUp ? listCalendars() : QVariantList());
+    const quint64 seq = ++m_calendarsSeq;
+    if (!m_daemonUp) {
+        Q_EMIT calendarsChanged({});
+        return;
+    }
+    readAsync(QStringLiteral("listCalendars"), {}, nullptr, [this, seq](const QVariant &rows) {
+        if (seq == m_calendarsSeq)
+            Q_EMIT calendarsChanged(rows.toList());
+    });
 }
 
 QVariantList StoandlClient::listCalendarSources()
 {
-    // Record: id \t type \t url \t username \t label  (password is write-only — never returned)
-    QVariantList rows;
-    const QVariantList records = list(QStringLiteral("ListCalendarSources"));
-    for (const QVariant &v : records) {
-        const QStringList f = v.toStringList();
-        QVariantMap m;
-        m[QStringLiteral("id")]       = f.value(0);
-        m[QStringLiteral("type")]     = f.value(1);
-        m[QStringLiteral("url")]      = f.value(2);
-        m[QStringLiteral("username")] = f.value(3);
-        m[QStringLiteral("label")]    = f.value(4);
-        rows.append(m);
-    }
-    return rows;
+    return read(QStringLiteral("listCalendarSources")).toList();
 }
 
 QVariantMap StoandlClient::addCalendarSource(const QString &type, const QString &url,
@@ -1043,11 +1077,11 @@ void StoandlClient::emitFirmwareStatus(const QString &phase, int percent, const 
 
 // --- typed wrappers: System / language packs -------------------------------
 
-QVariantList StoandlClient::listLanguages()
+namespace {
+QVariant languageRows(const QVariantList &records)
 {
     // Record: id \t isoLocal \t displayName \t installed(yes|no) \t source(rebble|github)
     QVariantList rows;
-    const QVariantList records = list(QStringLiteral("ListLanguages"));
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         QVariantMap m;
@@ -1059,6 +1093,12 @@ QVariantList StoandlClient::listLanguages()
         rows.append(m);
     }
     return rows;
+}
+} // namespace
+
+QVariantList StoandlClient::listLanguages()
+{
+    return read(QStringLiteral("listLanguages")).toList();
 }
 
 QVariantMap StoandlClient::installLanguage(const QString &query)
@@ -1241,10 +1281,10 @@ void StoandlClient::findWatch()
 
 // --- Watch details / rename / dev connection / coredump --------------------
 
-QVariantMap StoandlClient::watchDetails()
+namespace {
+QVariant watchDetailsMap(const Status &s)
 {
     // WatchDetails() -> ok:name\tcode\tmodel\tplatform\ttransport\tfirmware\tserial\tbattery\tlastSync
-    const Status s = callStatus(QStringLiteral("WatchDetails"));
     QVariantMap m;
     m[QStringLiteral("kind")] = s.kind;
     if (s.kind == QStringLiteral("ok")) {
@@ -1261,6 +1301,12 @@ QVariantMap StoandlClient::watchDetails()
         m[QStringLiteral("msg")] = s.tail;
     }
     return m;
+}
+} // namespace
+
+QVariantMap StoandlClient::watchDetails()
+{
+    return read(QStringLiteral("watchDetails")).toMap();
 }
 
 QVariantMap StoandlClient::setWatchNickname(const QString &name, const QString &nickname)
@@ -1300,13 +1346,19 @@ QVariantMap StoandlClient::startDevConnection()
 
 QVariantMap StoandlClient::stopDevConnection() { return statusMap(callStatus(QStringLiteral("StopDevConnection"))); }
 
-QVariantMap StoandlClient::devConnectionStatus()
+namespace {
+QVariant devConnectionMap(const Status &s)
 {
-    const Status s = callStatus(QStringLiteral("DevConnectionStatus"));
     QVariantMap m = statusMap(s);
     // ok:active / ok:inactive / notready:
     m[QStringLiteral("active")] = (s.kind == QStringLiteral("ok") && s.tail == QStringLiteral("active"));
     return m;
+}
+} // namespace
+
+QVariantMap StoandlClient::devConnectionStatus()
+{
+    return read(QStringLiteral("devConnectionStatus")).toMap();
 }
 
 QVariantMap StoandlClient::getCoreDump()
@@ -1739,7 +1791,8 @@ QString hbGroupLabel(const QString &prefix)
 }
 } // namespace
 
-QVariantMap StoandlClient::heartbeatInfo(const QString &watch)
+namespace {
+QVariant heartbeatInfoMap(const Status &s)
 {
     // ok:<watchTs>\t<rx>\t<size>\t<version>\t<buildId>\t<fw>\t<known>\t<metricCount>
     //   watchTs / rx are epoch seconds (watchTs may be 0 when the record carries no time),
@@ -1747,7 +1800,6 @@ QVariantMap StoandlClient::heartbeatInfo(const QString &watch)
     //   known = 1 when stoandl has a verified layout for this (size, version).
     // unknown:<label>  = that watch has no captured heartbeat yet (label = the watch's name)
     // notready:<msg>   = battery capture (the heartbeat's carrier) is disabled daemon-side
-    const Status s = callStatus(QStringLiteral("HeartbeatInfo"), { watch });
     QVariantMap m = statusMap(s);
     m[QStringLiteral("unknown")] = (s.kind == QStringLiteral("unknown"));
     // For the non-ok kinds the tail is the watch label / message; keep it under one key.
@@ -1766,7 +1818,7 @@ QVariantMap StoandlClient::heartbeatInfo(const QString &watch)
     return m;
 }
 
-QVariantList StoandlClient::heartbeatMetrics(const QString &watch)
+QVariant heartbeatGroups(const QVariantList &records)
 {
     // Record: name \t value \t text \t raw — `value` is already scale-divided (empty for the
     // string metrics), `text` is set only for the string metrics (fw_version, watchface_name,
@@ -1778,7 +1830,6 @@ QVariantList StoandlClient::heartbeatMetrics(const QString &watch)
     // declaration order.
     QVariantList groups;
     QHash<QString, int> indexOf;   // group key -> index into `groups`
-    const QVariantList records = list(QStringLiteral("HeartbeatMetrics"), { watch });
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         const QString name = f.value(0);
@@ -1819,6 +1870,17 @@ QVariantList StoandlClient::heartbeatMetrics(const QString &watch)
         groups[gi] = g;
     }
     return groups;
+}
+} // namespace
+
+QVariantMap StoandlClient::heartbeatInfo(const QString &watch)
+{
+    return read(QStringLiteral("heartbeatInfo"), {watch}).toMap();
+}
+
+QVariantList StoandlClient::heartbeatMetrics(const QString &watch)
+{
+    return read(QStringLiteral("heartbeatMetrics"), {watch}).toList();
 }
 
 // --- Notifications ---------------------------------------------------------
@@ -1867,11 +1929,11 @@ QVariantMap StoandlClient::notifSetStyle(const QString &name, const QString &col
 {
     return statusMap(callStatus(QStringLiteral("NotifSetStyle"), {name, color, icon, vibe}));
 }
-QVariantMap StoandlClient::notifStyleChoices()
+namespace {
+QVariant styleChoicesMap(const QVariantList &records)
 {
     // Record: kind(vibe|icon) \t value \t label; a vibe adds \t ms,ms,… \t builtin|custom
     QVariantList vibes, icons;
-    const QVariantList records = list(QStringLiteral("NotifStyleChoices"));
     for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         QVariantMap o;
@@ -1889,6 +1951,12 @@ QVariantMap StoandlClient::notifStyleChoices()
     m[QStringLiteral("vibes")] = vibes;
     m[QStringLiteral("icons")] = icons;
     return m;
+}
+} // namespace
+
+QVariantMap StoandlClient::notifStyleChoices()
+{
+    return read(QStringLiteral("notifStyleChoices")).toMap();
 }
 QVariantMap StoandlClient::notifVibeTest(const QString &spec)
 {
@@ -2108,18 +2176,32 @@ void StoandlClient::stopWatchPoll()
 
 void StoandlClient::refreshWatches()
 {
-    if (m_daemonUp) {
-        // Fold the BluetoothStatus poll into the same 20 s tick. `ok:off` => off; anything else
-        // (incl. an older daemon that lacks the method) => assume on, so we never flash a false
-        // "Bluetooth is off" state.
-        const Status s = callStatus(QStringLiteral("BluetoothStatus"));
-        const bool on = !(s.kind == QStringLiteral("ok") && s.tail == QStringLiteral("off"));
-        if (on != m_bluetoothOn) { m_bluetoothOn = on; Q_EMIT bluetoothOnChanged(); }
+    const quint64 seq = ++m_watchesSeq;
+    if (!m_daemonUp) {
+        if (!m_linkPause.isEmpty()) { m_linkPause.clear(); Q_EMIT linkPauseChanged(); }
+        Q_EMIT watchesChanged({});
+        return;
     }
-    const Status lp = m_daemonUp ? callStatus(QStringLiteral("LinkPause")) : Status{};
-    const QString pause = lp.ok() ? lp.tail : QString();
-    if (pause != m_linkPause) { m_linkPause = pause; Q_EMIT linkPauseChanged(); }
-    Q_EMIT watchesChanged(m_daemonUp ? listWatches() : QVariantList());
+    // The watch list with the BluetoothStatus and LinkPause polls folded into the same tick: three reads in
+    // parallel, applied together once all are in, unless a newer refresh started meanwhile.
+    struct Round { QVariantMap bt, pause; QVariantList rows; int pending = 3; };
+    auto round = std::make_shared<Round>();
+    auto apply = [this, round, seq] {
+        if (--round->pending > 0 || seq != m_watchesSeq)
+            return;
+        // `ok:off` => off; anything else (incl. an older daemon that lacks the method) => assume on, so
+        // we never flash a false "Bluetooth is off" state.
+        const bool on = !(round->bt.value(QStringLiteral("ok")).toBool()
+                          && round->bt.value(QStringLiteral("tail")).toString() == QLatin1String("off"));
+        if (on != m_bluetoothOn) { m_bluetoothOn = on; Q_EMIT bluetoothOnChanged(); }
+        const QString pause = round->pause.value(QStringLiteral("ok")).toBool()
+            ? round->pause.value(QStringLiteral("tail")).toString() : QString();
+        if (pause != m_linkPause) { m_linkPause = pause; Q_EMIT linkPauseChanged(); }
+        Q_EMIT watchesChanged(round->rows);
+    };
+    readAsync(QStringLiteral("bluetoothStatus"), {}, nullptr, [round, apply](const QVariant &v) { round->bt = v.toMap(); apply(); });
+    readAsync(QStringLiteral("linkPause"), {}, nullptr, [round, apply](const QVariant &v) { round->pause = v.toMap(); apply(); });
+    readAsync(QStringLiteral("listWatches"), {}, nullptr, [round, apply](const QVariant &v) { round->rows = v.toList(); apply(); });
 }
 
 // --- polling: pair ---------------------------------------------------------
@@ -2174,7 +2256,7 @@ void StoandlClient::setDaemonUp(bool up)
         return;
     m_daemonUp = up;
     m_fwForceUnsupported = false;   // a restarted daemon may be a newer one
-    dropConfigSchema();             // … with other keys, or other installed models
+    dropCache();                    // … with other keys, other installed models or vibrations
     if (!m_readErrors.isEmpty()) {  // failures of the daemon before say nothing about this one
         m_readErrors.clear();
         Q_EMIT readErrorsChanged();
@@ -2210,10 +2292,13 @@ void StoandlClient::setDaemonUp(bool up)
     Q_EMIT daemonStateChanged();
 }
 
-void StoandlClient::dropConfigSchema()
+void StoandlClient::dropCache(const QString &name)
 {
-    m_schema = QVariant();
-    ++m_schemaGeneration;
+    if (name.isEmpty())
+        m_cache.clear();
+    else
+        m_cache.remove(name);
+    ++m_cacheGeneration;
 }
 
 void StoandlClient::refreshForwarding()
@@ -2235,7 +2320,7 @@ void StoandlClient::refreshForwarding()
 void StoandlClient::onConfigChanged(const QString &key)
 {
     qCDebug(lcStoandl).noquote() << "signal ConfigChanged:" << key;
-    dropConfigSchema();
+    dropCache(QStringLiteral("configSchema"));
     if (key == QStringLiteral("notification.forward"))
         refreshForwarding();
     Q_EMIT configChanged(key);
@@ -2498,16 +2583,16 @@ void StoandlClient::onPluginsChanged()
 
 // --- Voice -------------------------------------------------------------------
 
-QVariantMap StoandlClient::voiceStatus() { return statusMap(callStatus(QStringLiteral("VoiceStatus"))); }
-QVariantMap StoandlClient::ttsStatus()   { return statusMap(callStatus(QStringLiteral("TtsStatus"))); }
+QVariantMap StoandlClient::voiceStatus() { return read(QStringLiteral("voiceStatus")).toMap(); }
+QVariantMap StoandlClient::ttsStatus()   { return read(QStringLiteral("ttsStatus")).toMap(); }
 QVariantMap StoandlClient::speak(const QString &text) { return statusMap(callStatus(QStringLiteral("Speak"), {text})); }
 QVariantMap StoandlClient::stopSpeaking() { return statusMap(callStatus(QStringLiteral("StopSpeaking"))); }
 
-QVariantList StoandlClient::voiceModels()
+namespace {
+QVariant voiceModelRows(const QVariantList &records)
 {
     QVariantList rows;
-    QString installed = QStringLiteral("#");   // never null: null means "not read yet"
-    for (const QVariant &v : list(QStringLiteral("VoiceModels"))) {
+    for (const QVariant &v : records) {
         const QStringList f = v.toStringList();
         const QString state = f.value(4);   // installed | available | downloading:<pct> | failed:<msg>
         QVariantMap m;
@@ -2523,15 +2608,15 @@ QVariantList StoandlClient::voiceModels()
         m[QStringLiteral("note")]        = f.value(7);
         // Appended column: stt (a speech model) or tts (a voice); an older daemon lists only models.
         m[QStringLiteral("kind")]        = f.value(8).isEmpty() ? QStringLiteral("stt") : f.value(8);
-        if (state == QStringLiteral("installed"))
-            installed += f.value(0) + QLatin1Char(',');
         rows.append(m);
     }
-    // The schema's model and voice dropdowns list what is installed: a download or removal changes them.
-    if (!m_installedModels.isNull() && installed != m_installedModels)
-        dropConfigSchema();
-    m_installedModels = installed;
     return rows;
+}
+} // namespace
+
+QVariantList StoandlClient::voiceModels()
+{
+    return read(QStringLiteral("voiceModels")).toList();
 }
 
 QVariantMap StoandlClient::voiceDownloadModel(const QString &id) { return statusMap(callStatus(QStringLiteral("VoiceDownloadModel"), {id})); }
@@ -2559,10 +2644,23 @@ struct ReadSpec {
     QVariant (*records)(const QVariantList &records);
     QVariant (*status)(const Status &s);
     int timeoutMs = CALL_TIMEOUT_MS;
+    // Answered from StoandlClient's cache for the daemon running now (the read takes no arguments); see
+    // dropCache()'s callers for when an answer goes stale.
+    bool cached = false;
 };
 
 // A plain `s` reply, as call() returns it.
 QVariant statusVariant(const Status &s) { return statusMap(s); }
+
+// NotifMuteAllStatus() -> muted:<epoch seconds it ends> | none: → {kind, muted, until (epoch s, 0 = none)}.
+QVariant muteAllMap(const Status &s)
+{
+    QVariantMap m = statusMap(s);
+    const bool muted = s.kind == QLatin1String("muted");
+    m[QStringLiteral("muted")] = muted;
+    m[QStringLiteral("until")] = muted ? s.tail.toLongLong() : 0;
+    return m;
+}
 
 // Every read fetch() can run, by the name of its Q_INVOKABLE (which runs it blocking through read()).
 const ReadSpec *readSpec(const QString &name)
@@ -2576,7 +2674,7 @@ const ReadSpec *readSpec(const QString &name)
         { QStringLiteral("getSyncStatus"),    { "GetSyncStatus",     nullptr,  "",   syncStatusRows,   nullptr } },
         { QStringLiteral("musicStatus"),      { "MusicStatus",       nullptr,  "",   nullptr,          musicStatusMap } },
         { QStringLiteral("listWatchPrefs"),   { "ListWatchPrefs",    nullptr,  "",   watchPrefRows,    nullptr } },
-        { QStringLiteral("configSchema"),     { "GetConfigSchema",   nullptr,  "",   configSchemaRows, nullptr } },
+        { QStringLiteral("configSchema"),     { "GetConfigSchema",   nullptr,  "",   configSchemaRows, nullptr, CALL_TIMEOUT_MS, true } },
         { QStringLiteral("getConfig"),        { "GetConfig",         nullptr,  "",   configValues,     nullptr } },
         { QStringLiteral("notifList"),        { "NotifList",         nullptr,  "",   notifRows,        nullptr } },
         { QStringLiteral("notifListFilters"), { "NotifListFilters",  nullptr,  "",   notifFilterRows,  nullptr } },
@@ -2591,6 +2689,22 @@ const ReadSpec *readSpec(const QString &name)
         { QStringLiteral("batteryActivity"),  { "BatteryActivity",   nullptr,  "sx", nullptr,          batteryActivityRows } },
         { QStringLiteral("batteryPower"),     { "BatteryPower",      nullptr,  "sx", nullptr,          batteryPowerRows } },
         { QStringLiteral("taskStatus"),       { "TaskStatus",        nullptr,  "s",  nullptr,          statusVariant } },
+        { QStringLiteral("listWatches"),      { "ListWatches",       nullptr,  "",   watchRows,        nullptr } },
+        { QStringLiteral("bluetoothStatus"),  { "BluetoothStatus",   nullptr,  "",   nullptr,          statusVariant } },
+        { QStringLiteral("linkPause"),        { "LinkPause",         nullptr,  "",   nullptr,          statusVariant } },
+        { QStringLiteral("watchDetails"),     { "WatchDetails",      nullptr,  "",   nullptr,          watchDetailsMap } },
+        { QStringLiteral("devConnectionStatus"), { "DevConnectionStatus", nullptr, "", nullptr,        devConnectionMap } },
+        { QStringLiteral("listLanguages"),    { "ListLanguages",     nullptr,  "",   languageRows,     nullptr } },
+        { QStringLiteral("listCalendars"),    { "ListCalendars",     nullptr,  "",   calendarRows,     nullptr } },
+        { QStringLiteral("listCalendarSources"), { "ListCalendarSources", nullptr, "", calendarSourceRows, nullptr } },
+        { QStringLiteral("healthProfile"),    { "GetHealthProfile",  nullptr,  "",   healthProfileMap, nullptr } },
+        { QStringLiteral("heartbeatInfo"),    { "HeartbeatInfo",     nullptr,  "s",  nullptr,          heartbeatInfoMap } },
+        { QStringLiteral("heartbeatMetrics"), { "HeartbeatMetrics",  nullptr,  "s",  heartbeatGroups,  nullptr } },
+        { QStringLiteral("notifStyleChoices"), { "NotifStyleChoices", nullptr, "",   styleChoicesMap,  nullptr, CALL_TIMEOUT_MS, true } },
+        { QStringLiteral("notifMuteAllStatus"), { "NotifMuteAllStatus", nullptr, "", nullptr,          muteAllMap } },
+        { QStringLiteral("voiceModels"),      { "VoiceModels",       nullptr,  "",   voiceModelRows,   nullptr } },
+        { QStringLiteral("voiceStatus"),      { "VoiceStatus",       nullptr,  "",   nullptr,          statusVariant } },
+        { QStringLiteral("ttsStatus"),        { "TtsStatus",         nullptr,  "",   nullptr,          statusVariant } },
         // Actions that wait on the watch or the network: run() them.
         { QStringLiteral("syncWeather"),      { "SyncWeather",       nullptr,  "",   nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
         { QStringLiteral("syncCalendar"),     { "SyncCalendar",      nullptr,  "",   nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
@@ -2635,34 +2749,40 @@ QVariantList asList(const QVariant &v)
 }
 } // namespace
 
-namespace {
-// The one cached read: the config schema, which every settings page and the search read and which only
-// changes with the daemon (or its installed models; see dropConfigSchema's callers).
-const QString SCHEMA_READ = QStringLiteral("configSchema");
-} // namespace
-
 QVariant StoandlClient::read(const QString &name, const QVariantList &args)
 {
     const ReadSpec *spec = readSpec(name);
     Q_ASSERT_X(spec, "StoandlClient::read", "a typed read missing from readSpec()");
     if (!spec)
         return {};
-    if (name == SCHEMA_READ && m_schema.isValid())
-        return m_schema;
+    if (spec->cached && m_cache.contains(name))
+        return m_cache.value(name);
     const QDBusMessage reply = m_bus.call(methodCall(QString::fromLatin1(spec->method), readArgs(*spec, args)),
                                           QDBus::Block, spec->timeoutMs);
     noteReadResult(name, reply);
     const QVariant value = parseRead(*spec, reply, m_instanceUp);
-    if (name == SCHEMA_READ && reply.type() != QDBusMessage::ErrorMessage)
-        m_schema = value;
+    if (spec->cached && reply.type() != QDBusMessage::ErrorMessage)
+        m_cache.insert(name, value);
     afterRead(name, value);
     return value;
 }
 
 void StoandlClient::afterRead(const QString &name, const QVariant &value)
 {
-    if (name == QLatin1String("updateFirmware") && value.toMap().value(QStringLiteral("ok")).toBool())
+    if (name == QLatin1String("updateFirmware") && value.toMap().value(QStringLiteral("ok")).toBool()) {
         startFirmwarePoll();
+    } else if (name == QLatin1String("voiceModels")) {
+        // The schema's model and voice dropdowns list what is installed: a download or removal changes them.
+        QString installed = QStringLiteral("#");   // never null: null means "not read yet"
+        for (const QVariant &row : value.toList()) {
+            const QVariantMap m = row.toMap();
+            if (m.value(QStringLiteral("state")).toString() == QLatin1String("installed"))
+                installed += m.value(QStringLiteral("id")).toString() + QLatin1Char(',');
+        }
+        if (!m_installedModels.isNull() && installed != m_installedModels)
+            dropCache(QStringLiteral("configSchema"));
+        m_installedModels = installed;
+    }
 }
 
 void StoandlClient::readAsync(const QString &name, const QVariantList &args, QObject *context,
@@ -2674,26 +2794,25 @@ void StoandlClient::readAsync(const QString &name, const QVariantList &args, QOb
         done(QVariant());
         return;
     }
-    const bool schema = name == SCHEMA_READ;
-    if (schema && m_schema.isValid()) {
+    if (spec->cached && m_cache.contains(name)) {
         // Answered from the cache, still after this call returns, as a D-Bus answer would be.
         const QPointer<QObject> guard(context);
         const bool scoped = context != nullptr;
-        const QVariant value = m_schema;
+        const QVariant value = m_cache.value(name);
         QTimer::singleShot(0, this, [guard, scoped, done, value] {
             if (!scoped || guard)
                 done(value);
         });
         return;
     }
-    const quint64 generation = m_schemaGeneration;
+    const quint64 generation = m_cacheGeneration;
     callAsync(methodCall(QString::fromLatin1(spec->method), readArgs(*spec, args)), context,
-              [this, name, spec, done, schema, generation](const QDBusMessage &reply) {
+              [this, name, spec, done, generation](const QDBusMessage &reply) {
         noteReadResult(name, reply);
         const QVariant value = parseRead(*spec, reply, m_instanceUp);
         // Not an answer from before the cache was dropped (it may list the old keys or models).
-        if (schema && reply.type() != QDBusMessage::ErrorMessage && generation == m_schemaGeneration)
-            m_schema = value;
+        if (spec->cached && reply.type() != QDBusMessage::ErrorMessage && generation == m_cacheGeneration)
+            m_cache.insert(name, value);
         afterRead(name, value);
         done(value);
     }, user, spec->timeoutMs);

@@ -227,9 +227,9 @@ public:
     Q_INVOKABLE QVariantMap  setHealthProfile(const QString &key, const QString &value); // SetHealthProfile(s,s)
     Q_INVOKABLE QVariantList listCalendars();            // -> [{id,name,enabled,accountId}]
     Q_INVOKABLE QVariantMap  setCalendarEnabled(const QString &id, bool enabled); // SetCalendarEnabled(s,b)
-    Q_INVOKABLE void         refreshCalendars();         // re-fetch + calendarsChanged (on show + after toggle)
+    Q_INVOKABLE void         refreshCalendars();         // async re-fetch → calendarsChanged (latest wins)
     // Calendar *sources* (CalDAV accounts / iCal feeds / .ics paths) — the Calendars settings screen.
-    Q_INVOKABLE QVariantList listCalendarSources();      // -> [{id,type,url,username,label}] (no password)
+    Q_INVOKABLE QVariantList listCalendarSources();      // -> [{id,type,url,username,label,lastError,lastSync}] (no password)
     Q_INVOKABLE QVariantMap  addCalendarSource(const QString &type, const QString &url,
                                                const QString &username, const QString &password);
     Q_INVOKABLE QVariantMap  updateCalendarSource(const QString &id, const QString &url,
@@ -281,7 +281,8 @@ public:
     Q_INVOKABLE QVariantMap  notifSetMuteAll(const QString &spec);                      // NotifSetMuteAll(s)
     Q_INVOKABLE QVariantMap  notifSetStyle(const QString &name, const QString &color,
                                            const QString &icon, const QString &vibe);   // NotifSetStyle(s,s,s,s)
-    Q_INVOKABLE QVariantMap  notifStyleChoices();        // -> {vibes:[{text,value,pattern,custom}], icons:[{text,value}]}
+    // -> {vibes:[{text,value,pattern,custom}], icons:[{text,value}]}; cached for the daemon running now.
+    Q_INVOKABLE QVariantMap  notifStyleChoices();
     Q_INVOKABLE QVariantMap  notifVibeTest(const QString &spec);                        // NotifVibeTest(s)
     Q_INVOKABLE QVariantMap  notifSetAppName(const QString &name, const QString &placement); // NotifSetAppName(s,s)
     Q_INVOKABLE QVariantMap  notifSetImages(const QString &name, const QString &mode); // NotifSetImages(s,s)
@@ -340,7 +341,9 @@ public:
     // --- polling control (driven by the Watch page lifecycle) --------------
     Q_INVOKABLE void startWatchPoll();   // 20 s safety-net poll of ListWatches (+ BluetoothStatus)
     Q_INVOKABLE void stopWatchPoll();
-    Q_INVOKABLE void refreshWatches();   // immediate poll + watchesChanged (call after any mutation)
+    // Asynchronous re-read of ListWatches (with BluetoothStatus and LinkPause) → watchesChanged; call after
+    // any mutation. The latest refresh wins.
+    Q_INVOKABLE void refreshWatches();
 
     Q_INVOKABLE void startPairPoll();    // begin the PairStatus poll (after Pair/Repair)
     Q_INVOKABLE void stopPairPoll();
@@ -462,7 +465,8 @@ private:
     void         setDaemonUp(bool up);
     // Read notification.forward (asynchronously) into m_forwarding.
     void         refreshForwarding();
-    void         dropConfigSchema();
+    // Forget the cached answer of the read `name` (empty = every cached read).
+    void         dropCache(const QString &name = QString());
     void         runCli(const QString &op, const QStringList &args);
     // Run `systemctl --user <args>` asynchronously; `done` gets (exit 0, first stderr line / reason, stdout).
     void         runSystemctl(const QStringList &args,
@@ -527,6 +531,8 @@ private:
     quint64 m_appsSeq = 0;
     quint64 m_extSeq = 0;
     quint64 m_pluginsSeq = 0;
+    quint64 m_calendarsSeq = 0;
+    quint64 m_watchesSeq = 0;
     // appIcon(): uuid → {file URL or "" for none, when it was answered}; uuids being asked.
     struct IconEntry { QString url; qint64 answeredMs = 0; };
     QHash<QString, IconEntry> m_icons;
@@ -542,10 +548,10 @@ private:
     QStringList m_restartPending;
     QString     m_daemonVersion;
     QVariantMap m_readErrors;
-    // GetConfigSchema's parsed rows for the daemon running now; m_schemaGeneration drops an answer to a
-    // call that started before the cache was invalidated.
-    QVariant    m_schema;
-    quint64     m_schemaGeneration = 0;
+    // The cached reads' answers (readSpec's `cached`: the config schema, the notification styles) for the
+    // daemon running now; m_cacheGeneration drops an answer to a call that started before a drop.
+    QHash<QString, QVariant> m_cache;
+    quint64     m_cacheGeneration = 0;
     // The installed speech models and voices voiceModels() last saw ("" before the first read).
     QString     m_installedModels;
 };
