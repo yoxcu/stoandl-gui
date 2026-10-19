@@ -19,7 +19,8 @@ Kirigami.ScrollablePage {
     // daemon-side while the watch's settings load, so it isn't read before someone searches).
     property var schema: []
     property var prefs: []
-    property bool prefsAsked: false
+    property bool prefsAsked: false     // an answer came (maybe empty: no watch yet, its prefs not loaded)
+    property bool prefsPending: false
     // The search's hits: [{text, description, kind: "schema"|"watch", pageName, key}].
     property var hits: []
     readonly property bool searching: searchField.text.trim() !== ""
@@ -100,16 +101,23 @@ Kirigami.ScrollablePage {
     }
 
     function reload() {
-        if (!StoandlClient.daemonUp) { page.schema = []; page.prefs = []; page.prefsAsked = false; return; }
+        if (!StoandlClient.daemonUp) {
+            page.schema = []; page.prefs = []; page.prefsAsked = false; page.prefsPending = false;
+            return;
+        }
         StoandlClient.fetch(page, ["configSchema"], function (rows) { page.schema = rows || []; });
     }
     function refreshOnShow() { page.reload(); }
 
-    // The watch's settings, for the search: read once per daemon, when the field first gets focus.
+    // The watch's settings, for the search: read when the field gets focus (it can block daemon-side, so
+    // not before), and kept once there are some. An empty answer (no watch yet, or its prefs not loaded)
+    // is asked again on the next focus, or when the watch list changes while the field has it.
     function askPrefs() {
-        if (page.prefsAsked || !StoandlClient.daemonUp) return;
-        page.prefsAsked = true;
+        if (page.prefsPending || page.prefs.length > 0 || !StoandlClient.daemonUp) return;
+        page.prefsPending = true;
         StoandlClient.fetch(prefsFetcher, ["listWatchPrefs"], function (rows) {
+            page.prefsPending = false;
+            page.prefsAsked = true;
             page.prefs = rows || [];
             page.search();
         });
@@ -204,6 +212,7 @@ Kirigami.ScrollablePage {
     Connections {
         target: StoandlClient
         function onDaemonUpChanged() { page.reload(); }
+        function onWatchesChanged() { if (searchField.activeFocus) page.askPrefs(); }
     }
     Component.onCompleted: page.reload()
 
