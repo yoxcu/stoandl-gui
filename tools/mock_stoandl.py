@@ -1934,6 +1934,7 @@ class MockStoandl(dbus.service.Object):
         # the daemon's worker pool, so the GUI must not wait for it.
         delay = int(os.environ.get("MOCK_FW_CHECK_MS", "0") or 0)
         self.fw_checks = getattr(self, "fw_checks", 0) + 1
+        self.fw_cached_update = "4.4.3"  # what FirmwareStatus reports from the daemon's check cache
         print(f"mock: {method} #{self.fw_checks} (answers in {delay} ms)", flush=True)
         if delay <= 0:
             reply(result)
@@ -1962,8 +1963,10 @@ class MockStoandl(dbus.service.Object):
         # Non-advancing SNAPSHOT of the op the _fw_tick walker drives — the GLib walker owns
         # the step counter and pushes FirmwareProgress; this is just the polled fallback that
         # reports the current phase (so polling and the signal never double-advance the walk).
+        # While idle, the daemon names newer firmware its check cache knows of (never a new check).
         if self.fw is None:
-            return "idle:"
+            cached = getattr(self, "fw_cached_update", None)
+            return f"idle:available {cached}" if cached else "idle:"
         return self.fw["steps"][max(self.fw["step"], 0)][0]
 
     # --- Language packs ----------------------------------------------------
@@ -2411,6 +2414,7 @@ class MockStoandl(dbus.service.Object):
             if self.fw["watch"]:
                 self.watches[self.fw["watch"]]["state"] = "connected"
             self.fw = None
+            self.fw_cached_update = None              # the running version changed: the cached answer is gone
             self.WatchesChanged()                     # link drops → list state changes
             return False
         return True
