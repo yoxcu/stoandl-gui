@@ -204,9 +204,8 @@ public:
     Q_INVOKABLE QVariantMap  updateCalendarSource(const QString &id, const QString &url,
                                                   const QString &username, const QString &password);
     Q_INVOKABLE QVariantMap  removeCalendarSource(const QString &id);
-    // HOOK #5 — per-service master toggles + status.
+    // HOOK #5 — per-service status (a master is switched through setConfig of its key, like any key).
     Q_INVOKABLE QVariantList getSyncStatus();            // -> [{service,enabled,available,lastSync,key}]
-    Q_INVOKABLE QVariantMap  setSyncEnabled(const QString &service, bool enabled); // SetSyncEnabled(s,b)
     Q_INVOKABLE QVariantMap  musicStatus();              // MusicStatus() -> {kind,ok,playing,player,track}
 
     // --- typed wrappers: Watch settings (Settings screen) ------------------

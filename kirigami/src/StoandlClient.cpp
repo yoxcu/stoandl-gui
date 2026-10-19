@@ -1392,11 +1392,6 @@ QVariantList StoandlClient::getSyncStatus()
     return read(QStringLiteral("getSyncStatus")).toList();
 }
 
-QVariantMap StoandlClient::setSyncEnabled(const QString &service, bool enabled)
-{
-    return statusMap(callStatus(QStringLiteral("SetSyncEnabled"), {service, enabled}));
-}
-
 // --- Watch settings: prefs -------------------------------------------------
 
 namespace {
