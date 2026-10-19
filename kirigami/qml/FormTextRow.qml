@@ -28,6 +28,9 @@ FormCard.AbstractFormDelegate {
     property string description: ""
     /** Longer text behind the (?) button next to the label; empty = no button. */
     property string help: ""
+    /** The value can't be changed now (a setting it depends on is off); the help still opens.
+     *  (`enabled: false` would disable the (?) with it.) */
+    property bool locked: false
     /** Validation message under the entry, in the negative colour; empty = valid (hidden). */
     property string error: ""
     /** The edited text. Named `value` to avoid ItemDelegate's own `text`. */
@@ -62,6 +65,7 @@ FormCard.AbstractFormDelegate {
                 Layout.fillWidth: true
                 text: root.label
                 elide: Text.ElideRight
+                color: root.enabled && !root.locked ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
 
                 // A long press on the label opens the help (the field and the buttons own the rest of the row).
                 TapHandler {
@@ -88,6 +92,7 @@ FormCard.AbstractFormDelegate {
         QQC2.TextField {
             id: field
             Layout.fillWidth: true
+            enabled: !root.locked
             onEditingFinished: root.editingFinished()
         }
 

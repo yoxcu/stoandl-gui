@@ -7,7 +7,8 @@ import org.kde.kirigamiaddons.formcard as FormCard
 /*
  * A one-of-several setting row for a FormCard: the setting's name, its current value and a down
  * arrow, with the description underneath — what FormCard.FormComboBoxDelegate shows in its mobile
- * Dialog mode, without the cost. Clicking it emits `clicked`; the page opens its one OptionPicker.
+ * Dialog mode, without the cost. Clicking it emits `activated` (unless `locked`); the page opens its one
+ * OptionPicker.
  *
  * Not FormComboBoxDelegate because that builds a hidden QQC2.ComboBox (with a delegate per option in
  * its popup) and an InlineMessage for every row, whatever the display mode: ~10 ms a row on x86, and
@@ -27,8 +28,14 @@ FormCard.AbstractFormDelegate {
     property string help: ""
     /** The current value's label, shown at the trailing edge. */
     property string value: ""
+    /** The value can't be changed now (a setting it depends on is off): a click opens nothing, the help
+     *  still does. (`enabled: false` would disable the (?) with it.) */
+    property bool locked: false
     /** Extra items placed before the value (e.g. a colour swatch). */
     default property alias trailing: trailingSlot.data
+
+    /** A click, Enter or the accessibility press while not locked: open the picker. */
+    signal activated()
 
     Accessible.role: Accessible.ComboBox
     Accessible.name: root.text
@@ -37,6 +44,7 @@ FormCard.AbstractFormDelegate {
     Accessible.onPressAction: root.clicked()
     Keys.onReturnPressed: root.clicked()
     Keys.onEnterPressed: root.clicked()
+    onClicked: if (!root.locked) root.activated()
     Keys.onPressed: (event) => helpButton.keyPressed(event)
 
     // A hold opens the help, not the picker: with pressAndHold connected no click follows it.
@@ -62,7 +70,7 @@ FormCard.AbstractFormDelegate {
                 elide: Text.ElideRight
                 wrapMode: Text.Wrap
                 maximumLineCount: 2
-                color: root.enabled ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
+                color: root.enabled && !root.locked ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
                 Accessible.ignored: true
             }
 
@@ -91,6 +99,7 @@ FormCard.AbstractFormDelegate {
             FormCard.FormArrow {
                 Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
                 direction: Qt.DownArrow
+                opacity: root.locked ? 0.4 : 1
             }
         }
 

@@ -19,6 +19,9 @@ FormCard.AbstractFormDelegate {
     property string description: ""
     /** Longer text behind the (?) button next to the label; empty = no button. */
     property string help: ""
+    /** The value can't be changed now (a setting it depends on is off); the help still opens.
+     *  (`enabled: false` would disable the (?) with it.) */
+    property bool locked: false
     /** The encoded list, as GetConfig reports it. */
     property string value: ""
     /** Shape hint for the add field (the schema's placeholder). */
@@ -70,6 +73,7 @@ FormCard.AbstractFormDelegate {
                 Layout.fillWidth: true
                 text: root.label
                 elide: Text.ElideRight
+                color: root.enabled && !root.locked ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
 
                 // A long press on the label opens the help (the field and the buttons own the rest of the row).
                 TapHandler {
@@ -101,6 +105,7 @@ FormCard.AbstractFormDelegate {
                 required property var modelData
                 required property int index
                 Layout.fillWidth: true
+                enabled: !root.locked
                 spacing: 0
 
                 // Commit on focus-out / Enter only: the commit rebuilds the rows.
@@ -145,6 +150,7 @@ FormCard.AbstractFormDelegate {
 
         RowLayout {
             Layout.fillWidth: true
+            enabled: !root.locked
             spacing: 0
 
             QQC2.TextField {

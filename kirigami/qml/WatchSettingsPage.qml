@@ -12,8 +12,8 @@ import "StableRows.js" as StableRows
 // delegate per type — crucially, quicklaunch is an APP PICKER (not a slider setting a uuid), enum/color
 // open the page's one OptionPicker and schedule (Quiet Time hours) a validated HH:MM-HH:MM field — under
 // the daemon's sections, in the order it lists them. Its "Advanced" section (diagnostic prefs) starts
-// collapsed. A pref that only matters while another has some value (`requires`) is disabled until then
-// and says so; its (?) holds the daemon's help and the default.
+// collapsed. A pref that only matters while another has some value (`requires`) is locked until then
+// (its help still opens) and says so; its (?) holds the daemon's help and the default.
 Kirigami.ScrollablePage {
     id: page
     objectName: "watchSettings"
@@ -368,7 +368,7 @@ Kirigami.ScrollablePage {
                                     text: prefLoader.pref.name || ""
                                     description: prefLoader.pref.subtitle || ""
                                     help: prefLoader.pref.helpText || ""
-                                    enabled: prefLoader.pref.enabled !== false
+                                    locked: prefLoader.pref.enabled === false
                                     // Only the initial value: FormSwitchDelegate assigns `checked` from its
                                     // inner Switch, which drops any binding, so it follows by hand.
                                     checked: prefLoader.pref.currentBool === true
@@ -392,9 +392,9 @@ Kirigami.ScrollablePage {
                                     text: prefLoader.pref.name || ""
                                     description: prefLoader.pref.subtitle || ""
                                     help: prefLoader.pref.helpText || ""
-                                    enabled: prefLoader.pref.enabled !== false
+                                    locked: prefLoader.pref.enabled === false
                                     value: prefLoader.pref.current || ""
-                                    onClicked: {
+                                    onActivated: {
                                         var id = prefLoader.modelData.id;
                                         page.pickOption(text, prefLoader.pref.allowed, prefLoader.pref.optionIndex,
                                                         function (i, option) { page.applyPref(id, option); });
@@ -408,10 +408,10 @@ Kirigami.ScrollablePage {
                                     text: prefLoader.pref.name || ""
                                     description: prefLoader.pref.subtitle || ""
                                     help: prefLoader.pref.helpText || ""
-                                    enabled: prefLoader.pref.enabled !== false
+                                    locked: prefLoader.pref.enabled === false
                                     value: prefLoader.pref.qlCurrentLabel || ""
                                     // "Off" → the daemon's "off" sentinel; an app name resolves to its uuid daemon-side.
-                                    onClicked: {
+                                    onActivated: {
                                         var id = prefLoader.modelData.id;
                                         page.pickOption(text, prefLoader.pref.qlOptions, prefLoader.pref.optionIndex,
                                                         function (i, option) { page.applyPref(id, option === "Off" ? "off" : option); });
@@ -425,7 +425,7 @@ Kirigami.ScrollablePage {
                                     label: prefLoader.pref.name || ""
                                     description: prefLoader.pref.subtitle || ""
                                     help: prefLoader.pref.helpText || ""
-                                    enabled: prefLoader.pref.enabled !== false
+                                    locked: prefLoader.pref.enabled === false
                                     from: prefLoader.pref.min || 0
                                     to: prefLoader.pref.max || 0
                                     unit: prefLoader.pref.unit || ""
@@ -445,9 +445,9 @@ Kirigami.ScrollablePage {
                                     text: prefLoader.pref.name || ""
                                     description: prefLoader.pref.subtitle || ""
                                     help: prefLoader.pref.helpText || ""
-                                    enabled: prefLoader.pref.enabled !== false
+                                    locked: prefLoader.pref.enabled === false
                                     value: "Choose…"
-                                    onClicked: {
+                                    onActivated: {
                                         var id = prefLoader.modelData.id;
                                         page.pickOption(text, prefLoader.pref.colorPresetList, -1,
                                                         function (i, option) { page.applyPref(id, option); });
@@ -476,7 +476,7 @@ Kirigami.ScrollablePage {
                                     label: prefLoader.pref.name || ""
                                     description: prefLoader.pref.subtitle || "Daily hours, 24-hour clock"
                                     help: prefLoader.pref.helpText || ""
-                                    enabled: prefLoader.pref.enabled !== false
+                                    locked: prefLoader.pref.enabled === false
                                     value: prefLoader.pref.current || ""
                                     placeholderText: "HH:MM-HH:MM"
                                     inputMethodHints: Qt.ImhPreferNumbers | Qt.ImhNoPredictiveText

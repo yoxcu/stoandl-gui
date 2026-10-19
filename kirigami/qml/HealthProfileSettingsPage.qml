@@ -212,7 +212,7 @@ Kirigami.ScrollablePage {
                 text: "Sex"
                 help: page.bodyHelp
                 value: page.label(page.genderOptions[page.comboIndex(page.genderOptions, "gender")])
-                onClicked: page.pick(text, "gender", page.genderOptions)
+                onActivated: page.pick(text, "gender", page.genderOptions)
             }
             FormCard.FormDelegateSeparator {}
             FormOptionRow {
@@ -221,7 +221,7 @@ Kirigami.ScrollablePage {
                 description: "Metric or imperial units on the watch"
                 help: "Distances on the watch; also the temperature unit for weather and, when Wind speed is Automatic, the wind unit."
                 value: page.label(page.unitOptions[page.comboIndex(page.unitOptions, "units")])
-                onClicked: page.pick(text, "units", page.unitOptions)
+                onActivated: page.pick(text, "units", page.unitOptions)
             }
         }
 
@@ -277,15 +277,15 @@ Kirigami.ScrollablePage {
             FormOptionRow {
                 text: "Measurement interval"
                 help: "Shorter intervals give finer data and drain faster."
-                enabled: hrmSwitch.checked
+                locked: !hrmSwitch.checked
                 value: page.label(page.intervalOptions[page.comboIndex(page.intervalOptions, "hrm_interval", "10min")])
-                onClicked: page.pick(text, "hrm_interval", page.intervalOptions, "10min")
+                onActivated: page.pick(text, "hrm_interval", page.intervalOptions, "10min")
             }
             FormCard.FormDelegateSeparator {}
             FormSwitchRow {
                 text: "HR during activities"
                 description: "Continuously track heart rate during detected walks and runs. Uses more battery."
-                enabled: hrmSwitch.checked && page.boolVal("tracking")
+                locked: !(hrmSwitch.checked && page.boolVal("tracking"))
                 checked: page.boolVal("hrm_activity")
                 onToggled: page.apply("hrm_activity", checked ? "on" : "off")
             }

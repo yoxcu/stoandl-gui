@@ -29,6 +29,9 @@ FormCard.AbstractFormDelegate {
     property string help: ""
     property int from: 0
     property int to: 1000000
+    /** The value can't be changed now (a setting it depends on is off); the help still opens.
+     *  (`enabled: false` would disable the (?) with it.) */
+    property bool locked: false
     /** Appended to the displayed number (e.g. "min", "days"). */
     property string unit: ""
     /** The value to show. Bind it; the row does not write back to it. */
@@ -69,6 +72,7 @@ FormCard.AbstractFormDelegate {
                     Layout.fillWidth: true
                     text: root.label
                     elide: Text.ElideRight
+                    color: root.enabled && !root.locked ? Kirigami.Theme.textColor : Kirigami.Theme.disabledTextColor
 
                     // A long press on the label opens the help (the field and the buttons own the rest of the row).
                     TapHandler {
@@ -98,6 +102,7 @@ FormCard.AbstractFormDelegate {
             // the user has actually moved it (ready flips after that first assignment).
             property bool ready: false
             Layout.alignment: Qt.AlignVCenter
+            enabled: !root.locked
             from: root.from
             to: root.to
             editable: true

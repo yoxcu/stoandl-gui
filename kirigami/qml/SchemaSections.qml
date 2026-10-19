@@ -14,9 +14,10 @@ import "StableRows.js" as StableRows
 // nothing here names a key except the anchors below, which put a card or a link after one.
 //
 // Sections titled "Advanced …" (a page's last) start collapsed behind one "Advanced settings (N)" row,
-// and their rows aren't built until it is opened. A row whose `requires` doesn't hold is disabled and
-// says what it is used with; a row's (?) holds its help and a generated line: the default, the hosts it
-// contacts, whether it waits for a restart, and its stoandl.conf key.
+// and their rows aren't built until it is opened. A row whose `requires` doesn't hold is locked (its value
+// can't be changed, its help still opens) and says what it is used with; a row's (?) holds its help and a
+// generated line: the default, the hosts it contacts, whether it waits for a restart, and its stoandl.conf
+// key.
 //
 // SchemaSettingsPage shows one of these per page; DebugSettingsPage puts the Developer page's on top.
 ColumnLayout {
@@ -308,6 +309,16 @@ ColumnLayout {
             btn.show();   // already open: stays open
             if (btn.toolTipVisible) btn.released();
         }
+        // A locked row (built ones only): its (?) still opens.
+        var lockedRow = null;
+        off.forEach(function (k) { if (!lockedRow) { var r = StableRows.findRow(page, "key", k); if (r && r.item) lockedRow = r; } });
+        var lockedHelp = lockedRow ? StableRows.findHelp(lockedRow.item) : null;
+        if (lockedHelp && lockedHelp.help !== "") {
+            lockedHelp.show();
+            console.log("stoandl-smoke: locked " + lockedRow.key + " help enabled=" + lockedHelp.enabled
+                        + " shown=" + lockedHelp.toolTipVisible);
+            if (lockedHelp.toolTipVisible) lockedHelp.released();
+        }
         // The first combo row: a long press opens its help, not its picker; a click opens the page's one
         // picker on its options with the stored one checked, and picking that one writes it back unchanged.
         var combo = null;
@@ -455,7 +466,7 @@ ColumnLayout {
                                 text: cfgLoader.field.label || ""
                                 description: cfgLoader.row.description
                                 help: cfgLoader.field.help || ""
-                                enabled: cfgLoader.row.enabled
+                                locked: !cfgLoader.row.enabled
                                 // Only the initial value: FormSwitchDelegate assigns `checked` from its
                                 // inner Switch, which drops any binding, so it follows by hand.
                                 checked: cfgLoader.value === "true"
@@ -479,9 +490,9 @@ ColumnLayout {
                                 text: cfgLoader.field.label || ""
                                 description: cfgLoader.row.description
                                 help: cfgLoader.field.help || ""
-                                enabled: cfgLoader.row.enabled
+                                locked: !cfgLoader.row.enabled
                                 value: cfgLoader.value
-                                onClicked: {
+                                onActivated: {
                                     var key = cfgLoader.key;
                                     var options = cfgLoader.field.options || [];
                                     // The picker checks the stored value; none when it is not an option.
@@ -499,7 +510,7 @@ ColumnLayout {
                                 label: cfgLoader.field.label || ""
                                 description: cfgLoader.row.description
                                 help: cfgLoader.field.help || ""
-                                enabled: cfgLoader.row.enabled
+                                locked: !cfgLoader.row.enabled
                                 from: cfgLoader.field.min || 0
                                 to: cfgLoader.field.max || 0
                                 unit: cfgLoader.field.unit || ""
@@ -520,9 +531,9 @@ ColumnLayout {
                             id: cfgSecret
                             ColumnLayout {
                                 spacing: 0
-                                enabled: cfgLoader.row.enabled
                                 FormTextRow {
                                     id: sf
+                                    locked: !cfgLoader.row.enabled
                                     label: cfgLoader.field.label || ""
                                     description: cfgLoader.row.description +
                                         (cfgLoader.value === "set" ? " (stored)" : " (not set)")
@@ -538,6 +549,7 @@ ColumnLayout {
                                 }
                                 FormCard.FormButtonDelegate {
                                     visible: cfgLoader.value === "set"
+                                    enabled: cfgLoader.row.enabled
                                     text: "Remove " + (cfgLoader.field.label || "")
                                     onClicked: page.applyConfig(cfgLoader.key, "")
                                 }
@@ -551,7 +563,7 @@ ColumnLayout {
                                 label: cfgLoader.field.label || ""
                                 description: cfgLoader.row.description
                                 help: cfgLoader.field.help || ""
-                                enabled: cfgLoader.row.enabled
+                                locked: !cfgLoader.row.enabled
                                 value: cfgLoader.value
                                 placeholderText: cfgLoader.field.placeholder || ""
                                 onCommit: (newValue) => page.applyConfig(cfgLoader.key, newValue)
@@ -568,7 +580,7 @@ ColumnLayout {
                                 label: cfgLoader.field.label || ""
                                 description: cfgLoader.row.description
                                 help: cfgLoader.field.help || ""
-                                enabled: cfgLoader.row.enabled
+                                locked: !cfgLoader.row.enabled
                                 value: cfgLoader.value
                                 placeholderText: cfgLoader.field.placeholder || ""
                                 // Commit on focus-out / Enter only: committing per keystroke would write a

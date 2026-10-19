@@ -877,7 +877,7 @@ Kirigami.ScrollablePage {
                             help: fieldRow.modelData.help
                             value: options[chosen] || ""
                             Component.onCompleted: if (fieldRow.modelData.type === "enum" && options.length) fieldRow.fieldValue = options[chosen]
-                            onClicked: extConfigDialog.pick(text, options, chosen,
+                            onActivated: extConfigDialog.pick(text, options, chosen,
                                                             function (i, option) { fieldRow.fieldValue = option; })
                         }
                     }
