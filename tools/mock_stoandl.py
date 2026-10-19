@@ -66,7 +66,18 @@ def rec(*fields):
 
 # Column order of a GetConfigSchema record (see MockStoandl.config_schema).
 CONFIG_COLS = ("key", "type", "label", "options", "desc", "group", "apply",
-               "min", "max", "unit", "placeholder")
+               "min", "max", "unit", "placeholder", "page", "help", "requires", "default", "egress")
+
+# The daemon's GetConfigSchema rows, written by its ConfigSchemaTest (STOANDL_UPDATE_GOLDEN=1) with no
+# speech models, voices or custom vibrations installed: the mock serves the real schema, never a hand copy.
+CONFIG_SCHEMA_TSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config-schema.tsv")
+
+# GetSyncStatus's `key` column (the daemon's SYNC_SERVICE_KEYS): SetSyncEnabled is an alias for SetConfig
+# of this key, and the service is on exactly when the key is.
+SYNC_SERVICE_KEYS = {
+    "notifications": "notification.forward", "weather": "weather.enabled", "calendar": "calendar.enabled",
+    "music": "music.enabled", "health": "health.sync", "dnd": "dnd.sync",
+}
 
 
 def _list_decode(raw):
@@ -130,17 +141,63 @@ CONFIG_CHECKS = {
     "weather.locations": _weather_locations,
     "firmware.github_repo": lambda v: (_github_repo_err(v), v),
     "firmware.cohorts_url": lambda v: (_http_url_err(v), v),
+    "voice.url": lambda v: (_http_url_err(v) if v else None, v),
+    "tts.url": lambda v: (_http_url_err(v) if v else None, v),
 }
 
 # Combo options whose stoandl.conf token (ConfigSchema.kt's ConfigChoice token) isn't the label
 # lower-cased with '_' for spaces.
+_ENGINE_TOKENS = {"Off": "off", "None": "off", "Local model": "local", "Custom command": "command", "HTTP service": "http"}
 CONFIG_COMBO_TOKENS = {
     "notification.app_name": {"Small line": "small"},
-    "voice.backend": {"Local model": "local", "Custom command": "command", "HTTP service": "http"},
-    "voice.fallback_backend": {"None": "off", "Local model": "local", "Custom command": "command", "HTTP service": "http"},
-    "plugins.permission_policy": {"If data could leave this machine": "ask_if_exfiltrating", "Always": "always_ask", "Never": "never_ask"},
+    "notification.default_mute": {"Unmuted": "never", "Muted": "always", "Muted on weekdays": "weekdays",
+                                  "Muted at weekends": "weekends"},
+    "dnd.sync": {"Desktop → watch": "to_watch", "Watch → desktop": "to_host", "Both ways": "both"},
+    "music.volume": {"System volume": "system", "Player volume": "player"},
+    "weather.location_source": {"None": "manual", "GNOME Weather": "gnome", "A command": "command"},
+    "voice.backend": _ENGINE_TOKENS,
+    "voice.fallback_backend": _ENGINE_TOKENS,
+    "tts.backend": _ENGINE_TOKENS,
+    "plugins.permission_policy": {"When data could leave": "ask_if_exfiltrating", "Always": "always_ask", "Never": "never_ask"},
     "calendar.reminder_vibe": {"Watch default": ""},
 }
+
+# The daemon's WatchPrefText (pebble/WatchPrefText.kt) for the prefs in MockStoandl.prefs: ListWatchPrefs'
+# columns 8-10 (section, help, requires). Sections in display order; an id not listed is in "Other".
+WATCH_PREF_SECTIONS = ["Quick launch", "Backlight & display", "Notifications & timeline", "Quiet Time",
+                       "Vibration", "Music", "Time, units & language", "Motion & menus", "Advanced", "Other"]
+WATCH_PREF_TEXT = {
+    # id: (section, help, requires)
+    "qlUp": ("Quick launch", "QL", ""), "qlDown": ("Quick launch", "QL", ""),
+    "qlSelect": ("Quick launch", "QL", ""), "qlSingleClickUp": ("Quick launch", "QL", ""),
+    "qlBack": ("Quick launch", "QL", ""),
+    "lightEnabled": ("Backlight & display", "", ""), "lightMotion": ("Backlight & display", "", ""),
+    "lightPreset": ("Backlight & display", "Each mode sets brightness, duration and the light sensor together. "
+                    "Choose Advanced to set them one by one.", ""),
+    "lightDynamicMode": ("Backlight & display", "", "lightPreset=Advanced"),
+    "lightIntensity": ("Backlight & display", "", "lightPreset=Advanced"),
+    "lightTimeoutMs": ("Backlight & display", "", "lightPreset=Advanced"),
+    "lightColor": ("Backlight & display", "", ""),
+    "displayOrientationLeftHanded": ("Backlight & display", "", ""),
+    "mask": ("Notifications & timeline", "Which alerts the watch shows and vibrates for. stoandl still sends "
+             "everything; the watch filters.", ""),
+    "notifWindowTimeout": ("Notifications & timeline", "", ""),
+    "timelineQuickViewEnabled": ("Notifications & timeline", "", ""),
+    "dndManuallyEnabled": ("Quiet Time", "Mirror Do Not Disturb (Notifications) can switch this with your desktop.", ""),
+    "dndWeekdayScheduleEnabled": ("Quiet Time", "", ""), "dndWeekendScheduleEnabled": ("Quiet Time", "", ""),
+    "dndShowNotifications": ("Quiet Time", "", ""),
+    "dndWeekdaySchedule": ("Quiet Time", "An end before the start runs overnight (22:00-07:00).", "dndWeekdayScheduleEnabled=true"),
+    "dndWeekendSchedule": ("Quiet Time", "An end before the start runs overnight (22:00-07:00).", "dndWeekendScheduleEnabled=true"),
+    "vibeIntensity": ("Vibration", "", ""),
+    "vibeScoreNotifications": ("Vibration", "Single apps can have their own pattern on the Alerts tab.", ""),
+    "musicShowVolumeControls": ("Music", "", ""),
+    "clock24h": ("Time, units & language", "", ""), "unitsWind": ("Time, units & language", "", ""),
+    "language": ("Time, units & language", "Install packs under Firmware & language or on the Watch tab.", ""),
+    "menuScrollWrapAround": ("Motion & menus", "", ""),
+}
+WATCH_PREF_QL_HELP = ("Choose an app, a system action (Quiet Time, Backlight, Motion Backlight, Airplane Mode, "
+                      "Timeline Past/Future, Toggle Touch) or Off. Actions the connected watch can't run are left out.")
+
 
 
 
@@ -238,15 +295,16 @@ class MockStoandl(dbus.service.Object):
             "Signal": {"phone": "+1 555 0123", "token": "", "interval": 20, "replies": True},
             "SMS Bridge": {"modem": "ModemManager", "country": "+1", "delivery": False},
         }
-        # HOOK #5: sync services — runtime master on/off + availability + last-sync.
-        # service -> {enabled, available, lastSync}.
+        # HOOK #5: sync services — availability + last-sync. Whether one is on is its config key
+        # (SYNC_SERVICE_KEYS, see _sync_on), as in the daemon.
+        # service -> {available, lastSync}.
         self.sync = {
-            "notifications": {"enabled": True, "available": True, "lastSync": "live"},
-            "weather": {"enabled": True, "available": True, "lastSync": "8 min ago"},
-            "calendar": {"enabled": True, "available": True, "lastSync": "12 min ago"},
-            "music": {"enabled": True, "available": True, "lastSync": "live"},
-            "health": {"enabled": False, "available": True, "lastSync": "never"},
-            "dnd": {"enabled": True, "available": True, "lastSync": "synced"},
+            "notifications": {"available": True, "lastSync": "live"},
+            "weather": {"available": True, "lastSync": "8 min ago"},
+            "calendar": {"available": True, "lastSync": "12 min ago"},
+            "music": {"available": True, "lastSync": "live"},
+            "health": {"available": True, "lastSync": "never"},
+            "dnd": {"available": True, "lastSync": "off"},
         }
         # Live now-playing surfaced on the Music sync row (MusicStatus). player="" → idle → the
         # row falls back to its "Last sync · …" subtitle.
@@ -403,156 +461,14 @@ class MockStoandl(dbus.service.Object):
             {"id": "fr_FR", "iso": "Francais",     "name": "French",       "installed": False, "source": "rebble"},
             {"id": "ja_JP", "iso": "Nihongo",      "name": "Japanese",     "installed": False, "source": "github"},
         ]
-        # HOOK #10: daemon config (stoandl.conf) over D-Bus, schema-driven. These are the daemon's
-        # GUI_CONFIG_FIELDS (config/ConfigSchema.kt) row for row — same keys, order, groups and text —
-        # so a GUI rendered against the mock is rendered against the real contract. When the daemon's
-        # schema changes, copy its rows verbatim; self.config below holds its defaults (plus a sample
-        # weather location).
-        #
-        # Row = (key, type, label, options, desc, group, apply, min, max, unit, placeholder), the 11
-        # columns GetConfigSchema emits. type ∈ toggle|combo|text|int|list; apply ∈ live|restart.
-        # Columns 5+ were appended to the original 5-column contract; a client that reads only the first
-        # five still works, which is exactly what this mock lets you check.
-        self.config_schema = [
-            dict(zip(CONFIG_COLS, row)) for row in [
-                # key, type, label, options, desc, group, apply, min, max, unit, placeholder
-                # --- Notifications ---
-                ("notification.per_app", "toggle", "Per-app notifications", "", "Track apps and enforce per-app mute host-side", "Notifications", "live", "", "", "", ""),
-                ("notification.default_mute", "combo", "Default mute for new apps", "Never,Always,Weekdays,Weekends", "How a newly-seen app is muted until you change it", "Notifications", "live", "", "", "", ""),
-                ("notification.app_name", "combo", "App name on the watch", "Small line,Subtitle,Off", "Where the app's name goes on the watch: a small line under the title, the large bold subtitle, or not at all. A source's own subtitle (an extension's) keeps the subtitle. Apps can override this in their notification settings.", "Notifications", "live", "", "", "", ""),
-                ("notification.sync_to_watch", "toggle", "Sync the app list to the watch", "", "Push the per-app list and mute states to the watch's BlobDB. Current firmware surfaces no per-app notification UI, so this normally changes nothing — mute is enforced host-side.", "Notifications", "restart", "", "", "", ""),
-                ("notification.only_when_locked", "toggle", "Only while the screen is off or locked", "", "Hold notifications back while you're using the phone or computer (display on and session unlocked). Urgent ones (alarms, incoming calls) and allow-filter matches still reach the watch; calls ring as usual.", "Notifications", "live", "", "", "", ""),
-                ("notification.images", "toggle", "Pictures on the watch", "", "Photos and screenshots a notification carries are shown on watches that can (Pebble Time 2 / Round 2, firmware 4.35+). Sender avatars are never sent. Off deletes the stored pictures.", "Notifications", "live", "", "", "", ""),
-                ("notification.sync_dismissals", "toggle", "Clear dismissed notifications from the watch", "", "When a notification is closed on the desktop or phone (or its app withdraws it), it is removed from the watch too. A popup that only times out stays.", "Notifications", "live", "", "", "", ""),
-                ("notification.open_action", "toggle", "Open on the phone or computer", "", "An \"Open\" action on the watch for a notification that opens its app when clicked: it opens the app as a click on the popup would. Plasma only; GNOME doesn't let another program do this.", "Notifications", "live", "", "", "", ""),
-                ("notification.catch_up_minutes", "int", "Catch up after a disconnect", "", "A reconnecting watch also gets the notifications it missed that are at most this old (never from before the daemon started or the watch was paired). 0 = only ones posted after it reconnected.", "Notifications", "restart", "0", "1440", "min", ""),
-                ("notification.canned_replies", "list", "Canned replies", "", "The watch's Reply list for desktop notifications that take a reply (Plasma with the InvokeReply patch) and for extensions without their own list. Empty = Ok, Yes, No, Call me, Call you later. Whole items up to 512 bytes in total are sent.", "Notifications", "live", "", "", "", "Ok,Yes,No,Call me,Call you later"),
-                # --- stoandl alerts ---
-                ("alerts.enabled", "toggle", "Alerts from stoandl", "", "Master switch for the alerts stoandl raises about itself (pairing, Bluetooth, extensions, permission requests, full battery, pairing scan). Most show on the desktop only; permission prompts and the full-battery alert also show on the watch. Forwarded app notifications are unaffected.", "stoandl alerts", "live", "", "", "", ""),
-                ("alerts.pairing", "toggle", "Pairing problems", "", "Alert when a watch keeps dropping the link (unpaired on the watch) or its pairing was removed on this computer — each with the action that fixes it", "stoandl alerts", "live", "", "", "", ""),
-                ("alerts.bluetooth", "toggle", "Bluetooth blocked", "", "Alert when another app's Bluetooth scan is monopolising the adapter and blocking reconnects", "stoandl alerts", "live", "", "", "", ""),
-                ("alerts.extensions", "toggle", "Extension problems", "", "Alert when an installed extension needs configuring before it can start", "stoandl alerts", "live", "", "", "", ""),
-                ("alerts.permissions", "toggle", "Permission requests", "", "When an app asks for a permission (plugins on), prompt with Allow and Deny on the watch and the desktop", "stoandl alerts", "live", "", "", "", ""),
-                ("alerts.battery_full", "toggle", "Watch fully charged", "", "Alert on the watch and the desktop when a watch on the charger reaches 100 %. Classic-era watches report their charge once an hour, so theirs can come up to an hour late.", "stoandl alerts", "live", "", "", "", ""),
-                ("alerts.scan_failed", "toggle", "Pairing scan failed", "", "Alert when a pairing window can't search for watches because Bluetooth discovery keeps failing to start (once per window). `stoandl watch pair` reports it either way.", "stoandl alerts", "live", "", "", "", ""),
-                # --- Calls & contacts ---
-                ("call.dialer_apps", "list", "Dialer apps", "", "Apps, by name or desktop-entry id (exact match), whose notifications are held back while a call is up (the watch's native call screen replaces them); their title is a fallback caller name. Their other notifications, such as Missed call, still reach the watch.", "Calls & contacts", "live", "", "", "", "calls"),
-                ("contacts.vcard_paths", "list", "Contact files", "", "vCard files (.vcf, .vcard) or folders, searched recursively, used to turn an incoming number into a name. Default: ~/.local/share/kpeoplevcard (Plasma Mobile's phonebook). No egress.", "Calls & contacts", "live", "", "", "", "~/.local/share/kpeoplevcard"),
-                # --- Weather ---
-                ("weather.locations", "list", "Locations", "", "Fixed locations to fetch weather for, as Name:lat:lon entries", "Weather", "live", "", "", "", "Berlin:52.52:13.405"),
-                ("weather.location_source", "combo", "Extra locations from", "Manual,GNOME,Command", "Where additional fixed locations come from besides the list above", "Weather", "live", "", "", "", ""),
-                ("weather.location_command", "text", "Location command", "", "Run for the Command source; must print one Name:lat:lon line per location", "Weather", "live", "", "", "", "/usr/local/bin/my-locations"),
-                ("weather.interval", "int", "Refresh interval", "", "How often weather is re-fetched", "Weather", "live", "5", "1440", "min", ""),
-                ("weather.gps", "toggle", "Current-location weather", "", "Add a GeoClue2-tracked \"current location\" entry alongside the fixed ones", "Weather", "live", "", "", "", ""),
-                ("weather.gps_name", "text", "Current-location label", "", "Shown on the watch when reverse geocoding is off or yields no place name", "Weather", "live", "", "", "", "Current location"),
-                ("weather.gps_desktop_id", "text", "GeoClue desktop id", "", "Must match the allow-list entry in /etc/geoclue/geoclue.conf", "Weather", "live", "", "", "", "stoandl"),
-                ("weather.reverse_geocode", "toggle", "Reverse-geocode GPS", "", "Name the GPS location via OSM Nominatim (sends coordinates to a web service)", "Weather", "live", "", "", "", ""),
-                ("weather.pins", "toggle", "Weather timeline pins", "", "Add sunrise/sunset pins for the primary location", "Weather", "live", "", "", "", ""),
-                ("weather.intercept_pkjs", "toggle", "Weather for classic watchfaces", "", "Answer the dead Yahoo / OpenWeatherMap 2.5 weather APIs old watchfaces call, from Open-Meteo (sends the watchface's coordinates or place name to a web service)", "Weather", "live", "", "", "", ""),
-                ("weather.place_search", "toggle", "Find locations by name", "", "Look a city up by name to add it to the locations (`stoandl weather search`, or the search under this section). Sends the typed name to Open-Meteo's geocoder; works only while weather sync is on.", "Weather", "live", "", "", "", ""),
-                # --- Calendar ---
-                ("calendar.discover", "toggle", "Auto-discover local calendars", "", "Find the desktop's local .ics calendars (Calindori, ~/.calendars). No egress.", "Calendar", "live", "", "", "", ""),
-                ("calendar.sync_interval", "int", "Re-read interval", "", "How often calendars are re-read (also rolls the timeline window forward)", "Calendar", "live", "5", "1440", "min", ""),
-                ("calendar.reminders", "toggle", "Event reminders", "", "The watch buzzes before an event (its own reminders). Off = pins only.", "Calendar", "live", "", "", "", ""),
-                ("calendar.show_declined", "toggle", "Show declined events", "", "Events you declined still appear on the timeline", "Calendar", "live", "", "", "", ""),
-                ("calendar.reminder_vibe", "combo", "Reminder vibration", "Watch default,No vibration,Standard,Pulses,Double,Triple,Bloom,Pips,Olé,SOS,Ohhh Oh,Five,Two", "The vibration for every calendar reminder: a built-in one or one of yours (stoandl notif vibe-add)", "Calendar", "live", "", "", "", ""),
-                # --- Apps & faces ---
-                ("apps.order_faces_by_last_used", "toggle", "Recently used faces first", "", "Move a watchface to the top of the locker order whenever it becomes the active face. Off keeps the order you set.", "Apps & faces", "live", "", "", "", ""),
-                # --- Plugins ---
-                ("plugins.enabled", "toggle", "Plugins", "", "Phone-side data and actions for watchfaces and watchapps: built-in (weather, music, calendar, phone, watch settings), from installed apps, and from extensions. Turns on app permissions too: apps then ask before reading your data or sending it anywhere.", "Plugins", "live", "", "", "", ""),
-                ("plugins.permission_policy", "combo", "When apps ask", "If data could leave this machine,Always,Never", "When an app must ask before using a permission", "Plugins", "live", "", "", "", ""),
-                ("plugins.ask_legacy_apps", "toggle", "Ask older apps too", "", "Apps made before permissions are asked as well, instead of keeping internet access and what they declared", "Plugins", "live", "", "", "", ""),
-                # --- Voice ---
-                ("voice.backend", "combo", "Speech to text", "Off,Local model,Custom command,HTTP service", "Turns the watch's dictation (voice replies, watchapps) and voice notes into text. Local model runs a downloaded model on this computer; HTTP sends the audio to an OpenAI-compatible service.", "Voice", "live", "", "", "", ""),
-                ("voice.fallback_backend", "combo", "Fallback", "None,Local model,Custom command,HTTP service", "Tried when speech to text isn't ready, fails, hears nothing or takes too long; it uses the settings below. For a dictation the first backend then gets 7 of the watch's 14 seconds. HTTP sends the audio to the service.", "Voice", "live", "", "", "", ""),
-                ("voice.local_model", "combo", "Model", "No model installed", "The downloaded model the Local model backend runs (download one below)", "Voice", "live", "", "", "", ""),
-                ("voice.command", "text", "Custom command", "", "A command printing the transcript of {wav} (16 kHz mono WAV) in language {lang} (a code or auto)", "Voice", "live", "", "", "", "parakeet-cli -m ~/.local/share/stoandl/stt/ggml-parakeet-tdt-0.6b-v3-q8_0.bin -t 4 -ng --no-prints -f {wav}"),
-                ("voice.url", "text", "HTTP endpoint", "", "OpenAI-compatible transcription URL (whisper.cpp whisper-server, speaches, LocalAI, a hosted service)", "Voice", "live", "", "", "", "http://127.0.0.1:8080/v1/audio/transcriptions"),
-                ("voice.http_model", "text", "HTTP model", "", "The model the service should use, if it asks for one", "Voice", "live", "", "", "", "whisper-1"),
-                ("voice.api_key", "secret", "HTTP API key", "", "Sent as a Bearer token; kept in the keyring (or a private file), never in stoandl.conf", "Voice", "live", "", "", "", ""),
-                ("voice.language", "text", "Language", "", "The language you speak: a code such as de or en, or auto", "Voice", "live", "", "", "", "auto"),
-                ("voice.save_audio", "toggle", "Keep recordings", "", "Save each dictation as a WAV in ~/.cache/stoandl/voice (for debugging)", "Voice", "live", "", "", "", ""),
-                # --- Music ---
-                ("music.enabled", "toggle", "Music control", "", "Bridge desktop media players to the watch's Music app", "Music", "live", "", "", "", ""),
-                ("music.volume", "combo", "Volume buttons", "System,Player", "What the watch volume buttons control", "Music", "live", "", "", "", ""),
-                ("music.volume_up_command", "text", "Volume-up command", "", "Overrides the auto-detected System-volume backend. Both commands must be set to take effect.", "Music", "live", "", "", "", "wpctl set-volume @DEFAULT_SINK@ 5%+"),
-                ("music.volume_down_command", "text", "Volume-down command", "", "Overrides the auto-detected System-volume backend. Both commands must be set to take effect.", "Music", "live", "", "", "", "wpctl set-volume @DEFAULT_SINK@ 5%-"),
-                ("music.seek_when_available", "toggle", "Seek instead of skip for podcasts", "", "In a player that can seek but has no next/previous track (podcasts, audiobooks), the watch's next/previous jump 15 s forward/back. Off = they always skip.", "Music", "live", "", "", "", ""),
-                # --- Health ---
-                ("health.sync", "toggle", "Health sync", "", "Pull steps/sleep/HR from the watch on connect", "Health", "live", "", "", "", ""),
-                ("health.export", "toggle", "Health export", "", "Project synced health data to NDJSON files", "Health", "live", "", "", "", ""),
-                ("health.export_samples", "toggle", "Export minute-level samples", "", "Also export per-minute steps and heart rate — much higher volume than the daily summary", "Health", "live", "", "", "", ""),
-                ("health.export_days", "int", "Export window", "", "How many days back the export re-projects on each update", "Health", "live", "1", "365", "days", ""),
-                # --- Battery ---
-                ("battery.heartbeat", "toggle", "Battery insights", "", "Decode the watch's hourly analytics heartbeat for voltage / time-to-empty / charge trends", "Battery", "live", "", "", "", ""),
-                ("battery.history", "toggle", "Battery level history", "", "Log the BLE battery level over time (fallback when the heartbeat has no data)", "Battery", "live", "", "", "", ""),
-                ("battery.retention_days", "int", "History retention", "", "How much battery history to keep before pruning", "Battery", "live", "1", "3650", "days", ""),
-                # --- Firmware ---
-                ("firmware.notify", "toggle", "Firmware update alerts", "", "Notify when newer firmware is available (needs a firmware source enabled)", "Firmware", "live", "", "", "", ""),
-                ("firmware.github", "toggle", "Firmware source: Core (GitHub)", "", "Check GitHub (PebbleOS) for Core-device firmware updates — opt-in network egress", "Firmware", "live", "", "", "", ""),
-                ("firmware.github_repo", "text", "GitHub repository", "", "owner/repo whose releases publish per-board normal_<board>_<version>.pbz bundles", "Firmware", "live", "", "", "", "coredevices/PebbleOS"),
-                ("firmware.github_prereleases", "toggle", "Include GitHub pre-releases", "", "Consider pre-releases too, not just stable releases", "Firmware", "live", "", "", "", ""),
-                ("firmware.cohorts", "toggle", "Firmware source: classic (Rebble)", "", "Check Rebble's cohorts for classic-Pebble firmware updates — opt-in network egress", "Firmware", "live", "", "", "", ""),
-                ("firmware.cohorts_url", "text", "Cohorts service URL", "", "Base URL of the cohorts service — override for a self-hosted mirror", "Firmware", "live", "", "", "", "https://cohorts.rebble.io"),
-                # --- Language ---
-                ("language.download", "toggle", "Language pack download", "", "Download language packs from the online catalog — opt-in network egress", "Language", "live", "", "", "", ""),
-                # --- Connection ---
-                ("classic.discover", "toggle", "Bluetooth Classic (classic-era watches)", "", "Discover, pair and connect Pebble Time / Time Steel over Bluetooth Classic (experimental)", "Connection", "restart", "", "", "", ""),
-                ("connection.autoswitch", "toggle", "Auto-switch between watches", "", "With 2+ paired watches, connect whichever is in range — preferring the most recently used", "Connection", "live", "", "", "", ""),
-                ("connection.disconnect_persists", "toggle", "Stay disconnected after a restart", "", "A watch you disconnected by hand stays disconnected when stoandl restarts, until you connect it again", "Connection", "live", "", "", "", ""),
-                # --- Deep sleep ---
-                ("power.sleep_guard", "toggle", "Sleep guard", "", "Hold a logind delay lock so a suspend waits until watch traffic in flight (the notification a push wake produced) has reached the watch. Never makes a suspend fail; harmless on a desktop.", "Deep sleep", "restart", "", "", "", ""),
-                ("power.sleep_guard_max_ms", "int", "Longest hold per suspend", "", "How long a suspend waits at most for pending watch traffic (logind's own cap is 5 s). 0 doesn't wait; stoandl still stops its own discovery before every suspend.", "Deep sleep", "restart", "0", "4500", "ms", ""),
-                ("power.pause_datalog_screen_off", "toggle", "Pause datalog while the display is off", "", "The watch holds back its health data (flushed every 15 min) until the display is on again: fewer wakes on a phone that keeps the watch link across suspend", "Deep sleep", "live", "", "", "", ""),
-                ("power.quiet_time_link_off", "toggle", "Pause watch connection during Quiet Time", "", "Saves phone battery at night. Notifications that arrive during Quiet Time are sent to the watch when it ends. If calls may interrupt Quiet Time, the connection stays on.", "Deep sleep", "live", "", "", "", ""),
-                # --- Do Not Disturb ---
-                ("dnd.sync", "combo", "Do Not Disturb sync", "Off,To watch,To host,Both", "Mirror desktop Do Not Disturb and the watch's Quiet Time", "Do Not Disturb", "live", "", "", "", ""),
-                # --- Privacy ---
-                ("geolocation.enabled", "toggle", "Watchapp geolocation", "", "Expose the device's GPS to watchapps / PKJS", "Privacy", "live", "", "", "", ""),
-                # --- Developer ---
-                ("datalog.enabled", "toggle", "Datalog capture", "", "Save custom-watchapp datalog to NDJSON files (writes app-supplied data to disk)", "Developer", "restart", "", "", "", ""),
-                ("developer.autostart", "toggle", "Developer connection autostart", "", "Start the LAN dev server (port 9000) on every connect — UNAUTHENTICATED: anyone on your network can install apps", "Developer", "live", "", "", "", ""),
-            ]
-        ]
-        self.config = {
-            "notification.per_app": "true", "notification.default_mute": "Never",
-            "notification.app_name": "Small line",
-            "notification.sync_to_watch": "false", "notification.sync_dismissals": "true", "notification.images": "true",
-            "notification.catch_up_minutes": "60",
-            "notification.canned_replies": "Ok,Yes,No,Call me,Call you later",
-            "alerts.enabled": "true", "alerts.pairing": "true", "alerts.bluetooth": "true",
-            "alerts.extensions": "true", "alerts.permissions": "true",
-            "alerts.battery_full": "true", "alerts.scan_failed": "true",
-            "notification.only_when_locked": "false", "notification.open_action": "true",
-            "apps.order_faces_by_last_used": "false", "music.seek_when_available": "true",
-            "voice.fallback_backend": "None", "connection.disconnect_persists": "true",
-            "plugins.enabled": "false", "plugins.permission_policy": "If data could leave this machine", "plugins.ask_legacy_apps": "false",
-            "call.dialer_apps": "calls", "contacts.vcard_paths": "~/.local/share/kpeoplevcard",
-            "weather.locations": "Berlin:52.52:13.405", "weather.location_source": "Manual",
-            "weather.location_command": "", "weather.interval": "30",
-            "weather.gps": "false", "weather.gps_name": "Current location",
-            "weather.gps_desktop_id": "stoandl", "weather.reverse_geocode": "false",
-            "weather.pins": "true", "weather.intercept_pkjs": "false", "weather.place_search": "false",
-            "calendar.discover": "false", "calendar.sync_interval": "30",
-            "calendar.reminders": "true", "calendar.show_declined": "false", "calendar.reminder_vibe": "Watch default",
-            "voice.backend": "Off", "voice.command": "", "voice.url": "", "voice.http_model": "", "voice.local_model": "No model installed",
-            "voice.api_key": "", "voice.language": "auto", "voice.save_audio": "false",
-            "music.enabled": "true", "music.volume": "System",
-            "music.volume_up_command": "", "music.volume_down_command": "",
-            "health.sync": "true", "health.export": "true", "health.export_samples": "false",
-            "health.export_days": "30",
-            "battery.heartbeat": "true", "battery.history": "true", "battery.retention_days": "90",
-            "firmware.notify": "true", "firmware.github": "false",
-            "firmware.github_repo": "coredevices/PebbleOS", "firmware.github_prereleases": "false",
-            "firmware.cohorts": "false", "firmware.cohorts_url": "https://cohorts.rebble.io",
-            "language.download": "false",
-            "classic.discover": "true", "connection.autoswitch": "true",
-            "power.sleep_guard": "true", "power.sleep_guard_max_ms": "3000",
-            "power.pause_datalog_screen_off": "false",
-            "power.quiet_time_link_off": "false",
-            "dnd.sync": "Off", "geolocation.enabled": "false",
-            "datalog.enabled": "false", "developer.autostart": "false",
-        }
+        # HOOK #10: daemon config (stoandl.conf) over D-Bus, schema-driven: the daemon's own GetConfigSchema
+        # rows (CONFIG_SCHEMA_TSV), and its defaults (the `default` column) as the current values, plus a
+        # sample weather location. Columns past the original five were appended; a client that reads only
+        # the first five still works, which is exactly what this mock lets you check.
+        with open(CONFIG_SCHEMA_TSV, encoding="utf-8") as f:
+            self.config_schema = [dict(zip(CONFIG_COLS, line.rstrip("\n").split("\t"))) for line in f if line.strip()]
+        self.config = {c["key"]: c["default"] for c in self.config_schema}
+        self.config["weather.locations"] = "Berlin:52.52:13.405"
         # HOOK #8: health. Per-day data is GENERATED deterministically from each date's ordinal
         # (see the _*_for/_window helpers) so the period-aware GetHealthSummary/GetHealthSeries
         # (day/week/month + offset) all light up with realistic multi-day data. Global flags only:
@@ -578,7 +494,7 @@ class MockStoandl(dbus.service.Object):
             "resting_hr": "58",
             "max_hr": "189",
         }
-        # Notifications (per-app store + master forwarding via sync["notifications"]). `app_name` is the
+        # Notifications (per-app store; master forwarding is config notification.forward). `app_name` is the
         # per-app notification.app_name override (small|subtitle|off), "" = follows the global setting.
         self.notif_apps = [
             {"name": "Signal",   "mute": "never",  "color": "default", "icon": "default", "vibe": "Double",   "last": 1718900000, "app_name": ""},
@@ -1320,7 +1236,7 @@ class MockStoandl(dbus.service.Object):
     # --- Sync (force-sync + HOOK #5 master toggles / status) ---------------
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def SyncWeather(self):
-        if not self.sync["weather"]["enabled"]:
+        if not self._sync_on("weather"):
             return "error:weather is not enabled in config"
         self.sync["weather"]["lastSync"] = "just now"
         return "ok:weather pushed"
@@ -1331,7 +1247,7 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def SearchWeatherPlace(self, query):
-        if not self.sync["weather"]["enabled"]:
+        if not self._sync_on("weather"):
             return "disabled:Weather sync is off (weather.enabled)"
         if self.config.get("weather.place_search") != "true":
             return "disabled:Place search is off: it sends the name to Open-Meteo's geocoder. Turn on weather.place_search"
@@ -1356,33 +1272,43 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def SyncCalendar(self):
-        if not self.sync["calendar"]["enabled"]:
+        if not self._sync_on("calendar"):
             return "error:calendar is not enabled in config"
         self.sync["calendar"]["lastSync"] = "just now"
         return "ok:calendar pins updated"
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def SyncHealth(self):
-        if not self.sync["health"]["enabled"]:
+        if not self._sync_on("health"):
             return "error:health is not enabled in config"
         self.sync["health"]["lastSync"] = "just now"
         self.health["lastSync"] = "just now"
         return "ok:health data refreshed"
 
+    def _sync_on(self, service):
+        value = self.config.get(SYNC_SERVICE_KEYS[service], "")
+        return value not in ("false", "Off", "")
+
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def GetSyncStatus(self):
-        # HOOK #5: service\tenabled\tavailable\tlastSync.
-        return [rec(s, "enabled" if v["enabled"] else "disabled",
-                    "available" if v["available"] else "unavailable", v["lastSync"])
+        # HOOK #5: service\tenabled\tavailable\tlastSync\tkey.
+        def last(s, v):
+            if s == "dnd":
+                return CONFIG_COMBO_TOKENS["dnd.sync"].get(self.config["dnd.sync"], "off")
+            return v["lastSync"] if self._sync_on(s) else "off"
+        return [rec(s, "enabled" if self._sync_on(s) else "disabled",
+                    "available" if v["available"] else "unavailable", last(s, v), SYNC_SERVICE_KEYS[s])
                 for s, v in self.sync.items()]
 
     @dbus.service.method(IFACE, in_signature="sb", out_signature="s")
     def SetSyncEnabled(self, service, enabled):
-        # HOOK #5: rewrite stoandl.conf + start/stop the live service.
-        if service not in self.sync:
+        # HOOK #5: an alias for SetConfig of the service's key; dnd's key is four-way.
+        if service not in SYNC_SERVICE_KEYS:
             return f"notfound:no sync service '{service}'"
-        self.sync[service]["enabled"] = bool(enabled)
-        return f"ok:{service} {'enabled' if enabled else 'disabled'}"
+        if service == "dnd":
+            return "error:use dnd.sync (off|to_watch|to_host|both)"
+        r = self.SetConfig(SYNC_SERVICE_KEYS[service], "true" if enabled else "false")
+        return f"ok:{service} {'enabled' if enabled else 'disabled'}" if r.startswith("ok:") else r
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def MusicStatus(self):
@@ -1469,10 +1395,25 @@ class MockStoandl(dbus.service.Object):
         return f"ok:{cal['name']} {'enabled' if enabled else 'disabled'}"
 
     # --- Watch settings (ListWatchPrefs / SetWatchPref) --------------------
+    def _watch_pref_text(self, p):
+        if p["flags"] == "debug":
+            return "Advanced", "Diagnostic setting.", ""
+        section, help_text, requires = WATCH_PREF_TEXT.get(p["id"], ("Other", "", ""))
+        return section, WATCH_PREF_QL_HELP if help_text == "QL" else help_text, requires
+
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def ListWatchPrefs(self):
+        # 11 columns; grouped by section in display order, like the daemon.
+        rows = sorted(self.prefs, key=lambda p: WATCH_PREF_SECTIONS.index(self._watch_pref_text(p)[0]))
         return [rec(p["id"], p["type"], p["current"], p["default"], p["allowed"],
-                    p["flags"], p["name"], p["description"]) for p in self.prefs]
+                    p["flags"], p["name"], p["description"], *self._watch_pref_text(p)) for p in rows]
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def ResetWatchPrefs(self):
+        changed = [p for p in self.prefs if p["current"] != p["default"]]
+        for p in changed:
+            p["current"] = p["default"]
+        return f"ok:Reset {len(changed)} watch settings to their defaults (syncs to the watch on next connect)"
 
     # Backlight color presets — name → 0xRRGGBB — matching libpebble3's BACKLIGHT_COLOR_PRESETS
     # (WatchPrefEntity.kt). The daemon's parseColor() resolves a preset NAME first, then a hex.
@@ -1856,6 +1797,7 @@ class MockStoandl(dbus.service.Object):
             if "\n" in v or "\r" in v:
                 return f"error:{key}: must be a single line"
             self.config[key] = "set" if v else ""
+            self.ConfigChanged(key)
             return f"ok:{key} {'stored' if v else 'removed'}"
         elif kind == "int":
             try:
@@ -1880,8 +1822,19 @@ class MockStoandl(dbus.service.Object):
                 return f"error:{key}: {err}"
             token, v = v, readback   # e.g. weather.locations "Home:48:11" reads back as "Home:48.0:11.0"
         self.config[key] = v
+        self.ConfigChanged(key)
         tail = " (restart stoandl to apply)" if field["apply"] == "restart" else ""
         return f"ok:{key} = {token if token is not None else v}{tail}"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def Restart(self):
+        # The daemon restarts its systemd unit a moment after replying; here the name drops and comes back.
+        if self.pairing is not None and self.pairing.get("phase") != "result":
+            return "busy:a pairing window is open"
+        bus = self.connection
+        GLib.timeout_add(300, lambda: bus.release_name(BUS_NAME) and False)
+        GLib.timeout_add(1800, lambda: bus.request_name(BUS_NAME) and False)
+        return "ok:restarting stoandl.service"
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def GetHealthProfile(self):
@@ -2115,6 +2068,11 @@ class MockStoandl(dbus.service.Object):
         # poke: re-call PermPending.
         pass
 
+    @dbus.service.signal(IFACE, signature="s")
+    def ConfigChanged(self, key):
+        # A schema key was written (SetConfig, SetSyncEnabled, a model download): re-call GetConfig.
+        pass
+
     # --- Plugins and app permissions ---------------------------------------
     MOCK_PLUGINS = [
         ("00000000-0000-0000-0001-000000000002", "builtin", "Weather", "Current conditions and forecast for the user's saved weather locations.", "weather/location,weather/hour", ""),
@@ -2194,6 +2152,8 @@ class MockStoandl(dbus.service.Object):
                 name = next(m[1] for m in self.MOCK_SPEECH_MODELS if m[0] == d[0])
                 self.config["voice.local_model"] = name
                 self.config["voice.backend"] = "Local model"
+                self.ConfigChanged("voice.local_model")
+                self.ConfigChanged("voice.backend")
 
     def _voice_installed_changed(self):
         names = [m[1] for m in self.MOCK_SPEECH_MODELS if m[0] in getattr(self, "voice_installed", [])]
