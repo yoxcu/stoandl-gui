@@ -805,8 +805,8 @@ Kirigami.ScrollablePage {
                     // Exposed for collect(): the field's key + current value.
                     readonly property string fieldKey: modelData.key
                     property var fieldValue: extConfigDialog.values[modelData.key]
-                    // A secret lives in the daemon's keyring and always reads "": posting "" keeps it,
-                    // null removes it. `_secrets` names the stored ones.
+                    // A secret lives in the daemon's secret store (the keyring, else a private file) and
+                    // always reads "": posting "" keeps it, null removes it. `_secrets` names the stored ones.
                     readonly property bool isSecret: modelData.type === "string" && modelData.secret === true
                     readonly property bool secretStored: isSecret && !secretCleared &&
                         ("" + (extConfigDialog.values["_secrets"] || "")).split(",").indexOf(modelData.key) >= 0
@@ -851,7 +851,7 @@ Kirigami.ScrollablePage {
                             label: fieldRow.modelData.label
                             help: fieldRow.modelData.help
                             description: (fieldRow.modelData.description !== "" ? fieldRow.modelData.description + " · " : "")
-                                + (fieldRow.secretStored ? "Stored in the keyring; type to replace it"
+                                + (fieldRow.secretStored ? "Stored; type to replace it"
                                    : fieldRow.secretCleared ? "Will be removed on Save" : "Not set")
                             echoMode: TextInput.Password
                             placeholderText: fieldRow.secretStored ? "••••••••" : ""

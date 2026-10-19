@@ -187,7 +187,9 @@ ColumnLayout {
         if (d !== "" && f.type !== "secret") parts.push("Default: " + d + ".");
         if (f.egress) parts.push("Contacts " + f.egress + ".");
         if (f.restart) parts.push("Applies after restarting stoandl.");
-        parts.push((f.type === "secret" ? "Key (kept in the keyring): " : "stoandl.conf key: ") + f.key + ".");
+        // A secret is kept in the keyring, or in a private file where there is none (or it is locked).
+        parts.push(f.type === "secret" ? "Stored outside stoandl.conf (in the keyring, else a private file); key: " + f.key + "."
+                                       : "stoandl.conf key: " + f.key + ".");
         return parts.join(" ");
     }
     // A value as a row would show it: a toggle as on/off, a number with its unit, a list as its items.
@@ -529,7 +531,7 @@ ColumnLayout {
                             }
                         }
 
-                        // A secret (an API key): the daemon keeps it in the keyring and reports only "set"
+                        // A secret (an API key): the daemon keeps it out of stoandl.conf and reports only "set"
                         // or empty, so the field starts blank, shows dots, and an empty commit leaves the
                         // stored value alone ("Remove" clears it).
                         Component {
