@@ -81,6 +81,16 @@ Kirigami.ScrollablePage {
         StoandlClient.refreshWatches(); // re-fetch after mutation
     }
 
+    // UpdateFirmware downloads the release first (seconds), so it runs without blocking; the flash
+    // progress then arrives through StoandlClient's firmwareStatus.
+    function updateFirmware() {
+        StoandlClient.run(page, ["updateFirmware"], function (r) {
+            if (r.ok) page.toast("Firmware flash started…");
+            else if (r.kind === "uptodate") page.toast("Already up to date");
+            else page.toast("Firmware: " + (r.tail !== "" ? r.tail : r.kind));
+        });
+    }
+
     function resumeLink() {
         var r = StoandlClient.connectWatch("");
         page.toast(r.ok ? (r.tail || "Watch connection resumed") : "Connect failed: " + (r.tail || r.kind));
@@ -174,6 +184,10 @@ Kirigami.ScrollablePage {
             dd.close();
             StoandlClient.forceFirmwareCheck();   // Sync now / Check for updates: re-asks past the cache
             console.log("stoandl-smoke: firmware forced checking=" + StoandlClient.firmwareChecking);
+            // A watch task: started here, its result reported by Main.qml (smokeWhenIdle waits for it).
+            var shot = StoandlClient.takeScreenshot();
+            console.log("stoandl-smoke: screenshot start " + shot.kind + ":" + shot.tail
+                        + " running=" + ("screenshot" in StoandlClient.tasks));
         }
         var bp = page.openBattery();
         applicationWindow().smokeWhenIdle(function () {
@@ -375,12 +389,7 @@ Kirigami.ScrollablePage {
                 Kirigami.Action {
                     icon.name: "install-symbolic"
                     text: "Update now"
-                    onTriggered: {
-                        var r = StoandlClient.updateFirmware();
-                        if (r.ok) page.toast("Firmware flash started…");
-                        else if (r.kind === "uptodate") page.toast("Already up to date");
-                        else page.toast("Firmware: " + (r.tail !== "" ? r.tail : r.kind));
-                    }
+                    onTriggered: page.updateFirmware()
                 },
                 Kirigami.Action {
                     icon.name: "globe-symbolic"

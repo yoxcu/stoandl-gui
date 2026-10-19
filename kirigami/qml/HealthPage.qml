@@ -105,13 +105,12 @@ Kirigami.ScrollablePage {
     }
 
     function syncHealth() {
-        var r = StoandlClient.syncHealth();
-        if (r.ok) page.toast("Syncing health data…");
-        else if (r.kind === "notready") page.toast("No watch connected");
-        else if (r.tail.toLowerCase().indexOf("not enabled") !== -1)
-            page.toast("Health sync is disabled — enable it in Settings");
-        else page.toast("Health: " + (r.tail !== "" ? r.tail : r.kind));
-        page.reload();
+        StoandlClient.run(page, ["syncHealth"], function (r) {
+            if (r.ok) page.toast("Health data synced");
+            else if (r.kind === "notready") page.toast("No watch connected");
+            else page.toast("Health: " + (r.tail !== "" ? r.tail : r.kind));
+            page.reload();
+        });
     }
 
     // minutes -> "Hh MMm"

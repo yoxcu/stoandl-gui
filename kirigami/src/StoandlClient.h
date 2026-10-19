@@ -59,9 +59,15 @@ class StoandlClient : public QObject
     Q_PROPERTY(QVariantMap firmwareInfo READ firmwareInfo NOTIFY firmwareInfoChanged)
     // A CheckFirmware call is in flight (the daemon may download a release list first: seconds).
     Q_PROPERTY(bool firmwareChecking READ firmwareChecking NOTIFY firmwareInfoChanged)
-    // Asynchronous reads in flight (fetch(), the refresh*() reloads, app icons; not the firmware check).
-    // The smoke harness waits for 0 before it exercises a page whose loads are asynchronous.
+    // Asynchronous calls in flight (fetch(), run(), the refresh*() reloads, app icons; not the firmware
+    // check). The smoke harness waits for 0 before it exercises a page whose loads are asynchronous.
     Q_PROPERTY(int callsInFlight READ callsInFlight NOTIFY callsInFlightChanged)
+    // The part of callsInFlight someone is waiting for: fetch() and run(), not the background refreshes
+    // and polls. Main.qml's thin progress bar follows it.
+    Q_PROPERTY(int userCallsInFlight READ userCallsInFlight NOTIFY callsInFlightChanged)
+    // The watch tasks this GUI started that are still running: kind (sideload | screenshot | logs |
+    // coredump) → what the daemon says it does ("Installing x.pbw"). Each ends with taskFinished.
+    Q_PROPERTY(QVariantMap tasks READ tasks NOTIFY tasksChanged)
     // notification.forward, the master switch for forwarding (read with GetConfig when the daemon comes
     // up and on every ConfigChanged for it). True until known, so no "forwarding is off" banner flashes
     // before the first answer; also true with a daemon that predates the key.
@@ -94,6 +100,8 @@ public:
     QVariantMap firmwareInfo() const { return m_fwInfo; }
     bool firmwareChecking() const { return m_fwCheckInFlight; }
     int callsInFlight() const { return m_callsInFlight; }
+    int userCallsInFlight() const { return m_userCallsInFlight; }
+    QVariantMap tasks() const { return m_tasks; }
     bool forwarding() const { return m_forwarding; }
     QStringList restartPending() const { return m_restartPending; }
     QString daemonVersion() const { return m_daemonVersion; }
@@ -120,6 +128,11 @@ public:
     // after it is destroyed, and a newer fetch for the same owner drops one still in flight (latest
     // wins). The reads available are the ones readSpec() in the .cpp lists.
     Q_INVOKABLE void fetch(QObject *owner, const QVariantList &reads, const QJSValue &callback);
+    // An action without blocking, for the calls that can take seconds (a sync, a search, a launch, a
+    // firmware update): `call` is ["name", args...] like one fetch() read, from the same readSpec() table,
+    // and `callback` gets what the synchronous Q_INVOKABLE of that name returns. Unlike fetch(), every
+    // run() is answered (nothing is dropped for a newer one), unless `owner` died first.
+    Q_INVOKABLE void run(QObject *owner, const QVariantList &call, const QJSValue &callback);
 
     // --- typed wrappers: Watch screen --------------------------------------
     Q_INVOKABLE QVariantList listWatches();              // -> [{name,state,battery,transport,connected}]
@@ -148,7 +161,9 @@ public:
     Q_INVOKABLE QVariantMap  startDevConnection();       // StartDevConnection() -> {kind, port}
     Q_INVOKABLE QVariantMap  stopDevConnection();        // StopDevConnection()
     Q_INVOKABLE QVariantMap  devConnectionStatus();      // DevConnectionStatus() -> {kind, active}
-    Q_INVOKABLE QVariantMap  getCoreDump();              // GetCoreDump(tmp) -> {kind, path}
+    // The watch's last core dump, as a watch task (see takeScreenshot): taskFinished("coredump",
+    // {kind ok|none|notready|error, path}).
+    Q_INVOKABLE QVariantMap  getCoreDump();
 
     // --- typed wrappers: Apps & Faces screen (Milestone 2) -----------------
     Q_INVOKABLE QVariantList listApps();                 // -> [{uuid,type,order,title,developer,flags[],active,system,config,sideloaded,isFace}]
@@ -162,7 +177,8 @@ public:
     Q_INVOKABLE QVariantMap  removeApp(const QString &id);   // RemoveApp(s) (system refused daemon-side)
     Q_INVOKABLE QVariantMap  setAppOrder(const QString &id, int order);  // SetAppOrder(s,i)
     Q_INVOKABLE QVariantMap  restoreSystemAppOrder();                    // RestoreSystemAppOrder()
-    Q_INVOKABLE QVariantMap  sideloadApp(const QUrl &fileUrl); // SideloadApp(absolute daemon-side path)
+    // SideloadApp(absolute daemon-side path), a watch task: taskFinished("sideload", {kind, tail}).
+    Q_INVOKABLE QVariantMap  sideloadApp(const QUrl &fileUrl);
     Q_INVOKABLE QVariantMap  openConfig(const QString &id);  // OpenConfig(s) -> open the daemon-served page via xdg-open
     Q_INVOKABLE void         refreshApps();              // async re-fetch → appsChanged (on show + after any mutation)
 
@@ -303,9 +319,14 @@ public:
     Q_INVOKABLE QVariantMap  sideloadLanguage(const QUrl &fileUrl); // SideloadLanguage(.pbl abs path) ; starts poll
     Q_INVOKABLE void         stopLanguagePoll();
 
-    // Diagnostics (write a daemon-side file, return its path; GUI is co-located).
-    Q_INVOKABLE QVariantMap  takeScreenshot();           // TakeScreenshot(tmp) -> {kind, path, width, height}
-    Q_INVOKABLE QVariantMap  gatherLogs();               // GatherLogs(tmp) -> {kind, path}
+    // Diagnostics: watch tasks. The call returns the start ({kind ok|busy|notready|error, tail}); the
+    // daemon picks a new file (Pictures/Screenshots, Documents/stoandl), and the result arrives as
+    // taskFinished(kind, …): screenshot {kind, path, width, height}, logs {kind, path}.
+    Q_INVOKABLE QVariantMap  takeScreenshot();
+    Q_INVOKABLE QVariantMap  gatherLogs();
+    // Open a daemon-written file, or the folder holding it, in the desktop's app for it.
+    Q_INVOKABLE void         openFile(const QString &path);
+    Q_INVOKABLE void         openFolderOf(const QString &path);
 
     // Reset (fire-and-forget; ok: = queued, not done).
     Q_INVOKABLE QVariantMap  resetIntoRecovery();        // ResetIntoRecovery()
@@ -363,6 +384,10 @@ Q_SIGNALS:
     void restartPendingChanged();
     void daemonVersionChanged();
     void readErrorsChanged();
+    void tasksChanged();
+    // A watch task this GUI started ended: its TaskStatus result as a status map, plus {path, width, height}
+    // for a screenshot and {path} for logs and a core dump.
+    void taskFinished(const QString &kind, const QVariantMap &result);
 
 private Q_SLOTS:
     void onNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
@@ -380,6 +405,7 @@ private Q_SLOTS:
     // re-syncs the list (the override is merged into the rows extList() builds).
     void onExtensionStateChanged(const QString &name, const QString &state);
     void onConfigChanged(const QString &key);                         // → configChanged(), forwarding
+    void onTaskChanged(const QString &kind, const QString &status);   // → tasks, taskFinished()
     void pollPairOnce();
     void firmwarePollOnce();
     void languagePollOnce();
@@ -392,12 +418,25 @@ private:
     // The typed reads fetch() can run (readSpec() in the .cpp: each one's D-Bus call and parser). The
     // synchronous Q_INVOKABLE of that name runs it through read(), so both paths share one description.
     QVariant     read(const QString &name, const QVariantList &args = {});
-    // read() without blocking: `done` gets the value, unless `context` (when given) died first.
+    // read() without blocking: `done` gets the value, unless `context` (when given) died first. `user`
+    // counts it in userCallsInFlight (someone waits for it).
     void         readAsync(const QString &name, const QVariantList &args, QObject *context,
-                           const std::function<void(const QVariant &)> &done);
-    // One D-Bus call without blocking, counted in callsInFlight; `done` is skipped if `context` died.
+                           const std::function<void(const QVariant &)> &done, bool user = false);
+    // What a read's answer starts beyond its value (updateFirmware: the flash poll; voiceModels: a changed
+    // installed set drops the cached schema). Both read() and readAsync() run it.
+    void         afterRead(const QString &name, const QVariant &value);
+    // One D-Bus call without blocking, counted in callsInFlight (and userCallsInFlight when `user`);
+    // `done` is skipped if `context` died. timeoutMs 0 = the ordinary timeout.
     void         callAsync(const QDBusMessage &message, QObject *context,
-                           const std::function<void(const QDBusMessage &)> &done);
+                           const std::function<void(const QDBusMessage &)> &done,
+                           bool user = false, int timeoutMs = 0);
+    // Hand `value` to a QML callback (fetch(), run()).
+    void         callBack(const QJSValue &callback, const QVariant &value);
+    // Start a watch task: `ok:started` tracks it (tasks, TaskChanged, the fallback poll); a daemon from
+    // before the tasks answers with the result itself, which is reported as finished at once.
+    QVariantMap  startTask(const QString &kind, const QString &method, const QVariantList &args);
+    void         taskStatusSeen(const QString &kind, const QString &status);
+    void         pollTasks();
     // ExtList rows with the ExtensionStateChanged overrides merged in (and stale overrides pruned).
     QVariantList withExtState(QVariantList rows);
     void         startFirmwarePoll();
@@ -475,6 +514,12 @@ private:
     bool    m_langFirstPoll = true;
 
     int     m_callsInFlight = 0;
+    int     m_userCallsInFlight = 0;
+    // Watch tasks started here and still running (kind → what), how long each has run, and the fallback
+    // poll of TaskStatus for a TaskChanged this client missed.
+    QVariantMap m_tasks;
+    QHash<QString, QElapsedTimer> m_taskAge;
+    QTimer *m_taskTimer = nullptr;
     // fetch(): the latest fetch per owner (an older one's answer is dropped).
     QHash<QObject *, quint64> m_fetchSeq;
     quint64 m_fetchCounter = 0;

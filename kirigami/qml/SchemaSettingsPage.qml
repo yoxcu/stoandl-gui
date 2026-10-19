@@ -26,14 +26,18 @@ Kirigami.ScrollablePage {
         return "";
     }
 
+    property bool syncing: false
+
     function syncNow() {
         var label = sections.keyInfo[sections.serviceKey(page.syncService)].label;
-        var r = page.syncService === "weather" ? StoandlClient.syncWeather()
-              : page.syncService === "calendar" ? StoandlClient.syncCalendar()
-              : StoandlClient.syncHealth();
-        applicationWindow().showPassiveNotification(r.ok ? label + " synced" : label + ": " + (r.tail || r.kind));
-        sections.applySync(StoandlClient.getSyncStatus());   // the master row's "Last sync"
-        sections.updateRows();
+        var read = page.syncService === "weather" ? "syncWeather"
+                 : page.syncService === "calendar" ? "syncCalendar" : "syncHealth";
+        page.syncing = true;
+        StoandlClient.run(page, [read], function (r) {
+            page.syncing = false;
+            applicationWindow().showPassiveNotification(r.ok ? label + " synced" : label + ": " + (r.tail || r.kind));
+            sections.reload();   // the master row's "Last sync"
+        });
     }
 
     function smokeExercise() { sections.smokeExercise(); }
@@ -43,7 +47,7 @@ Kirigami.ScrollablePage {
             icon.name: "view-refresh-symbolic"
             text: "Sync now"
             visible: page.syncService !== ""
-            enabled: StoandlClient.daemonUp
+            enabled: StoandlClient.daemonUp && !page.syncing
             onTriggered: page.syncNow()
         }
     ]

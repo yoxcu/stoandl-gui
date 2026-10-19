@@ -236,10 +236,12 @@ Kirigami.Dialog {
             }
             ActionRow {
                 text: "Capture screenshot"; iconName: "camera-photo-symbolic"
+                enabled: !("screenshot" in StoandlClient.tasks)
+                // A watch task: Main.qml shows the result.
                 onClicked: {
                     var r = StoandlClient.takeScreenshot();
-                    dialog.toast(r.kind === "ok" ? ("Screenshot saved: " + r.path)
-                                                 : ("Screenshot: " + (r.msg || r.kind)));
+                    if (!r.ok)
+                        dialog.toast("Screenshot: " + (r.tail || r.kind));
                 }
             }
             ActionRow {

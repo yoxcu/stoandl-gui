@@ -43,6 +43,11 @@ Kirigami.ScrollablePage {
     function smokeExercise() {
         developerSections.smokeExercise();
         console.log("stoandl-smoke: debug watchTools=" + page.watchTools + " recoveryTools=" + page.recoveryTools);
+        if (page.recoveryTools) {
+            // Two watch tasks at once (one per kind); Main.qml reports each when it ends.
+            console.log("stoandl-smoke: logs start " + StoandlClient.gatherLogs().kind
+                        + ", core dump start " + StoandlClient.getCoreDump().kind);
+        }
         var hb = page.open(heartbeatPage);
         if (hb && typeof hb.smokeExercise === "function")
             hb.smokeExercise();
@@ -134,10 +139,11 @@ Kirigami.ScrollablePage {
                 text: "Pull watch logs"
                 description: "Fetch the watch's on-device log to a file"
                 icon.name: "text-x-generic-symbolic"
-                enabled: page.recoveryTools
+                enabled: page.recoveryTools && !("logs" in StoandlClient.tasks)
+                // Watch tasks: Main.qml reports the file with an Open folder action.
                 onClicked: {
                     var r = StoandlClient.gatherLogs();
-                    page.toast(r.kind === "ok" ? ("Logs saved: " + r.path) : ("Logs: " + (r.msg || r.kind)));
+                    page.toast(r.ok ? "Reading the watch's logs…" : ("Watch logs: " + (r.tail || r.kind)));
                 }
             }
             FormCard.FormDelegateSeparator {}
@@ -145,12 +151,10 @@ Kirigami.ScrollablePage {
                 text: "Core dump"
                 description: "Save the watch's last crash dump to a file"
                 icon.name: "documentinfo-symbolic"
-                enabled: page.recoveryTools
+                enabled: page.recoveryTools && !("coredump" in StoandlClient.tasks)
                 onClicked: {
                     var r = StoandlClient.getCoreDump();
-                    page.toast(r.kind === "ok" ? ("Core dump saved: " + r.path)
-                             : r.kind === "none" ? "No core dump available"
-                             : ("Core dump: " + (r.msg || r.kind)));
+                    page.toast(r.ok ? "Reading the watch's core dump…" : ("Core dump: " + (r.tail || r.kind)));
                 }
             }
             FormCard.FormDelegateSeparator {}

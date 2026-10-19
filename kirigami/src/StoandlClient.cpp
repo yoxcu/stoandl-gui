@@ -4,11 +4,10 @@
 #include <QProcess>
 #include <QUrl>
 #include <QDesktopServices>
-#include <QStandardPaths>
 #include <QDateTime>
 #include <QElapsedTimer>
-#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QDBusMessage>
 #include <QDBusPendingCall>
 #include <QDBusPendingReply>
@@ -43,6 +42,9 @@ constexpr auto DBUS_PATH    = "/org/freedesktop/DBus";
 constexpr auto DBUS_IFACE   = "org.freedesktop.DBus";
 
 constexpr int CALL_TIMEOUT_MS = 10000;  // ordinary request/response
+// The calls that wait on the watch or the network (a sync, a search, a launch, a firmware download,
+// a transcription): as long as the CLI waits for them.
+constexpr int SLOW_CALL_TIMEOUT_MS = 120000;
 constexpr int FIND_TIMEOUT_MS = 20000;  // FindWatch may linger daemon-side
 constexpr int NAME_TIMEOUT_MS = 3000;
 // appIcon(): how long a "no icon" answer is reused before a row asks again (the daemon can fetch an
@@ -69,6 +71,11 @@ constexpr int WATCH_INTERVAL_MS = 20000;
 // Firmware flash poll: 0.8 s cadence, 600 s ceiling.
 constexpr int FW_INTERVAL_MS = 800;
 constexpr int FW_TIMEOUT_MS  = 600000;
+
+// Watch tasks (sideload, screenshot, logs, core dump): TaskChanged reports them; this poll of TaskStatus is
+// the missed-signal fallback, and a task still running after the ceiling is reported as timed out.
+constexpr int TASK_POLL_MS = 2000;
+constexpr qint64 TASK_TIMEOUT_MS = 600000;
 
 // Language install poll: 3 s watchdog cadence, 180 s ceiling. The LanguageProgress signal now
 // carries the live %, so this poll is relaxed from a chatty 0.6 s to a watchdog tick — it stays
@@ -242,6 +249,10 @@ StoandlClient::StoandlClient(QObject *parent)
     m_langTimer->setInterval(LANG_INTERVAL_MS);
     connect(m_langTimer, &QTimer::timeout, this, &StoandlClient::languagePollOnce);
 
+    m_taskTimer = new QTimer(this);
+    m_taskTimer->setInterval(TASK_POLL_MS);
+    connect(m_taskTimer, &QTimer::timeout, this, &StoandlClient::pollTasks);
+
     // React to the daemon coming up / going down without polling NameHasOwner.
     m_bus.connect(DBUS_SERVICE, DBUS_PATH, DBUS_IFACE, QStringLiteral("NameOwnerChanged"),
                   this, SLOT(onNameOwnerChanged(QString, QString, QString)));
@@ -271,6 +282,8 @@ StoandlClient::StoandlClient(QObject *parent)
                   this, SLOT(onExtensionStateChanged(QString, QString)));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("ConfigChanged"),
                   this, SLOT(onConfigChanged(QString)));
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("TaskChanged"),
+                  this, SLOT(onTaskChanged(QString, QString)));
 
     recheckDaemon();
 }
@@ -532,7 +545,7 @@ QString StoandlClient::appIcon(const QString &uuid)
     return url;
 }
 
-QVariantMap StoandlClient::launchApp(const QString &id) { return statusMap(callStatus(QStringLiteral("LaunchApp"), {id})); }
+QVariantMap StoandlClient::launchApp(const QString &id) { return read(QStringLiteral("launchApp"), {id}).toMap(); }
 QVariantMap StoandlClient::removeApp(const QString &id) { return statusMap(callStatus(QStringLiteral("RemoveApp"), {id})); }
 QVariantMap StoandlClient::setAppOrder(const QString &id, int order) { return statusMap(callStatus(QStringLiteral("SetAppOrder"), {id, order})); }
 QVariantMap StoandlClient::restoreSystemAppOrder() { return statusMap(callStatus(QStringLiteral("RestoreSystemAppOrder"))); }
@@ -544,7 +557,7 @@ QVariantMap StoandlClient::sideloadApp(const QUrl &fileUrl)
     const QString path = fileUrl.toLocalFile();
     if (path.isEmpty())
         return statusMap({ QStringLiteral("error"), QStringLiteral("not a local file"), {} });
-    return statusMap(callStatus(QStringLiteral("SideloadApp"), {path}));
+    return startTask(QStringLiteral("sideload"), QStringLiteral("SideloadApp"), {path});
 }
 
 QVariantMap StoandlClient::openConfig(const QString &id)
@@ -683,13 +696,13 @@ void StoandlClient::refreshExtensions()
 
 // --- typed wrappers: Sync --------------------------------------------------
 
-QVariantMap StoandlClient::syncWeather()  { return statusMap(callStatus(QStringLiteral("SyncWeather"))); }
+QVariantMap StoandlClient::syncWeather()  { return read(QStringLiteral("syncWeather")).toMap(); }
 
+namespace {
 // `ok:` carries one `name\tlat\tlon\tregion\tcountry` record per line, so the tail is split by line here
 // rather than by statusMap's single-record `fields`.
-QVariantMap StoandlClient::searchWeatherPlace(const QString &query)
+QVariant placesMap(const Status &st)
 {
-    const Status st = callStatus(QStringLiteral("SearchWeatherPlace"), {query});
     QVariantMap m = statusMap(st);
     QVariantList places;
     if (st.ok()) {
@@ -710,13 +723,19 @@ QVariantMap StoandlClient::searchWeatherPlace(const QString &query)
     m[QStringLiteral("places")] = places;
     return m;
 }
+} // namespace
+
+QVariantMap StoandlClient::searchWeatherPlace(const QString &query)
+{
+    return read(QStringLiteral("searchWeatherPlace"), {query}).toMap();
+}
 
 QVariantMap StoandlClient::addWeatherLocation(const QString &name, double lat, double lon)
 {
     return statusMap(callStatus(QStringLiteral("AddWeatherLocation"), {name, lat, lon}));
 }
-QVariantMap StoandlClient::syncCalendar() { return statusMap(callStatus(QStringLiteral("SyncCalendar"))); }
-QVariantMap StoandlClient::syncHealth()   { return statusMap(callStatus(QStringLiteral("SyncHealth"))); }
+QVariantMap StoandlClient::syncCalendar() { return read(QStringLiteral("syncCalendar")).toMap(); }
+QVariantMap StoandlClient::syncHealth()   { return read(QStringLiteral("syncHealth")).toMap(); }
 
 QVariantMap StoandlClient::healthProfile()
 {
@@ -904,10 +923,7 @@ void StoandlClient::clearFirmwareInfo(bool forgetKey)
 
 QVariantMap StoandlClient::updateFirmware()
 {
-    const Status s = callStatus(QStringLiteral("UpdateFirmware"));
-    if (s.kind == QStringLiteral("ok"))
-        startFirmwarePoll();
-    return statusMap(s);
+    return read(QStringLiteral("updateFirmware")).toMap();   // afterRead() starts the flash poll
 }
 
 QVariantMap StoandlClient::sideloadFirmware(const QUrl &fileUrl)
@@ -1124,37 +1140,25 @@ void StoandlClient::emitLanguageStatus(const QString &phase, int percent, const 
 
 // --- typed wrappers: System / diagnostics ----------------------------------
 
+// An empty path lets the daemon pick a new file (it may run outside this GUI's Flatpak, whose /tmp differs).
 QVariantMap StoandlClient::takeScreenshot()
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    const QString path = QDir(dir).filePath(
-        QStringLiteral("stoandl-screenshot-%1.png").arg(QDateTime::currentMSecsSinceEpoch()));
-    const Status s = callStatus(QStringLiteral("TakeScreenshot"), {path});
-    QVariantMap m;
-    m[QStringLiteral("kind")] = s.kind;
-    if (s.kind == QStringLiteral("ok")) {
-        m[QStringLiteral("path")]   = s.fields.value(0);
-        m[QStringLiteral("width")]  = s.fields.value(1).toInt();
-        m[QStringLiteral("height")] = s.fields.value(2).toInt();
-    } else {
-        m[QStringLiteral("msg")] = s.tail;
-    }
-    return m;
+    return startTask(QStringLiteral("screenshot"), QStringLiteral("TakeScreenshot"), {QString()});
 }
 
 QVariantMap StoandlClient::gatherLogs()
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    const QString path = QDir(dir).filePath(
-        QStringLiteral("stoandl-logs-%1.txt").arg(QDateTime::currentMSecsSinceEpoch()));
-    const Status s = callStatus(QStringLiteral("GatherLogs"), {path});
-    QVariantMap m;
-    m[QStringLiteral("kind")] = s.kind;
-    if (s.kind == QStringLiteral("ok"))
-        m[QStringLiteral("path")] = s.fields.value(0);
-    else
-        m[QStringLiteral("msg")] = s.tail;
-    return m;
+    return startTask(QStringLiteral("logs"), QStringLiteral("GatherLogs"), {QString()});
+}
+
+void StoandlClient::openFile(const QString &path)
+{
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+}
+
+void StoandlClient::openFolderOf(const QString &path)
+{
+    QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
 }
 
 // --- typed wrappers: System / reset ----------------------------------------
@@ -1307,17 +1311,86 @@ QVariantMap StoandlClient::devConnectionStatus()
 
 QVariantMap StoandlClient::getCoreDump()
 {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
-    const QString path = QDir(dir).filePath(
-        QStringLiteral("stoandl-coredump-%1.bin").arg(QDateTime::currentMSecsSinceEpoch()));
-    const Status s = callStatus(QStringLiteral("GetCoreDump"), {path});
-    QVariantMap m;
-    m[QStringLiteral("kind")] = s.kind;          // ok / none / notready / error
-    if (s.kind == QStringLiteral("ok"))
+    return startTask(QStringLiteral("coredump"), QStringLiteral("GetCoreDump"), {QString()});
+}
+
+// --- watch tasks -------------------------------------------------------------
+
+namespace {
+// A task's TaskStatus result as taskFinished() reports it: the status map, plus the file it wrote.
+QVariantMap taskResultMap(const QString &kind, const Status &s)
+{
+    QVariantMap m = statusMap(s);
+    if (s.ok() && kind != QLatin1String("sideload"))
         m[QStringLiteral("path")] = s.fields.value(0);
-    else
-        m[QStringLiteral("msg")] = s.tail;
+    if (s.ok() && kind == QLatin1String("screenshot")) {
+        m[QStringLiteral("width")]  = s.fields.value(1).toInt();
+        m[QStringLiteral("height")] = s.fields.value(2).toInt();
+    }
     return m;
+}
+} // namespace
+
+QVariantMap StoandlClient::startTask(const QString &kind, const QString &method, const QVariantList &args)
+{
+    const Status s = callStatus(method, args);
+    if (s.ok() && s.tail == QLatin1String("started")) {
+        m_tasks.insert(kind, QString());   // TaskChanged's running:<what> names it
+        m_taskAge[kind].start();
+        if (!m_taskTimer->isActive())
+            m_taskTimer->start();
+        Q_EMIT tasksChanged();
+    } else if (s.ok() || s.kind == QLatin1String("none")) {
+        // A daemon from before the watch tasks did the work in the call and answered with the result.
+        const QVariantMap result = taskResultMap(kind, s);
+        QTimer::singleShot(0, this, [this, kind, result] { Q_EMIT taskFinished(kind, result); });
+    }
+    return statusMap(s);
+}
+
+void StoandlClient::onTaskChanged(const QString &kind, const QString &status)
+{
+    qCDebug(lcStoandl).noquote() << "signal TaskChanged:" << kind << status;
+    taskStatusSeen(kind, status);
+}
+
+void StoandlClient::taskStatusSeen(const QString &kind, const QString &status)
+{
+    if (!m_tasks.contains(kind))   // one this GUI didn't start (the CLI's), or already reported
+        return;
+    const Status s = parseStatus(status);
+    if (s.kind == QLatin1String("running")) {
+        if (m_tasks.value(kind).toString() != s.tail) {
+            m_tasks.insert(kind, s.tail);
+            Q_EMIT tasksChanged();
+        }
+        return;
+    }
+    if (s.kind == QLatin1String("idle"))   // the daemon restarted under the task: it is gone
+        return taskStatusSeen(kind, QStringLiteral("error:stoandl restarted before it finished"));
+    m_tasks.remove(kind);
+    m_taskAge.remove(kind);
+    if (m_tasks.isEmpty())
+        m_taskTimer->stop();
+    Q_EMIT tasksChanged();
+    if (s.kind == QLatin1String("error") || s.kind == QLatin1String("failed"))
+        qCWarning(lcStoandl).noquote().nospace() << "task " << kind << " -> " << s.kind << ": " << s.tail;
+    Q_EMIT taskFinished(kind, taskResultMap(kind, s));
+}
+
+void StoandlClient::pollTasks()
+{
+    for (const QString &kind : m_tasks.keys()) {
+        if (m_taskAge.value(kind).hasExpired(TASK_TIMEOUT_MS)) {
+            taskStatusSeen(kind, QStringLiteral("timeout:it took longer than ten minutes"));
+            continue;
+        }
+        readAsync(QStringLiteral("taskStatus"), {kind}, nullptr, [this, kind](const QVariant &v) {
+            const QVariantMap m = v.toMap();
+            const QString tail = m.value(QStringLiteral("tail")).toString();
+            taskStatusSeen(kind, m.value(QStringLiteral("kind")).toString() + QLatin1Char(':') + tail);
+        });
+    }
 }
 
 // --- Extensions: config (HOOK #7) ------------------------------------------
@@ -2485,7 +2558,11 @@ struct ReadSpec {
     const char *sig;
     QVariant (*records)(const QVariantList &records);
     QVariant (*status)(const Status &s);
+    int timeoutMs = CALL_TIMEOUT_MS;
 };
+
+// A plain `s` reply, as call() returns it.
+QVariant statusVariant(const Status &s) { return statusMap(s); }
 
 // Every read fetch() can run, by the name of its Q_INVOKABLE (which runs it blocking through read()).
 const ReadSpec *readSpec(const QString &name)
@@ -2513,6 +2590,14 @@ const ReadSpec *readSpec(const QString &name)
         { QStringLiteral("batteryHistory"),   { "BatteryHistory",    nullptr,  "sx", nullptr,          batteryHistoryRows } },
         { QStringLiteral("batteryActivity"),  { "BatteryActivity",   nullptr,  "sx", nullptr,          batteryActivityRows } },
         { QStringLiteral("batteryPower"),     { "BatteryPower",      nullptr,  "sx", nullptr,          batteryPowerRows } },
+        { QStringLiteral("taskStatus"),       { "TaskStatus",        nullptr,  "s",  nullptr,          statusVariant } },
+        // Actions that wait on the watch or the network: run() them.
+        { QStringLiteral("syncWeather"),      { "SyncWeather",       nullptr,  "",   nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
+        { QStringLiteral("syncCalendar"),     { "SyncCalendar",      nullptr,  "",   nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
+        { QStringLiteral("syncHealth"),       { "SyncHealth",        nullptr,  "",   nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
+        { QStringLiteral("searchWeatherPlace"), { "SearchWeatherPlace", nullptr, "s", nullptr, placesMap,     SLOW_CALL_TIMEOUT_MS } },
+        { QStringLiteral("updateFirmware"),   { "UpdateFirmware",    nullptr,  "",   nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
+        { QStringLiteral("launchApp"),        { "LaunchApp",         nullptr,  "s",  nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
     };
     const auto it = READS.constFind(name);
     return it == READS.constEnd() ? nullptr : &it.value();
@@ -2565,16 +2650,23 @@ QVariant StoandlClient::read(const QString &name, const QVariantList &args)
     if (name == SCHEMA_READ && m_schema.isValid())
         return m_schema;
     const QDBusMessage reply = m_bus.call(methodCall(QString::fromLatin1(spec->method), readArgs(*spec, args)),
-                                          QDBus::Block, CALL_TIMEOUT_MS);
+                                          QDBus::Block, spec->timeoutMs);
     noteReadResult(name, reply);
     const QVariant value = parseRead(*spec, reply, m_instanceUp);
     if (name == SCHEMA_READ && reply.type() != QDBusMessage::ErrorMessage)
         m_schema = value;
+    afterRead(name, value);
     return value;
 }
 
+void StoandlClient::afterRead(const QString &name, const QVariant &value)
+{
+    if (name == QLatin1String("updateFirmware") && value.toMap().value(QStringLiteral("ok")).toBool())
+        startFirmwarePoll();
+}
+
 void StoandlClient::readAsync(const QString &name, const QVariantList &args, QObject *context,
-                              const std::function<void(const QVariant &)> &done)
+                              const std::function<void(const QVariant &)> &done, bool user)
 {
     const ReadSpec *spec = readSpec(name);
     if (!spec) {
@@ -2602,8 +2694,9 @@ void StoandlClient::readAsync(const QString &name, const QVariantList &args, QOb
         // Not an answer from before the cache was dropped (it may list the old keys or models).
         if (schema && reply.type() != QDBusMessage::ErrorMessage && generation == m_schemaGeneration)
             m_schema = value;
+        afterRead(name, value);
         done(value);
-    });
+    }, user, spec->timeoutMs);
 }
 
 void StoandlClient::noteReadResult(const QString &name, const QDBusMessage &reply)
@@ -2620,21 +2713,44 @@ void StoandlClient::noteReadResult(const QString &name, const QDBusMessage &repl
 }
 
 void StoandlClient::callAsync(const QDBusMessage &message, QObject *context,
-                              const std::function<void(const QDBusMessage &)> &done)
+                              const std::function<void(const QDBusMessage &)> &done, bool user, int timeoutMs)
 {
     const QPointer<QObject> guard(context);
     const bool scoped = context != nullptr;
     ++m_callsInFlight;
+    if (user)
+        ++m_userCallsInFlight;
     Q_EMIT callsInFlightChanged();
-    auto *w = new QDBusPendingCallWatcher(m_bus.asyncCall(message, CALL_TIMEOUT_MS), this);
-    connect(w, &QDBusPendingCallWatcher::finished, this, [this, guard, scoped, done](QDBusPendingCallWatcher *self) {
+    auto *w = new QDBusPendingCallWatcher(m_bus.asyncCall(message, timeoutMs > 0 ? timeoutMs : CALL_TIMEOUT_MS), this);
+    connect(w, &QDBusPendingCallWatcher::finished, this, [this, guard, scoped, done, user](QDBusPendingCallWatcher *self) {
         self->deleteLater();
         if (!scoped || guard)
             done(self->reply());
         // After `done`, so a follow-up call it starts keeps the count above zero.
         --m_callsInFlight;
+        if (user)
+            --m_userCallsInFlight;
         Q_EMIT callsInFlightChanged();
     });
+}
+
+void StoandlClient::callBack(const QJSValue &callback, const QVariant &value)
+{
+    QJSEngine *engine = qjsEngine(this);
+    if (!engine || !callback.isCallable())
+        return;
+    QJSValue cb = callback;
+    const QJSValue r = cb.call({ engine->toScriptValue(value) });
+    if (r.isError())
+        qCWarning(lcStoandl).noquote() << "callback failed:" << r.toString()
+                                       << r.property(QStringLiteral("stack")).toString();
+}
+
+void StoandlClient::run(QObject *owner, const QVariantList &call, const QJSValue &callback)
+{
+    QVariantList args = call;
+    const QString name = args.isEmpty() ? QString() : args.takeFirst().toString();
+    readAsync(name, args, owner, [this, callback](const QVariant &value) { callBack(callback, value); }, true);
 }
 
 void StoandlClient::fetch(QObject *owner, const QVariantList &reads, const QJSValue &callback)
@@ -2659,14 +2775,7 @@ void StoandlClient::fetch(QObject *owner, const QVariantList &reads, const QJSVa
         // The owner went away, or asked again since: this answer is stale.
         if (owner && (!guard || m_fetchSeq.value(owner) != seq))
             return;
-        QJSEngine *engine = qjsEngine(this);
-        if (!engine || !callback.isCallable())
-            return;
-        QJSValue cb = callback;
-        const QJSValue r = cb.call({ engine->toScriptValue(single ? b->values.value(0) : QVariant(b->values)) });
-        if (r.isError())
-            qCWarning(lcStoandl).noquote() << "fetch callback failed:" << r.toString()
-                                           << r.property(QStringLiteral("stack")).toString();
+        callBack(callback, single ? b->values.value(0) : QVariant(b->values));
     };
     for (qsizetype i = 0; i < batch.size(); ++i) {
         QVariantList read = asList(batch.at(i));
@@ -2675,6 +2784,6 @@ void StoandlClient::fetch(QObject *owner, const QVariantList &reads, const QJSVa
             b->values[i] = value;
             if (--b->pending == 0)
                 deliver();
-        });
+        }, true);
     }
 }

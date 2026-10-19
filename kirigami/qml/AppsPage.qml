@@ -90,11 +90,10 @@ Kirigami.ScrollablePage {
 
     // --- Faces / Apps actions ---------------------------------------------
     function doLaunch(app) {
-        var r = StoandlClient.launchApp(app.uuid);
-        if (!r.ok)
-            page.toast("Launch failed: " + (r.tail || r.kind));
-        else
-            page.toast("Launched " + app.title);
+        // Waits on the watch (it can take seconds): run(), and the bar on top shows it.
+        StoandlClient.run(page, ["launchApp", app.uuid], function (r) {
+            page.toast(r.ok ? "Launched " + app.title : "Launch failed: " + (r.tail || r.kind));
+        });
         // A face launch changes the active flag: the daemon's LockerChanged re-reads the list.
     }
 
@@ -184,6 +183,9 @@ Kirigami.ScrollablePage {
     // waits until the last one's rows are built: a dialog closed while its footer still incubates warns.
     function smokeExercise() {
         if (!StoandlClient.daemonUp) return;
+        // A sideload is a watch task (Main.qml reports it); only the mock takes a file that isn't there.
+        if (StoandlClient.daemonVersion.indexOf("mock") === 0)
+            console.log("stoandl-smoke: sideload start " + StoandlClient.sideloadApp("file:///nonexistent/smoke.pbw").kind);
         var ext = page.extensions.find(function (e) { return e.config === "schema" && e.installed; });
         if (!ext) return page.smokePerms();
         var win = applicationWindow();
@@ -945,13 +947,11 @@ Kirigami.ScrollablePage {
         id: pbwFileDialog
         title: "Install watchapp / watchface (.pbw)"
         nameFilters: ["Pebble apps (*.pbw)"]
+        // A watch task: the result is reported by Main.qml, and LockerChanged re-reads the list.
         onAccepted: {
             var r = StoandlClient.sideloadApp(selectedFile); // absolute daemon-side path (co-located)
-            if (!r.ok)
-                page.toast("Install failed: " + (r.tail || r.kind));
-            else
-                page.toast("Installed");
-            StoandlClient.refreshApps(); // re-fetch after mutation
+            page.toast(r.ok ? "Installing " + decodeURIComponent(("" + selectedFile).split("/").pop()) + "…"
+                            : "Install failed: " + (r.tail || r.kind));
         }
     }
 

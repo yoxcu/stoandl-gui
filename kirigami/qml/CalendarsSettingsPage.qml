@@ -127,11 +127,10 @@ Kirigami.ScrollablePage {
             icon.name: "view-refresh-symbolic"
             text: "Sync now"
             enabled: StoandlClient.daemonUp
-            onTriggered: {
-                var r = StoandlClient.syncCalendar();
+            onTriggered: StoandlClient.run(page, ["syncCalendar"], function (r) {
                 page.toast(r.ok ? "Calendar synced" : ("Sync: " + (r.tail || r.kind)));
                 page.reload();
-            }
+            })
         }
     ]
 

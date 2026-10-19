@@ -20,15 +20,20 @@ ColumnLayout {
     property bool searchOn: false
     property var places: []
     property string message: ""
+    property bool searching: false
 
     function toast(msg) { applicationWindow().showPassiveNotification(msg); }
 
     function search() {
         var q = nameRow.value.trim();
-        if (q === "") return;
-        var r = StoandlClient.searchWeatherPlace(q);
-        card.places = r.places || [];
-        card.message = r.ok ? "" : (r.tail || r.kind);
+        if (q === "" || card.searching) return;
+        card.searching = true;
+        card.message = "Searching…";
+        StoandlClient.run(card, ["searchWeatherPlace", q], function (r) {
+            card.searching = false;
+            card.places = r.places || [];
+            card.message = r.ok ? "" : (r.tail || r.kind);
+        });
     }
 
     function add(p) {
@@ -67,7 +72,7 @@ ColumnLayout {
 
         FormCard.FormButtonDelegate {
             visible: card.searchOn
-            enabled: nameRow.value.trim() !== ""
+            enabled: nameRow.value.trim() !== "" && !card.searching
             text: "Search"
             icon.name: "search-symbolic"
             onClicked: card.search()

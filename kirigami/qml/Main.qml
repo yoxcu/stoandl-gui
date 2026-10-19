@@ -100,7 +100,7 @@ Kirigami.ApplicationWindow {
         onTriggered: root.refreshShownPage()
     }
 
-    // Smoke harness: run fn once no asynchronous read is in flight and nothing is being created
+    // Smoke harness: run fn once no asynchronous read or watch task is in flight and nothing is being created
     // asynchronously, so a page's smokeExercise() sees the data its loads fetch (they no longer block)
     // and the rows built from it. Queued in order; checked every 50 ms, one fn per check, so the D-Bus
     // signals a fn's calls cause (ConfigChanged …) are dispatched, and their reads started, before the
@@ -121,8 +121,8 @@ Kirigami.ApplicationWindow {
         interval: 50
         repeat: true
         onTriggered: {
-            if (root.smokeQueue.length > 0
-                && StoandlClient.callsInFlight === 0 && StoandlClient.incubatingObjects() === 0) {
+            if (root.smokeQueue.length > 0 && StoandlClient.callsInFlight === 0
+                && Object.keys(StoandlClient.tasks).length === 0 && StoandlClient.incubatingObjects() === 0) {
                 var fn = root.smokeQueue.shift();
                 root.smokeInsertAt = 0;
                 fn();
@@ -175,10 +175,53 @@ Kirigami.ApplicationWindow {
 
     // "Start daemon" (DaemonPlaceholder) is async: report a failed start here, once, rather than
     // from each page's placeholder. The message is systemctl's own first stderr line.
+    // A watch task's result is reported here too, whichever page started it (the page may be gone).
     Connections {
         target: StoandlClient
         function onDaemonStartFailed(message) {
             root.showPassiveNotification("Could not start stoandl: " + message, "long");
+        }
+        function onTaskFinished(kind, r) { root.reportTask(kind, r); }
+    }
+
+    function reportTask(kind, r) {
+        var why = r.tail || r.kind;
+        if (StoandlClient.smokeMs > 0)
+            console.log("stoandl-smoke: task " + kind + " -> " + r.kind + " " + (r.path || r.tail));
+        if (kind === "sideload") {
+            root.showPassiveNotification(r.ok ? (r.tail || "Installed") : "Install failed: " + why, r.ok ? "short" : "long");
+        } else if (kind === "screenshot") {
+            if (r.ok)
+                root.showPassiveNotification("Screenshot saved: " + r.path, "long", "Open", function () { StoandlClient.openFile(r.path); });
+            else
+                root.showPassiveNotification("Screenshot: " + why, "long");
+        } else if (r.ok) {
+            root.showPassiveNotification((kind === "logs" ? "Watch logs saved: " : "Core dump saved: ") + r.path, "long",
+                                         "Open folder", function () { StoandlClient.openFolderOf(r.path); });
+        } else {
+            root.showPassiveNotification(r.kind === "none" ? "No core dump available"
+                                         : (kind === "logs" ? "Watch logs: " : "Core dump: ") + why, "long");
+        }
+    }
+
+    // One thin bar along the top while someone waits on the daemon: a run() or fetch() in flight, or a
+    // watch task this GUI started. Only after a moment, so a quick answer doesn't flash it.
+    QQC2.ProgressBar {
+        id: busyBar
+        readonly property bool waiting: StoandlClient.userCallsInFlight > 0 || Object.keys(StoandlClient.tasks).length > 0
+        z: 1000
+        anchors { top: parent.top; left: parent.left; right: parent.right }
+        height: Kirigami.Units.smallSpacing
+        indeterminate: true
+        visible: waiting && busyDelay.elapsed
+        Accessible.name: "Waiting for stoandl"
+        Timer {
+            id: busyDelay
+            property bool elapsed: false
+            interval: 300
+            running: busyBar.waiting
+            onRunningChanged: if (running) elapsed = false
+            onTriggered: elapsed = true
         }
     }
 

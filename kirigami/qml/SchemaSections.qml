@@ -349,9 +349,10 @@ ColumnLayout {
             console.log("stoandl-smoke: picker wrote " + combo + " back: '" + page.cfgValues[combo] + "'");
         }
         if (weatherCard.item) {
-            var r = StoandlClient.searchWeatherPlace("Berlin");
-            console.log("stoandl-smoke: weather search " + r.kind + ", " + (r.places || []).length + " places"
-                        + " searchOn=" + weatherCard.item.searchOn);
+            StoandlClient.run(page, ["searchWeatherPlace", "Berlin"], function (r) {
+                console.log("stoandl-smoke: weather search " + r.kind + ", " + (r.places || []).length + " places"
+                            + " searchOn=" + weatherCard.item.searchOn);
+            });
         }
         if (ttsCard.item && typeof ttsCard.item.smokeExercise === "function")
             ttsCard.item.smokeExercise();
