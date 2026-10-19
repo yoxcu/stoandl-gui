@@ -294,9 +294,11 @@ class MockStoandl(dbus.service.Object):
         # (ListCalendars, each tagged with its owning source's id via accountId).
         self.calendar_sources = [
             {"id": "caldav:ab12cd34", "type": "caldav",
-             "url": "https://dav.example.com/alice/", "username": "alice", "label": "dav.example.com"},
+             "url": "https://dav.example.com/alice/", "username": "alice", "label": "dav.example.com",
+             "lastSync": int(time.time()) - 600},
             {"id": "ical:https://cal.example.com/feed.ics", "type": "ical",
-             "url": "https://cal.example.com/feed.ics", "username": "", "label": "cal.example.com"},
+             "url": "https://cal.example.com/feed.ics", "username": "", "label": "cal.example.com",
+             "lastError": "Sign-in failed (401)"},
         ]
         self._caldav_next = 1  # to mint new caldav tokens deterministically
         self.calendars = [
@@ -1296,8 +1298,9 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def ListCalendarSources(self):
-        # id \t type \t url \t username \t label  (password is write-only, never returned)
-        return [rec(s["id"], s["type"], s["url"], s.get("username", ""), s.get("label", ""))
+        # id \t type \t url \t username \t label \t lastError \t lastSync (epoch s; password is write-only)
+        return [rec(s["id"], s["type"], s["url"], s.get("username", ""), s.get("label", ""),
+                    s.get("lastError", ""), str(s["lastSync"]) if s.get("lastSync") else "")
                 for s in self.calendar_sources]
 
     @dbus.service.method(IFACE, in_signature="ssss", out_signature="s")
