@@ -34,6 +34,8 @@ modules:
     subdir: kirigami
     config-opts:
       - -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      # The version About shows; the release CI writes the tag here (empty = the CMake fallback).
+      - -DSTOANDL_GUI_VERSION=
     sources:
       # The manifest lives in data/, so the project root is one level up. A fresh CI
       # checkout has no build/ dir (it is git-ignored), so this copies clean sources.

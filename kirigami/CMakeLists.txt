@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(stoandl-gui VERSION 0.1.0 LANGUAGES CXX)
+project(stoandl-gui VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -99,21 +99,33 @@ qt_add_qml_module(stoandl-gui
 # resolves — the header lives in src/.
 target_include_directories(stoandl-gui PRIVATE src)
 
-# The version Settings → About shows: `git describe` of the checkout, else (a release tarball) the
-# project version above.
+# The version Settings → About and the support line show. Packaging passes it (the APKBUILD its pkgver,
+# the release CI the tag into the Flatpak manifest). Otherwise `git describe` of this tree's own checkout
+# (a development build), and only that one: a release tarball unpacked inside some other repo (the CI
+# checkout, an aports tree) would describe that repo. Failing both, the project version above.
+set(STOANDL_GUI_VERSION "" CACHE STRING "Version string shown in the GUI (empty: git describe, else the project version)")
+set(STOANDL_GUI_SHOWN_VERSION "${STOANDL_GUI_VERSION}")
 find_package(Git QUIET)
-if(GIT_FOUND)
-    execute_process(COMMAND "${GIT_EXECUTABLE}" describe --tags --always --dirty
+if(STOANDL_GUI_SHOWN_VERSION STREQUAL "" AND GIT_FOUND)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --show-toplevel
                     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-                    OUTPUT_VARIABLE STOANDL_GUI_GIT_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE
+                    OUTPUT_VARIABLE STOANDL_GUI_GIT_TOP OUTPUT_STRIP_TRAILING_WHITESPACE
                     ERROR_QUIET RESULT_VARIABLE STOANDL_GUI_GIT_RESULT)
+    get_filename_component(STOANDL_GUI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." REALPATH)
+    if(STOANDL_GUI_GIT_RESULT EQUAL 0 AND NOT STOANDL_GUI_GIT_TOP STREQUAL "")
+        get_filename_component(STOANDL_GUI_GIT_TOP "${STOANDL_GUI_GIT_TOP}" REALPATH)
+    endif()
+    if(STOANDL_GUI_GIT_RESULT EQUAL 0 AND STOANDL_GUI_GIT_TOP STREQUAL STOANDL_GUI_ROOT)
+        execute_process(COMMAND "${GIT_EXECUTABLE}" describe --tags --always --dirty
+                        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                        OUTPUT_VARIABLE STOANDL_GUI_SHOWN_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE
+                        ERROR_QUIET)
+    endif()
 endif()
-if(GIT_FOUND AND STOANDL_GUI_GIT_RESULT EQUAL 0 AND NOT STOANDL_GUI_GIT_VERSION STREQUAL "")
-    set(STOANDL_GUI_VERSION "${STOANDL_GUI_GIT_VERSION}")
-else()
-    set(STOANDL_GUI_VERSION "${PROJECT_VERSION}")
+if(STOANDL_GUI_SHOWN_VERSION STREQUAL "")
+    set(STOANDL_GUI_SHOWN_VERSION "${PROJECT_VERSION}")
 endif()
-target_compile_definitions(stoandl-gui PRIVATE STOANDL_GUI_VERSION="${STOANDL_GUI_VERSION}")
+target_compile_definitions(stoandl-gui PRIVATE STOANDL_GUI_VERSION="${STOANDL_GUI_SHOWN_VERSION}")
 
 target_link_libraries(stoandl-gui PRIVATE
     Qt6::Core
