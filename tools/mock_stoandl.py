@@ -18,13 +18,14 @@ to match rather than the GUI to match the mock.
 Run inside a session bus, e.g.:  dbus-run-session -- python3 mock_stoandl.py
 """
 
-import base64
 import datetime
 import json
 import math
 import os
 import re
+import struct
 import time
+import zlib
 
 import dbus
 import dbus.service
@@ -57,6 +58,16 @@ DOWNGRADE_DROPPED = (f"failed:The watch came back on its normal firmware without
 
 # PebbleOS changelog (HOOK: appended to CheckFirmware so the GUI's "What's new" works).
 CHANGELOG_URL = "https://ndocs.repebble.com/PebbleOS-Changelog-25efbb55ea84801da04bfcf73c9346e1"
+
+
+def _png_gray(width, height, pixel):
+    """A valid 8-bit greyscale PNG (pixel(x, y) -> 0..255), for the mock's screenshots."""
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+    raw = b"".join(b"\0" + bytes(pixel(x, y) for x in range(width)) for y in range(height))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
 def rec(*fields):
@@ -2041,13 +2052,12 @@ class MockStoandl(dbus.service.Object):
         out = self._task_out(path, "Screenshots", "pebble-screenshot", ".png")
         if out is None:
             return f"error:The path must be absolute: {path}"
-        png = base64.b64decode(
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+        w, h = 144, 168   # a Pebble Time screen: a grey frame around white, like a blank watchface
 
         def work():
             with open(out, "wb") as f:
-                f.write(png)
-            return rec(f"ok:{out}", "1", "1")
+                f.write(_png_gray(w, h, lambda x, y: 255 if 8 <= x < w - 8 and 8 <= y < h - 8 else 96))
+            return rec(f"ok:{out}", w, h)
         return self._task_start("screenshot", "Capturing the watch screen", work)
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")

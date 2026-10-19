@@ -191,10 +191,17 @@ Kirigami.ApplicationWindow {
         if (kind === "sideload") {
             root.showPassiveNotification(r.ok ? (r.tail || "Installed") : "Install failed: " + why, r.ok ? "short" : "long");
         } else if (kind === "screenshot") {
-            if (r.ok)
-                root.showPassiveNotification("Screenshot saved: " + r.path, "long", "Open", function () { StoandlClient.openFile(r.path); });
-            else
+            if (r.ok) {
+                screenshotLoader.active = true;
+                screenshotLoader.item.show(r);
+                if (StoandlClient.smokeMs > 0) {
+                    console.log("stoandl-smoke: screenshot preview " + r.width + "x" + r.height
+                                + " shown=" + screenshotLoader.item.visible);
+                    root.smokeWhenIdle(function () { screenshotLoader.item.close(); });
+                }
+            } else {
                 root.showPassiveNotification("Screenshot: " + why, "long");
+            }
         } else if (r.ok) {
             root.showPassiveNotification((kind === "logs" ? "Watch logs saved: " : "Core dump saved: ") + r.path, "long",
                                          "Open folder", function () { StoandlClient.openFolderOf(r.path); });
@@ -202,6 +209,13 @@ Kirigami.ApplicationWindow {
             root.showPassiveNotification(r.kind === "none" ? "No core dump available"
                                          : (kind === "logs" ? "Watch logs: " : "Core dump: ") + why, "long");
         }
+    }
+
+    // The screenshot preview (Open / Open folder / Take another), built on the first screenshot.
+    Loader {
+        id: screenshotLoader
+        active: false
+        sourceComponent: ScreenshotDialog {}
     }
 
     // One thin bar along the top while someone waits on the daemon: a run() or fetch() in flight, or a
