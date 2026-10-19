@@ -1,0 +1,54 @@
+qlUp	Quick launch	Choose an app, a system action (Quiet Time, Backlight, Motion Backlight, Airplane Mode, Timeline Past/Future, Toggle Touch) or Off. Actions the connected watch can't run are left out.	
+qlDown	Quick launch	Choose an app, a system action (Quiet Time, Backlight, Motion Backlight, Airplane Mode, Timeline Past/Future, Toggle Touch) or Off. Actions the connected watch can't run are left out.	
+qlSelect	Quick launch	Choose an app, a system action (Quiet Time, Backlight, Motion Backlight, Airplane Mode, Timeline Past/Future, Toggle Touch) or Off. Actions the connected watch can't run are left out.	
+qlBack	Quick launch	Choose an app, a system action (Quiet Time, Backlight, Motion Backlight, Airplane Mode, Timeline Past/Future, Toggle Touch) or Off. Actions the connected watch can't run are left out.	
+qlComboBackUp	Quick launch	Choose an app, a system action (Quiet Time, Backlight, Motion Backlight, Airplane Mode, Timeline Past/Future, Toggle Touch) or Off. Actions the connected watch can't run are left out.	
+qlComboUpDown	Quick launch	Choose an app, a system action (Quiet Time, Backlight, Motion Backlight, Airplane Mode, Timeline Past/Future, Toggle Touch) or Off. Actions the connected watch can't run are left out.	
+qlSingleClickUp	Quick launch	Choose an app, a system action (Quiet Time, Backlight, Motion Backlight, Airplane Mode, Timeline Past/Future, Toggle Touch) or Off. Actions the connected watch can't run are left out.	
+qlSingleClickDown	Quick launch	Choose an app, a system action (Quiet Time, Backlight, Motion Backlight, Airplane Mode, Timeline Past/Future, Toggle Touch) or Off. Actions the connected watch can't run are left out.	
+displayOrientationLeftHanded	Backlight & display		
+lightEnabled	Backlight & display		
+lightAmbientSensorEnabled	Backlight & display		lightPreset=Advanced
+lightMotion	Backlight & display		
+systemTextSize	Backlight & display	On older firmware change it on the watch; Extra Large can only be set there.	
+lightPreset	Backlight & display		
+lightIntensity	Backlight & display		lightPreset=Advanced
+lightDynamicMode	Backlight & display		lightPreset=Advanced
+lightTouch	Backlight & display	Double Tap avoids lighting up by accident.	
+lightColor	Backlight & display		
+lightTimeoutMs	Backlight & display		lightPreset=Advanced
+timelineQuickViewEnabled	Notifications & timeline		
+notifDesignStyle	Notifications & timeline		
+notifVibeDelay	Notifications & timeline	Off vibrates immediately, during the animation.	
+notifBacklight	Notifications & timeline		
+notifTextSize	Notifications & timeline	On older firmware change it on the watch; Extra Large can only be set there.	
+mask	Notifications & timeline	Which alerts the watch shows and vibrates for. stoandl still sends everything; the watch filters.	
+timelineQuickViewBeforeTimeMin	Notifications & timeline		timelineQuickViewEnabled=true
+notifWindowTimeout	Notifications & timeline		
+dndManuallyEnabled	Quiet Time	Mirror Do Not Disturb (Notifications) can switch this with your desktop.	
+dndSmartEnabled	Quiet Time		
+dndWeekdayScheduleEnabled	Quiet Time		
+dndWeekendScheduleEnabled	Quiet Time		
+dndMotionBacklight	Quiet Time		
+dndNotificationBacklight	Quiet Time		
+dndAutoDismiss	Quiet Time		
+dndInterruptionsMask	Quiet Time	Disconnect during Quiet Time (Connection & power) only works when nothing is let through.	
+dndShowNotifications	Quiet Time		
+dndWeekdaySchedule	Quiet Time	An end before the start runs overnight (22:00-07:00).	dndWeekdayScheduleEnabled=true
+dndWeekendSchedule	Quiet Time	An end before the start runs overnight (22:00-07:00).	dndWeekendScheduleEnabled=true
+vibeIntensity	Vibration		
+vibeScoreNotifications	Vibration	Single apps can have their own pattern on the Alerts tab.	
+vibeScoreIncomingCalls	Vibration		
+vibeScoreAlarms	Vibration		
+musicShowVolumeControls	Music		
+musicShowProgressBar	Music		
+musicShowAlbumArt	Music	Uses the cover stoandl sends from your player.	
+timezoneSource	Time, units & language	stoandl updates the watch when this device's time zone changes.	
+clock24h	Time, units & language		
+unitsWind	Time, units & language		
+language	Time, units & language	Install packs under Firmware & language or on the Watch tab.	
+stationaryMode	Motion & menus		
+menuScrollWrapAround	Motion & menus		
+menuScrollVibeBehavior	Motion & menus		
+motionSensitivity	Advanced	Diagnostic setting.	
+lightAmbientThreshold	Advanced	Diagnostic setting.	

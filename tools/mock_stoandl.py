@@ -162,44 +162,13 @@ CONFIG_COMBO_TOKENS = {
     "calendar.reminder_vibe": {"Watch default": ""},
 }
 
-# The daemon's WatchPrefText (pebble/WatchPrefText.kt) for the prefs in MockStoandl.prefs: ListWatchPrefs'
-# columns 8-10 (section, help, requires). Sections in display order; an id not listed is in "Other".
-WATCH_PREF_SECTIONS = ["Quick launch", "Backlight & display", "Notifications & timeline", "Quiet Time",
-                       "Vibration", "Music", "Time, units & language", "Motion & menus", "Advanced", "Other"]
-WATCH_PREF_TEXT = {
-    # id: (section, help, requires)
-    "qlUp": ("Quick launch", "QL", ""), "qlDown": ("Quick launch", "QL", ""),
-    "qlSelect": ("Quick launch", "QL", ""), "qlSingleClickUp": ("Quick launch", "QL", ""),
-    "qlBack": ("Quick launch", "QL", ""),
-    "lightEnabled": ("Backlight & display", "", ""), "lightMotion": ("Backlight & display", "", ""),
-    "lightPreset": ("Backlight & display", "Each mode sets brightness, duration and the light sensor together. "
-                    "Choose Advanced to set them one by one.", ""),
-    "lightDynamicMode": ("Backlight & display", "", "lightPreset=Advanced"),
-    "lightIntensity": ("Backlight & display", "", "lightPreset=Advanced"),
-    "lightTimeoutMs": ("Backlight & display", "", "lightPreset=Advanced"),
-    "lightColor": ("Backlight & display", "", ""),
-    "displayOrientationLeftHanded": ("Backlight & display", "", ""),
-    "mask": ("Notifications & timeline", "Which alerts the watch shows and vibrates for. stoandl still sends "
-             "everything; the watch filters.", ""),
-    "notifWindowTimeout": ("Notifications & timeline", "", ""),
-    "timelineQuickViewEnabled": ("Notifications & timeline", "", ""),
-    "dndManuallyEnabled": ("Quiet Time", "Mirror Do Not Disturb (Notifications) can switch this with your desktop.", ""),
-    "dndWeekdayScheduleEnabled": ("Quiet Time", "", ""), "dndWeekendScheduleEnabled": ("Quiet Time", "", ""),
-    "dndShowNotifications": ("Quiet Time", "", ""),
-    "dndWeekdaySchedule": ("Quiet Time", "An end before the start runs overnight (22:00-07:00).", "dndWeekdayScheduleEnabled=true"),
-    "dndWeekendSchedule": ("Quiet Time", "An end before the start runs overnight (22:00-07:00).", "dndWeekendScheduleEnabled=true"),
-    "vibeIntensity": ("Vibration", "", ""),
-    "vibeScoreNotifications": ("Vibration", "Single apps can have their own pattern on the Alerts tab.", ""),
-    "musicShowVolumeControls": ("Music", "", ""),
-    "clock24h": ("Time, units & language", "", ""), "unitsWind": ("Time, units & language", "", ""),
-    "language": ("Time, units & language", "Install packs under Firmware & language or on the Watch tab.", ""),
-    "menuScrollWrapAround": ("Motion & menus", "", ""),
-}
-WATCH_PREF_QL_HELP = ("Choose an app, a system action (Quiet Time, Backlight, Motion Backlight, Airplane Mode, "
-                      "Timeline Past/Future, Toggle Touch) or Off. Actions the connected watch can't run are left out.")
-
-
-
+# The daemon's WatchPrefText (pebble/WatchPrefText.kt): ListWatchPrefs' columns 8-10 (section, help,
+# requires) for every pref libpebble3 knows, in display order, written by its WatchPrefTextTest
+# (STOANDL_UPDATE_GOLDEN=1). An id not listed is in "Other", like a pref the daemon doesn't know yet.
+WATCH_PREF_TEXT_TSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "watch-pref-text.tsv")
+with open(WATCH_PREF_TEXT_TSV, encoding="utf-8") as _f:
+    WATCH_PREF_TEXT = {r[0]: tuple(r[1:4]) for r in (line.rstrip("\n").split("\t") for line in _f if line.strip())}
+WATCH_PREF_SECTIONS = list(dict.fromkeys(section for section, _, _ in WATCH_PREF_TEXT.values())) + ["Other"]
 
 # WatchPrefsControl.allowed() for a quicklaunch pref: the firmware system actions (QuickLaunchActions,
 # in the official app's order) between "off" and the app placeholder.
@@ -1396,10 +1365,7 @@ class MockStoandl(dbus.service.Object):
 
     # --- Watch settings (ListWatchPrefs / SetWatchPref) --------------------
     def _watch_pref_text(self, p):
-        if p["flags"] == "debug":
-            return "Advanced", "Diagnostic setting.", ""
-        section, help_text, requires = WATCH_PREF_TEXT.get(p["id"], ("Other", "", ""))
-        return section, WATCH_PREF_QL_HELP if help_text == "QL" else help_text, requires
+        return WATCH_PREF_TEXT.get(p["id"], ("Other", "", ""))
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
     def ListWatchPrefs(self):
