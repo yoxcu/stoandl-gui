@@ -183,6 +183,8 @@ Kirigami.ScrollablePage {
     // waits until the last one's rows are built: a dialog closed while its footer still incubates warns.
     function smokeExercise() {
         if (!StoandlClient.daemonUp) return;
+        console.log("stoandl-smoke: plugins key known=" + pluginsKey.known + " on=" + pluginsKey.isOn
+                    + " offer='Turn on " + pluginsKey.label + "' · " + pluginsKey.egressText);
         // "Restore default order" asks first (Main.confirm); Cancel leaves the order alone.
         var dlg = applicationWindow().confirm("Restore default order", "smoke", "Restore", "", function () {
             console.log("stoandl-smoke: restore order confirmed (unexpected)");
@@ -579,8 +581,18 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp && page.extSegment
             FormCard.FormTextDelegate {
                 visible: page.appPlugins.length === 0
-                text: "No plugins"
-                description: "Plugins are off (Settings → Apps & plugins), or none are installed. They give watchfaces and watchapps data and actions from this computer: weather, music, calendar, phone state, or a plugin an app brings."
+                text: pluginsKey.known && !pluginsKey.isOn ? "Plugins are off" : "No plugins"
+                description: (pluginsKey.known && !pluginsKey.isOn ? "" : "None are installed. ")
+                    + "Plugins give watchfaces and watchapps data and actions from this computer: weather, music, "
+                    + "calendar, phone state, or a plugin an app brings."
+            }
+            // The one key behind them (plugins.enabled), and what turning it on contacts.
+            FormCard.FormButtonDelegate {
+                visible: pluginsKey.known && !pluginsKey.isOn
+                icon.name: "preferences-plugin-symbolic"
+                text: "Turn on " + pluginsKey.label
+                description: pluginsKey.egressText
+                onClicked: { pluginsKey.turnOn(); StoandlClient.refreshPlugins(); }
             }
             Repeater {
                 model: page.appPlugins
@@ -682,6 +694,7 @@ Kirigami.ScrollablePage {
     }
 
     AppPermissionsDialog { id: permDialog }
+    ConfigKey { id: pluginsKey; key: "plugins.enabled" }
 
     // --- remove app/face confirmation --------------------------------------
     Kirigami.PromptDialog {

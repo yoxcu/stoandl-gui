@@ -125,6 +125,8 @@ Kirigami.ScrollablePage {
         function onDaemonUpChanged() { if (StoandlClient.daemonUp) page.reload(); }
     }
     Component.onCompleted: page.reload()
+    // Battery capture's main switch, offered when both captures are off (notready:).
+    ConfigKey { id: heartbeatKey; key: "battery.heartbeat" }
 
     header: QQC2.ToolBar {
         visible: StoandlClient.daemonUp && page.hasInsights
@@ -163,10 +165,17 @@ Kirigami.ScrollablePage {
               : (page.insights && page.insights.kind === "unknown" && !page.watchConnected) ? "No watch connected"
               : "No battery data yet"
         explanation: (page.insights && page.insights.kind === "notready")
-                ? "stoandl records neither the analytics heartbeat nor the battery level. Turn on “Battery insights” or “Battery level log” in Settings → Health & battery."
+                ? "stoandl records neither the watch's hourly battery report nor the level it reports. " + heartbeatKey.egressText
               : (page.insights && page.insights.kind === "unknown" && !page.watchConnected)
                 ? "Battery insights are for the connected watch. Connect it to see its battery."
               : "Insights build up as the watch reports. The analytics heartbeat arrives about once an hour."
+        helpfulAction: Kirigami.Action {
+            icon.name: "battery-symbolic"
+            text: "Turn on " + heartbeatKey.label
+            visible: page.insights !== null && page.insights.kind === "notready" && heartbeatKey.known
+            enabled: visible && !heartbeatKey.isOn
+            onTriggered: { heartbeatKey.turnOn(); page.reload(); }
+        }
     }
 
     ColumnLayout {

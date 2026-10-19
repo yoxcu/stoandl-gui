@@ -97,6 +97,7 @@ Kirigami.ScrollablePage {
     }
 
     Component.onCompleted: page.reload()
+    ConfigKey { id: heartbeatKey; key: "battery.heartbeat" }
 
     // A label / value fact row (mirrors the watch-details dialog's DetailRow, as a form delegate).
     component FactRow: FormCard.AbstractFormDelegate {
@@ -159,7 +160,14 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             icon.name: "dialog-information-symbolic"
             text: "Heartbeat capture is off"
-            explanation: "The daemon is not capturing analytics heartbeats, so there is no record to inspect. Turn on “Battery insights” in Settings → Health & battery."
+            explanation: "stoandl isn't reading the watch's hourly analytics record, so there is none to inspect. "
+                         + heartbeatKey.egressText
+            helpfulAction: Kirigami.Action {
+                icon.name: "battery-symbolic"
+                text: "Turn on " + heartbeatKey.label
+                enabled: heartbeatKey.known && !heartbeatKey.isOn
+                onTriggered: { heartbeatKey.turnOn(); page.reload(); }
+            }
         }
 
         // --- no record for this watch yet (unknown:<label>) -----------------

@@ -86,6 +86,7 @@ qt_add_qml_module(stoandl-gui
         qml/ForwardingBanner.qml
         qml/ReadErrorMessage.qml
         qml/ConfirmDialog.qml
+        qml/ConfigKey.qml
         qml/ScreenshotDialog.qml
         qml/SaveFileDialog.qml
         qml/VoiceModelsCard.qml

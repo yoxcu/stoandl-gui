@@ -239,6 +239,15 @@ Kirigami.ScrollablePage {
         }
     }
 
+    // Headless smoke: the empty state's offer follows health.sync.
+    function smokeExercise() {
+        console.log("stoandl-smoke: health data=" + page.hasData + " key " + healthKey.key + " known=" + healthKey.known
+                    + " on=" + healthKey.isOn + " label='" + healthKey.label + "' · " + healthKey.egressText);
+    }
+
+    // "Health data" (health.sync): the empty state offers it when it is off.
+    ConfigKey { id: healthKey; key: "health.sync" }
+
     ColumnLayout {
         spacing: 0
 
@@ -255,12 +264,23 @@ Kirigami.ScrollablePage {
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             icon.name: "stoandl-heart-symbolic"   // bundled monochrome heart (Breeze hearts are colored)
             text: "No health data yet"
-            explanation: "Sync your watch to pull steps, sleep and heart-rate history. "
-                       + "Health tracking must be enabled in Settings."
+            // Two switches, two places: "Health data" (health.sync, here) copies the records to this device;
+            // the watch only records them with "Activity tracking" on (its health profile).
+            explanation: (healthKey.known && !healthKey.isOn
+                          ? "“" + healthKey.label + "” is off, so stoandl doesn't ask the watch for steps, sleep and "
+                            + "heart rate. " + healthKey.egressText
+                          : "Sync to copy steps, sleep and heart rate from the watch.")
+                       + " The watch records them only with “Activity tracking” on (Settings → Health & battery → "
+                       + "Health profile)."
             helpfulAction: Kirigami.Action {
-                icon.name: "view-refresh-symbolic"
-                text: "Sync health"
-                onTriggered: page.syncHealth()
+                icon.name: healthKey.known && !healthKey.isOn ? "stoandl-heart-symbolic" : "view-refresh-symbolic"
+                text: healthKey.known && !healthKey.isOn ? "Turn on " + healthKey.label : "Sync health"
+                onTriggered: {
+                    if (healthKey.known && !healthKey.isOn)
+                        healthKey.turnOn();
+                    else
+                        page.syncHealth();
+                }
             }
         }
 
