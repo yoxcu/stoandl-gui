@@ -703,9 +703,10 @@ Kirigami.ScrollablePage {
                             onClicked: page.connectTo(watchRow.modelData.name)
                         }
 
-                        // A watch that won't connect any more (a bond lost on one side) needs pairing anew.
+                        // A watch that won't connect any more (a bond lost on one side) needs pairing anew. One
+                        // unpaired on the watch keeps being retried, so it shows as connecting: offered then too.
                         QQC2.ToolButton {
-                            visible: watchRow.modelData.state === "disconnected"
+                            visible: watchRow.modelData.state !== "connected" && watchRow.modelData.state !== "recovery"
                             icon.name: "network-bluetooth-symbolic"
                             display: QQC2.AbstractButton.IconOnly
                             text: "Re-pair " + watchRow.modelData.name
