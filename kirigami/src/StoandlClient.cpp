@@ -76,6 +76,10 @@ constexpr int FW_TIMEOUT_MS  = 600000;
 // Watch tasks (sideload, screenshot, logs, core dump): TaskChanged reports them; this poll of TaskStatus is
 // the missed-signal fallback, and a task still running after the ceiling is reported as timed out.
 constexpr int TASK_POLL_MS = 2000;
+// While the daemon is down, why (systemctl show) is asked again this often: a crash drops the bus name
+// while systemd is still restarting the unit, and its verdict (failed, start limit) only comes after.
+constexpr int PROBE_INTERVAL_MS = 10000;
+constexpr int PROBE_AFTER_LOSS_MS = 1500;
 // mutedUntil's end is checked against the wall clock at least this often: a timer's clock stops while the
 // device sleeps, so one long timer would show a mute that ended during a suspend for as long as it slept.
 constexpr qint64 MUTE_CHECK_MAX_MS = 60000;
@@ -264,6 +268,10 @@ StoandlClient::StoandlClient(QObject *parent)
                 refreshMuteAll();
         });
     }
+
+    m_probeTimer = new QTimer(this);
+    m_probeTimer->setInterval(PROBE_INTERVAL_MS);
+    connect(m_probeTimer, &QTimer::timeout, this, &StoandlClient::probeService);
 
     m_taskTimer = new QTimer(this);
     m_taskTimer->setInterval(TASK_POLL_MS);
@@ -2390,8 +2398,10 @@ void StoandlClient::setDaemonUp(bool up)
     // A daemon that went away (or a new one) owes us a fresh firmware answer.
     if (m_fwHaveInfo || !m_fwInfo.isEmpty() || m_fwCheckInFlight)
         clearFirmwareInfo(true);
-    if (!up)
+    if (!up) {
         probeService();
+        QTimer::singleShot(PROBE_AFTER_LOSS_MS, this, &StoandlClient::probeService);
+    }
     Q_EMIT daemonUpChanged();
     Q_EMIT daemonStateChanged();
 }
@@ -2443,8 +2453,10 @@ void StoandlClient::setInstanceUp(bool up)
     if (up == m_instanceUp)
         return;
     m_instanceUp = up;
-    if (!up)
+    if (!up) {
         probeService();
+        QTimer::singleShot(PROBE_AFTER_LOSS_MS, this, &StoandlClient::probeService);
+    }
     Q_EMIT daemonStateChanged();
 }
 
@@ -2465,8 +2477,12 @@ QString StoandlClient::daemonState() const
 
 void StoandlClient::probeService()
 {
-    if (m_daemonUp || m_instanceUp || inFlatpak())
+    if (m_daemonUp || m_instanceUp || inFlatpak()) {
+        m_probeTimer->stop();
         return;
+    }
+    if (!m_probeTimer->isActive())
+        m_probeTimer->start();
     runSystemctl({ QStringLiteral("show"), QStringLiteral("-p"), QStringLiteral("LoadState"),
                    QStringLiteral("-p"), QStringLiteral("ActiveState"), QStringLiteral("-p"), QStringLiteral("Result"),
                    QStringLiteral("stoandl") },
@@ -2474,6 +2490,7 @@ void StoandlClient::probeService()
         QString state = QStringLiteral("stopped");
         if (message.startsWith(QLatin1String("could not run systemctl"))) {
             state = QStringLiteral("nosystemd");
+            m_probeTimer->stop();   // that won't change while this GUI runs
         } else if (ok) {
             QHash<QString, QString> props;
             for (const QString &line : out.split(QLatin1Char('\n'), Qt::SkipEmptyParts))

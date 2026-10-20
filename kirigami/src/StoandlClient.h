@@ -498,7 +498,8 @@ private:
     // Run `systemctl --user <args>` asynchronously; `done` gets (exit 0, first stderr line / reason, stdout).
     void         runSystemctl(const QStringList &args,
                               const std::function<void(bool ok, const QString &message, const QString &out)> &done);
-    // Ask systemd why the daemon isn't running (m_serviceState), unless it is up or starting.
+    // Ask systemd why the daemon isn't running (m_serviceState), unless it is up or starting; again every
+    // PROBE_INTERVAL_MS while it stays down, and once more shortly after it went.
     void         probeService();
     void         setInstanceUp(bool up);
     void         setMutedUntil(qint64 epochSeconds);
@@ -512,6 +513,7 @@ private:
     bool            m_instanceUp = false;
     // probeService()'s answer: stopped | failed | startlimit | notinstalled | nosystemd.
     QString         m_serviceState = QStringLiteral("stopped");
+    QTimer         *m_probeTimer = nullptr;   // probes again while the daemon is down (systemd's verdict lags)
     bool            m_bluetoothOn = true;   // assume on until the first BluetoothStatus poll says otherwise
     QString         m_linkPause;
 
