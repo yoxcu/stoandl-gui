@@ -295,6 +295,15 @@ Kirigami.ScrollablePage {
                     page.toast(r.ok ? "System apps restored to default order" : ("Reset failed: " + (r.tail || r.kind)));
                     StoandlClient.refreshApps();
                 })
+        },
+        // Pull to refresh needs a touch screen: a mouse gets this and F5, the same re-read.
+        Kirigami.Action {
+            icon.name: "view-refresh-symbolic"
+            text: "Refresh"
+            visible: !Kirigami.Settings.isMobile
+            enabled: StoandlClient.daemonUp && !page.refreshing
+            shortcut: StandardKey.Refresh
+            onTriggered: page.refreshing = true
         }
     ]
 

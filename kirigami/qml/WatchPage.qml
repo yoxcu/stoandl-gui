@@ -40,7 +40,15 @@ Kirigami.ScrollablePage {
     readonly property var syncReads: ({ weather: "syncWeather", calendar: "syncCalendar", health: "syncHealth" })
     function syncNow() {
         page.syncing = true;
+        StoandlClient.refreshWatches();
         StoandlClient.fetch(page, ["getSyncStatus"], function (rows) {
+            // An unanswered read is not "everything is off".
+            var readError = StoandlClient.readErrors["getSyncStatus"];
+            if (readError !== undefined) {
+                page.syncing = false;
+                page.toast("Sync: " + readError);
+                return;
+            }
             // A service that is on but has nothing to read (no weather place, no calendar) is left out: its
             // sync would only answer that it isn't set up.
             var on = rows.filter(function (r) { return r.enabled && page.syncReads[r.service] !== undefined; });
@@ -59,8 +67,18 @@ Kirigami.ScrollablePage {
                     if (++answered < services.length)
                         return;
                     page.syncing = false;
-                    page.toast(failed.length > 0 ? "Sync: " + failed.join("; ")
-                               : "Synced " + services.map(function (x) { return x.service; }).join(", "));
+                    if (failed.length > 0)
+                        return page.toast("Sync: " + failed.join("; "));
+                    // Weather is fetched and pushed before it answers; calendar and health are only asked
+                    // for (the watch streams health back, the calendar is re-read in the background).
+                    var names = services.map(function (x) { return x.service; });
+                    var asked = names.filter(function (n) { return n !== "weather"; });
+                    var parts = names.indexOf("weather") >= 0 ? ["Weather synced"] : [];
+                    if (asked.length > 0) {
+                        var req = asked.join(" and ") + " sync requested";
+                        parts.push(parts.length > 0 ? req : req.charAt(0).toUpperCase() + req.slice(1));
+                    }
+                    page.toast(parts.join("; "));
                 });
             });
         });
@@ -449,9 +467,18 @@ Kirigami.ScrollablePage {
             text: "Watch connection paused for Quiet Time. It comes back when Quiet Time ends or the display comes on."
         }
 
+        // An unanswered ListWatches is not "no watch".
+        ReadErrorMessage {
+            id: watchReadError
+            Layout.fillWidth: true
+            reads: ["listWatches"]
+            what: "watch list"
+        }
+
         // --- no-watch (notready) empty state -------------------------------
         Kirigami.PlaceholderMessage {
             visible: StoandlClient.daemonUp && StoandlClient.bluetoothOn && page.connectedWatch === null && page.watches.length === 0
+                     && !watchReadError.failed
             Layout.fillWidth: true
             Layout.topMargin: Kirigami.Units.gridUnit * 4
             icon.name: "chronometer-symbolic"

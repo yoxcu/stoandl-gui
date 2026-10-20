@@ -110,14 +110,18 @@ Kirigami.ScrollablePage {
         return m.toLocaleDateString(Qt.locale(), "MMMM yyyy");
     }
 
+    // SyncHealth only asks: the watch streams its data back afterwards, so the page reads again once it
+    // likely has (and at once, for what an earlier sync left).
     function syncHealth() {
         StoandlClient.run(page, ["syncHealth"], function (r) {
-            if (r.ok) page.toast("Health data synced");
+            if (r.ok) page.toast("Syncing health data…");
             else if (r.kind === "notready") page.toast("No watch connected");
             else page.toast("Health: " + (r.tail !== "" ? r.tail : r.kind));
             page.reload();
+            if (r.ok) healthReread.restart();
         });
     }
+    Timer { id: healthReread; interval: 15000; onTriggered: page.reload() }
 
     // minutes -> "Hh MMm"
     function fmtMin(m) {

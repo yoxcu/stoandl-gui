@@ -35,7 +35,9 @@ Kirigami.ScrollablePage {
         page.syncing = true;
         StoandlClient.run(page, [read], function (r) {
             page.syncing = false;
-            applicationWindow().showPassiveNotification(r.ok ? label + " synced" : label + ": " + (r.tail || r.kind));
+            // Weather is pushed before it answers; calendar and health are only asked for.
+            var done = page.syncService === "weather" ? " synced" : " sync requested";
+            applicationWindow().showPassiveNotification(r.ok ? label + done : label + ": " + (r.tail || r.kind));
             sections.reload();   // the master row's "Last sync"
         });
     }
