@@ -603,6 +603,9 @@ Kirigami.ScrollablePage {
         showCloseButton: true
 
         readonly property bool temporary: appDialog.app.muteKind === "until"
+        // A standing mute (always, a schedule): a temporary one would replace it, and it wouldn't come back
+        // when that ends, so the temporary buttons are only offered to an app that forwards.
+        readonly property bool standing: !appDialog.temporary && (appDialog.app.muteKind || "never") !== "never"
 
         function openFor(row) {
             appDialog.appName = row.name;
@@ -656,7 +659,11 @@ Kirigami.ScrollablePage {
                     spacing: Kirigami.Units.smallSpacing
                     QQC2.Label {
                         Layout.fillWidth: true
-                        text: appDialog.temporary ? "Muted until " + page.fmtUntil(appDialog.app.mutedUntil) : "Mute temporarily"
+                        text: appDialog.temporary ? "Muted until " + page.fmtUntil(appDialog.app.mutedUntil)
+                              : appDialog.standing ? "Already " + page.muteText(appDialog.app).toLowerCase()
+                                                     + "; a temporary mute would replace that for good, so set Mute to Unmuted first"
+                              : "Mute temporarily"
+                        wrapMode: Text.WordWrap
                         font: Kirigami.Theme.smallFont
                         opacity: 0.7
                     }
@@ -669,17 +676,17 @@ Kirigami.ScrollablePage {
                             onClicked: page.setMute(appDialog.appName, "never", "Unmuted " + appDialog.appName)
                         }
                         QQC2.Button {
-                            visible: !appDialog.temporary
+                            visible: !appDialog.temporary && !appDialog.standing
                             text: "30 min"
                             onClicked: page.setMute(appDialog.appName, "30m", "Muted " + appDialog.appName + " for 30 minutes")
                         }
                         QQC2.Button {
-                            visible: !appDialog.temporary
+                            visible: !appDialog.temporary && !appDialog.standing
                             text: "1 hr"
                             onClicked: page.setMute(appDialog.appName, "1h", "Muted " + appDialog.appName + " for an hour")
                         }
                         QQC2.Button {
-                            visible: !appDialog.temporary
+                            visible: !appDialog.temporary && !appDialog.standing
                             text: "Today"
                             onClicked: page.setMute(appDialog.appName, page.untilMidnight(), "Muted " + appDialog.appName + " until midnight")
                         }
