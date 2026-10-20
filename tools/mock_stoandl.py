@@ -824,6 +824,8 @@ class MockStoandl(dbus.service.Object):
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s")
     def Repair(self, name):
+        if not name.strip():
+            return "error:Name the watch to re-pair"
         match = self._resolve(name)
         if match is None:
             return f"notfound:no known watch matching '{name}'"

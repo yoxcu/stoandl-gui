@@ -779,6 +779,9 @@ Kirigami.ScrollablePage {
                 stage = "check";
                 open();
                 StoandlClient.fetch(pairDialog, ["getConfig"], function (r) {
+                    // Cancelled while it was read: no pairing window behind a closed dialog.
+                    if (!pairDialog.opened || pairDialog.stage !== "check")
+                        return;
                     var classic = ((r && r.values) || {})["classic.discover"];
                     if (classic === "false")
                         pairDialog.stage = "classicOff";
@@ -806,6 +809,9 @@ Kirigami.ScrollablePage {
                 open();
                 var r = StoandlClient.repair(name);
                 if (r.ok) {
+                    // Repair already removed the bond, and the daemon no longer knows the watch: a retry is
+                    // a plain pairing window.
+                    repairName = "";
                     StoandlClient.startPairPoll();
                 } else {
                     statusKind = r.kind;

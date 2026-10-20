@@ -46,6 +46,8 @@ Kirigami.Dialog {
     // Opens at once; the facts fill in as their reads answer.
     function openFor() {
         view = "main";
+        // Not the last opening's watch: the actions that name it wait for this one's details.
+        details = ({});
         open();
         if (!StoandlClient.daemonUp)
             return;
@@ -233,6 +235,7 @@ Kirigami.Dialog {
             // Main actions.
             ActionRow {
                 text: "Rename watch…"; iconName: "document-edit-symbolic"
+                enabled: !!dialog.details.name
                 onClicked: renameDialog.openFor()
             }
             ActionRow {
@@ -253,6 +256,7 @@ Kirigami.Dialog {
             }
             ActionRow {
                 text: "Re-pair watch…"; iconName: "network-bluetooth-symbolic"
+                enabled: !!dialog.details.name
                 onClicked: {
                     var name = dialog.details.name || "";
                     dialog.close();
@@ -261,6 +265,7 @@ Kirigami.Dialog {
             }
             ActionRow {
                 text: "Forget watch"; iconName: "edit-delete-remove-symbolic"; danger: true
+                enabled: !!dialog.details.name
                 onClicked: {
                     var name = dialog.details.name || "";
                     dialog.close();
