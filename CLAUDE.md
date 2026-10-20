@@ -55,15 +55,19 @@ front-end used to ship alongside; it was retired on 2026-10-15.)
 - **Slow actions run, not block.** `StoandlClient.run(owner, ["name", args…], callback)` runs one
   `readSpec()` row without blocking, like a one-read `fetch()` but never dropped for a newer call: the
   syncs, the city search, `LaunchApp`, `UpdateFirmware`, `Ping` and `Transcribe` (their rows carry the
-  CLI's 120 s timeout; `afterRead()` starts the flash poll for UpdateFirmware on either path).
+  CLI's 120 s timeout; `afterRead()` starts the flash poll for UpdateFirmware). The syncs, the search,
+  LaunchApp and UpdateFirmware have no blocking `Q_INVOKABLE` at all, so nothing can freeze the UI on them.
   `callsInFlight` counts every asynchronous call; its `userCallsInFlight` part (fetch and run, what
   someone waits for) drives Main.qml's one thin indeterminate bar along the top (after 300 ms).
 - **Watch tasks.** Sideload, screenshot, watch logs and core dump only start on the daemon
   (`ok:started`, with an empty path the daemon picks the file under Pictures/Screenshots or
   Documents/stoandl). `StoandlClient` follows the ones it started through `TaskChanged` (a 2 s
-  `TaskStatus` poll is the fallback, ten minutes the ceiling), lists them in `tasks` and ends each with
+  `TaskStatus` poll is the fallback, ten minutes the ceiling; a poll still out from an earlier task of the
+  kind is dropped by a per-kind generation), lists them in `tasks` and ends each with
   `taskFinished(kind, result)`; Main.qml reports every result, whichever page started it: a screenshot
   opens `ScreenshotDialog` (Open / Open folder / Take another), logs and dumps toast with Open folder.
+  The Flatpak manifest shares both folders (`create`) so the sandboxed GUI can show and open the files;
+  where it still can't, the preview and `openSaved()` say so.
 - **D-Bus failures are worded once**, in `StoandlClient`'s `errorText()`: no reply → "stoandl didn't
   answer in time (it may still be working)", unknown method → "Your stoandl daemon is older than this
   app", an unowned name → "stoandl isn't running" or, while the daemon holds its private
@@ -71,7 +75,9 @@ front-end used to ship alongside; it was retired on 2026-10-15.)
   The raw error is logged. A status call carries it as `{kind: error, tail}`; a list read that failed
   is named in `readErrors` (read name → why), which `ReadErrorMessage` shows so a page doesn't pass it
   off as an empty list. `daemonState` (up / starting / flatpak / nosystemd / notinstalled / startlimit /
-  failed / stopped, the last four from `systemctl --user show stoandl`) words `DaemonPlaceholder`.
+  failed / stopped, the last four from `systemctl --user show stoandl`, asked again 1.5 s after a name
+  goes and every 10 s while the daemon stays down) words `DaemonPlaceholder`. The Flatpak manifest
+  grants `--talk-name` for both the public and the `.Instance` name (each is exact).
 - **Cached reads.** A `readSpec()` row marked `cached` is answered from `StoandlClient` for the daemon
   running now (through `read()` and `fetch()` alike): the config schema and `NotifStyleChoices`. All are
   dropped when the daemon goes or comes; the schema also on every `ConfigChanged` and when a
@@ -79,7 +85,8 @@ front-end used to ship alongside; it was retired on 2026-10-15.)
   when `notifSetVibePattern()` changes a custom vibration. A page open costs a GetConfig (and
   GetSyncStatus), not the schema. `StoandlClient.forwarding` (notification.forward, read on daemonUp and
   its ConfigChanged) and `mutedUntil` (the mute-all's end, `NotifMuteAllStatus`, read on daemonUp, after
-  `notifSetMuteAll()` and on `refreshMuteAll()`, dropping to 0 by itself) drive the Alerts banner and the
+  `notifSetMuteAll()`, with every `refreshWatches()` and when the app comes to the front; its end is
+  checked against the wall clock each minute, since a timer's clock stops in suspend) drive the Alerts banner and the
   Watch tab's chips; `restartPending` lists the keys `setConfig()` was told apply after a restart
   (cleared when the daemon goes or comes), and `busyOp` (pairing / firmware / language) the op poll that
   keeps "Restart now" waiting.
