@@ -34,17 +34,21 @@ Kirigami.ScrollablePage {
     supportsRefreshing: true
     onRefreshingChanged: if (refreshing) StoandlClient.refreshWatches()
 
-    // Sync now: weather, calendar and health, each one that is on, at once (they wait on the network and the
-    // watch, so without blocking); one toast when all have answered.
+    // Sync now: weather, calendar and health, each one that is on and set up, at once (they wait on the network
+    // and the watch, so without blocking); one toast when all have answered.
     property bool syncing: false
     readonly property var syncReads: ({ weather: "syncWeather", calendar: "syncCalendar", health: "syncHealth" })
     function syncNow() {
         page.syncing = true;
         StoandlClient.fetch(page, ["getSyncStatus"], function (rows) {
-            var services = rows.filter(function (r) { return r.enabled && page.syncReads[r.service] !== undefined; });
+            // A service that is on but has nothing to read (no weather place, no calendar) is left out: its
+            // sync would only answer that it isn't set up.
+            var on = rows.filter(function (r) { return r.enabled && page.syncReads[r.service] !== undefined; });
+            var services = on.filter(function (r) { return r.available; });
             if (services.length === 0) {
                 page.syncing = false;
-                page.toast("Weather, calendar and health are all off (Settings)");
+                page.toast(on.length > 0 ? "Nothing to sync yet: add a weather place or a calendar (Settings)"
+                                         : "Weather, calendar and health are all off (Settings)");
                 return;
             }
             var answered = 0, failed = [];
