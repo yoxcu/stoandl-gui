@@ -19,8 +19,16 @@ finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
-  # The GUI is a D-Bus client of the stoandl daemon on the session bus.
+  # The GUI is a D-Bus client of the stoandl daemon on the session bus. Each name is exact (a
+  # `de.yoxcu.stoandl.*` pattern doesn't cover the bare name everywhere): the daemon holds the private
+  # .Instance name while it starts, which is how the GUI says "starting" rather than "not running".
   - --talk-name=de.yoxcu.stoandl
+  - --talk-name=de.yoxcu.stoandl.Instance
+  # The daemon (on the host) saves screenshots, watch logs and core dumps here and hands back the path;
+  # the GUI previews and opens them. The same paths inside the sandbox; `create` so a first screenshot
+  # needs no restart of the GUI (a folder that doesn't exist at start isn't mounted).
+  - --filesystem=xdg-pictures/Screenshots:create
+  - --filesystem=xdg-documents/stoandl:create
   # NOTE: backup / restore / support-bundle shell out to the co-located `stoandl` CLI,
   # and "Start daemon" runs `systemctl --user` — neither works from inside the sandbox.
   # Those degrade gracefully; wiring them via `flatpak-spawn --host` (needs

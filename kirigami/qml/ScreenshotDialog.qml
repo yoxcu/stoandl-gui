@@ -33,13 +33,13 @@ Kirigami.Dialog {
             text: "Open"
             icon.name: "document-open-symbolic"
             enabled: dialog.path !== ""
-            onTriggered: StoandlClient.openFile(dialog.path)
+            onTriggered: applicationWindow().openSaved(dialog.path, false)
         },
         Kirigami.Action {
             text: "Open folder"
             icon.name: "folder-open-symbolic"
             enabled: dialog.path !== ""
-            onTriggered: StoandlClient.openFolderOf(dialog.path)
+            onTriggered: applicationWindow().openSaved(dialog.path, true)
         },
         Kirigami.Action {
             text: "Take another"
@@ -72,6 +72,16 @@ Kirigami.Dialog {
                 cache: false
                 fillMode: Image.PreserveAspectFit
                 opacity: dialog.taking ? 0.4 : 1
+            }
+            // A file this GUI can't read (a Flatpak without the folder shared): say so in place of the picture.
+            QQC2.Label {
+                anchors.fill: shot
+                visible: shot.status === Image.Error && !dialog.taking
+                text: "Saved, but this app can't show it"
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+                wrapMode: Text.WordWrap
+                opacity: 0.7
             }
             QQC2.BusyIndicator {
                 anchors.centerIn: shot

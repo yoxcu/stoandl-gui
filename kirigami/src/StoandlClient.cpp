@@ -1203,14 +1203,16 @@ QVariantMap StoandlClient::gatherLogs()
     return startTask(QStringLiteral("logs"), QStringLiteral("GatherLogs"), {QString()});
 }
 
-void StoandlClient::openFile(const QString &path)
+// A Flatpak's portal opens what the sandbox can read, so a path it can't see is refused before asking.
+bool StoandlClient::openFile(const QString &path)
 {
-    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    return QFileInfo::exists(path) && QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
-void StoandlClient::openFolderOf(const QString &path)
+bool StoandlClient::openFolderOf(const QString &path)
 {
-    QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+    const QString dir = QFileInfo(path).absolutePath();
+    return QFileInfo::exists(dir) && QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
 // --- typed wrappers: System / reset ----------------------------------------

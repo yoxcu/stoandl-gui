@@ -208,6 +208,12 @@ Kirigami.ApplicationWindow {
                                                               : d.toLocaleString(Qt.locale(), "ddd d MMM HH:mm");
     }
 
+    // Open a file the daemon saved (or its folder), saying so when this GUI can't reach it.
+    function openSaved(path, folder) {
+        if (!(folder ? StoandlClient.openFolderOf(path) : StoandlClient.openFile(path)))
+            root.showPassiveNotification("Could not open " + path + " from this app", "long");
+    }
+
     function reportTask(kind, r) {
         var why = r.tail || r.kind;
         if (StoandlClient.smokeMs > 0)
@@ -228,7 +234,7 @@ Kirigami.ApplicationWindow {
             }
         } else if (r.ok) {
             root.showPassiveNotification((kind === "logs" ? "Watch logs saved: " : "Core dump saved: ") + r.path, "long",
-                                         "Open folder", function () { StoandlClient.openFolderOf(r.path); });
+                                         "Open folder", function () { root.openSaved(r.path, true); });
         } else {
             root.showPassiveNotification(r.kind === "none" ? "No core dump available"
                                          : (kind === "logs" ? "Watch logs: " : "Core dump: ") + why, "long");

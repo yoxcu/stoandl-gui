@@ -348,9 +348,10 @@ public:
     // taskFinished(kind, …): screenshot {kind, path, width, height}, logs {kind, path}.
     Q_INVOKABLE QVariantMap  takeScreenshot();
     Q_INVOKABLE QVariantMap  gatherLogs();
-    // Open a daemon-written file, or the folder holding it, in the desktop's app for it.
-    Q_INVOKABLE void         openFile(const QString &path);
-    Q_INVOKABLE void         openFolderOf(const QString &path);
+    // Open a daemon-written file, or the folder holding it, in the desktop's app for it. False when this GUI
+    // can't reach it (not there, outside a Flatpak's shared folders) or nothing opened it.
+    Q_INVOKABLE bool         openFile(const QString &path);
+    Q_INVOKABLE bool         openFolderOf(const QString &path);
 
     // Reset (fire-and-forget; ok: = queued, not done).
     Q_INVOKABLE QVariantMap  resetIntoRecovery();        // ResetIntoRecovery()
