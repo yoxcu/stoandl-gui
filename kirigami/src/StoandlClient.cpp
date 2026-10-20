@@ -575,7 +575,6 @@ QString StoandlClient::appIcon(const QString &uuid)
     return url;
 }
 
-QVariantMap StoandlClient::launchApp(const QString &id) { return read(QStringLiteral("launchApp"), {id}).toMap(); }
 QVariantMap StoandlClient::removeApp(const QString &id) { return statusMap(callStatus(QStringLiteral("RemoveApp"), {id})); }
 QVariantMap StoandlClient::setAppOrder(const QString &id, int order) { return statusMap(callStatus(QStringLiteral("SetAppOrder"), {id, order})); }
 QVariantMap StoandlClient::restoreSystemAppOrder() { return statusMap(callStatus(QStringLiteral("RestoreSystemAppOrder"))); }
@@ -729,8 +728,6 @@ void StoandlClient::refreshExtensions()
 
 // --- typed wrappers: Sync --------------------------------------------------
 
-QVariantMap StoandlClient::syncWeather()  { return read(QStringLiteral("syncWeather")).toMap(); }
-
 namespace {
 // `ok:` carries one `name\tlat\tlon\tregion\tcountry` record per line, so the tail is split by line here
 // rather than by statusMap's single-record `fields`.
@@ -758,17 +755,10 @@ QVariant placesMap(const Status &st)
 }
 } // namespace
 
-QVariantMap StoandlClient::searchWeatherPlace(const QString &query)
-{
-    return read(QStringLiteral("searchWeatherPlace"), {query}).toMap();
-}
-
 QVariantMap StoandlClient::addWeatherLocation(const QString &name, double lat, double lon)
 {
     return statusMap(callStatus(QStringLiteral("AddWeatherLocation"), {name, lat, lon}));
 }
-QVariantMap StoandlClient::syncCalendar() { return read(QStringLiteral("syncCalendar")).toMap(); }
-QVariantMap StoandlClient::syncHealth()   { return read(QStringLiteral("syncHealth")).toMap(); }
 
 namespace {
 QVariant healthProfileMap(const QVariantList &rows)
@@ -980,11 +970,6 @@ void StoandlClient::clearFirmwareInfo(bool forgetKey)
         m_fwInfoKey.clear();
     }
     Q_EMIT firmwareInfoChanged();
-}
-
-QVariantMap StoandlClient::updateFirmware()
-{
-    return read(QStringLiteral("updateFirmware")).toMap();   // afterRead() starts the flash poll
 }
 
 QVariantMap StoandlClient::sideloadFirmware(const QUrl &fileUrl)

@@ -149,8 +149,11 @@ public:
     Q_INVOKABLE void fetch(QObject *owner, const QVariantList &reads, const QJSValue &callback);
     // An action without blocking, for the calls that can take seconds (a sync, a search, a launch, a
     // firmware update): `call` is ["name", args...] like one fetch() read, from the same readSpec() table,
-    // and `callback` gets what the synchronous Q_INVOKABLE of that name returns. Unlike fetch(), every
-    // run() is answered (nothing is dropped for a newer one), unless `owner` died first.
+    // and `callback` gets the answer as that table maps it. Unlike fetch(), every run() is answered (nothing
+    // is dropped for a newer one), unless `owner` died first. These have no blocking wrapper, only run():
+    // launchApp(id), syncWeather(), syncCalendar(), syncHealth() -> {kind,ok,tail};
+    // searchWeatherPlace(query) -> {kind,ok,tail,places:[{name,lat,lon,region,country}]};
+    // updateFirmware() -> {kind,ok,tail}, and on ok the firmware poll starts.
     Q_INVOKABLE void run(QObject *owner, const QVariantList &call, const QJSValue &callback);
 
     // --- typed wrappers: Watch screen --------------------------------------
@@ -192,7 +195,6 @@ public:
     // appIconChanged. A "none" is trusted for a minute (the daemon can fetch a .pbw after the
     // LockerChanged that listed it). The QML falls back to a generic icon on "".
     Q_INVOKABLE QString      appIcon(const QString &uuid);
-    Q_INVOKABLE QVariantMap  launchApp(const QString &id);   // LaunchApp(s)
     Q_INVOKABLE QVariantMap  removeApp(const QString &id);   // RemoveApp(s) (system refused daemon-side)
     Q_INVOKABLE QVariantMap  setAppOrder(const QString &id, int order);  // SetAppOrder(s,i)
     Q_INVOKABLE QVariantMap  restoreSystemAppOrder();                    // RestoreSystemAppOrder()
@@ -237,11 +239,7 @@ public:
     Q_INVOKABLE QVariantMap  extSetConfig(const QString &name, const QVariantMap &values); // ExtSetConfig(s, json)
 
     // --- typed wrappers: Sync services (Settings screen) -------------------
-    Q_INVOKABLE QVariantMap  syncWeather();              // SyncWeather() ; error: if disabled in config
-    Q_INVOKABLE QVariantMap  searchWeatherPlace(const QString &query); // SearchWeatherPlace(s) -> {kind,ok,tail,places:[{name,lat,lon,region,country}]}
     Q_INVOKABLE QVariantMap  addWeatherLocation(const QString &name, double lat, double lon); // AddWeatherLocation(s,d,d)
-    Q_INVOKABLE QVariantMap  syncCalendar();             // SyncCalendar()
-    Q_INVOKABLE QVariantMap  syncHealth();               // SyncHealth()
     Q_INVOKABLE QVariantMap  healthProfile();            // GetHealthProfile() -> {key: value, ..., _allowed: {key: [values]}}
     Q_INVOKABLE QVariantMap  setHealthProfile(const QString &key, const QString &value); // SetHealthProfile(s,s)
     Q_INVOKABLE QVariantList listCalendars();            // -> [{id,name,enabled,accountId}]
@@ -333,8 +331,7 @@ public:
     // An explicit "check now" (Sync now, Check for updates): re-asks the daemon for the last key even
     // when an answer is cached, through CheckFirmwareForce (past the daemon's own cache too).
     Q_INVOKABLE void         forceFirmwareCheck();
-    // Firmware flash (async -> firmwareStatus poll, 0.8 s, 600 s ceiling).
-    Q_INVOKABLE QVariantMap  updateFirmware();           // UpdateFirmware() ; on ok starts the firmware poll
+    // Firmware flash (async -> firmwareStatus poll, 0.8 s, 600 s ceiling); an update is run(["updateFirmware"]).
     Q_INVOKABLE QVariantMap  sideloadFirmware(const QUrl &fileUrl); // SideloadFirmware(.pbz abs path) ; starts poll
     Q_INVOKABLE void         stopFirmwarePoll();
 
