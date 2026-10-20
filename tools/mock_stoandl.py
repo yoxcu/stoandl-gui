@@ -2298,7 +2298,9 @@ class MockStoandl(dbus.service.Object):
     # simulated over 6 s. Each entry: id, name, program, size MB, recommended, note, kind (stt|tts).
     MOCK_SPEECH_MODELS = [
         ("parakeet-v3", "Parakeet v3", "parakeet-cli", 669, "true", "25 European languages, detects the language; best accuracy for its speed (phones, older PCs)", "stt"),
+        ("canary-180m", "Canary 180M flash", "transcribe-cli", 218, "false", "English, German, Spanish, French: recommended for these, 3-4x faster than Parakeet on a phone; set voice.language, it doesn't detect it. NVIDIA, CC-BY-4.0", "stt"),
         ("parakeet-v3-small", "Parakeet v3 (smaller)", "parakeet-cli", 356, "false", "the same model compressed further: less memory, slightly less accurate", "stt"),
+        ("parakeet-v2-en", "Parakeet v2 (English only)", "parakeet-cli", 659, "false", "English only, so it never mistakes a short clip for another language; community conversion of NVIDIA's model", "stt"),
         ("whisper-small", "Whisper small", "whisper-cli", 264, "false", "99 languages, set voice.language; slower and less accurate than Parakeet", "stt"),
         ("whisper-base", "Whisper base", "whisper-cli", 82, "false", "fast and small, weak for languages other than English", "stt"),
         ("whisper-turbo", "Whisper large-v3-turbo", "whisper-cli", 874, "false", "most accurate, for fast desktops only", "stt"),
