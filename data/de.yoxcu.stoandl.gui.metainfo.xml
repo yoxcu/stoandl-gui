@@ -48,6 +48,11 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="0.4.0" date="2026-10-20">
+      <description>
+        <p>Kirigami only: settings pages from the daemon's schema with help, speech models and text to speech, extensions with their settings, watch tasks, battery insights and the follow-the-wrist switch.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-07-02">
       <description>
         <p>Initial packaged release with a desktop launcher entry and application icon.</p>
