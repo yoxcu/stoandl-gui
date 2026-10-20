@@ -1422,6 +1422,7 @@ QVariantMap StoandlClient::startTask(const QString &kind, const QString &method,
     if (s.ok() && s.tail == QLatin1String("started")) {
         m_tasks.insert(kind, QString());   // TaskChanged's running:<what> names it
         m_taskAge[kind].start();
+        ++m_taskGen[kind];   // a poll still out for the previous task of this kind answers about that one
         if (!m_taskTimer->isActive())
             m_taskTimer->start();
         Q_EMIT tasksChanged();
@@ -1473,8 +1474,11 @@ void StoandlClient::pollTasks()
         if (m_taskPolling.contains(kind))   // the last poll hasn't answered yet (a busy daemon)
             continue;
         m_taskPolling.insert(kind);
-        readAsync(QStringLiteral("taskStatus"), {kind}, nullptr, [this, kind](const QVariant &v) {
+        const quint64 gen = m_taskGen.value(kind);
+        readAsync(QStringLiteral("taskStatus"), {kind}, nullptr, [this, kind, gen](const QVariant &v) {
             m_taskPolling.remove(kind);
+            if (gen != m_taskGen.value(kind))   // asked before this kind's current task started
+                return;
             // A D-Bus failure is no answer about the task, unless the daemon is gone (and the task with it).
             if (m_readErrors.contains(QStringLiteral("taskStatus"))) {
                 if (!m_daemonUp)
