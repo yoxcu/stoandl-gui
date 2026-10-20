@@ -506,7 +506,8 @@ ColumnLayout {
                                 description: cfgLoader.row.description
                                 help: cfgLoader.field.help || ""
                                 locked: !cfgLoader.row.enabled
-                                value: cfgLoader.value
+                                // Empty: a runtime-option combo (speech model, voice) with none chosen.
+                                value: cfgLoader.value || "None chosen"
                                 onActivated: {
                                     var key = cfgLoader.key;
                                     var options = cfgLoader.field.options || [];

@@ -2331,7 +2331,7 @@ class MockStoandl(dbus.service.Object):
             # Off or Local model. GetConfig spells a combo by its label, so the config holds the name.
             takes_over = m[6] == "tts" or self.config.get(backend) in ("Off", "Local model")
             if takes_over:
-                self.config[key] = m[1]
+                self.config[key] = m[1].replace(",", "")
                 self.ConfigChanged(key)
             if takes_over and self.config.get(backend) == "Off":
                 self.config[backend] = "Local model"
@@ -2339,12 +2339,14 @@ class MockStoandl(dbus.service.Object):
 
     def _voice_installed_changed(self, kind):
         key, _, none = self.VOICE_KIND_KEYS[kind]
-        names = [m[1] for m in self.MOCK_SPEECH_MODELS
+        # Option labels lose their commas (the options column is a CSV), as ConfigChoice's do.
+        names = [m[1].replace(",", "") for m in self.MOCK_SPEECH_MODELS
                  if m[6] == kind and m[0] in getattr(self, "voice_installed", [])]
         field = next(c for c in self.config_schema if c["key"] == key)
         field["options"] = ",".join(names) or none
+        # GetConfig reports none chosen ("") while installed models don't include the configured one.
         if self.config.get(key) not in names:
-            self.config[key] = names[0] if names else none
+            self.config[key] = "" if names else none
 
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def VoiceStatus(self):
@@ -2354,7 +2356,7 @@ class MockStoandl(dbus.service.Object):
             return "off:voice.backend is off"
         if b == "Local model":
             m = self.config.get("voice.local_model", "")
-            return f"ready:local\t{m}" if m != "No model installed" else "unavailable:no model chosen (voice.local_model)"
+            return f"ready:local\t{m}" if m not in ("", "No model installed") else "unavailable:no model chosen (voice.local_model)"
         return f"ready:{b.lower()}"
 
     @dbus.service.method(IFACE, in_signature="", out_signature="as")
@@ -2420,7 +2422,7 @@ class MockStoandl(dbus.service.Object):
             return "off:tts.backend is off"
         if b == "Local model":
             v = self.config.get("tts.local_voice", "")
-            return f"ready:local\t{v}" if v != "No voice installed" else "unavailable:no voice installed (stoandl voice download)"
+            return f"ready:local\t{v}" if v not in ("", "No voice installed") else "unavailable:no voice installed (stoandl voice download)"
         if b == "Custom command":
             c = self.config.get("tts.command", "")
             return f"ready:command\t{c}" if c else "unavailable:tts.command is empty"
