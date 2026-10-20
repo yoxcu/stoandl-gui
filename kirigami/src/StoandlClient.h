@@ -82,8 +82,9 @@ class StoandlClient : public QObject
     // order they were set. Cleared when the daemon goes or comes (its restart applied them).
     Q_PROPERTY(QStringList restartPending READ restartPending NOTIFY restartPendingChanged)
     // When the temporary mute of every app (NotifSetMuteAll) ends, epoch seconds; 0 while nothing is muted
-    // that way. Read when the daemon comes up, after notifSetMuteAll() and on refreshMuteAll(); drops to 0
-    // by itself when the time comes (the daemon sends no signal for it).
+    // that way. Read when the daemon comes up, after notifSetMuteAll(), with every refreshWatches() (the
+    // 20 s watch tick) and when the app comes back to the front; drops to 0 by itself when the time comes,
+    // checked against the wall clock (the daemon sends no signal for it).
     Q_PROPERTY(qint64 mutedUntil READ mutedUntil NOTIFY mutedUntilChanged)
     // A long operation this GUI follows that the daemon won't restart under: "pairing" (a Pair/Repair
     // window), "firmware" (a flash) or "language" (a language pack install); "" when none runs.
@@ -578,7 +579,7 @@ private:
     QStringList m_restartPending;
     QString     m_daemonVersion;
     qint64      m_mutedUntil = 0;
-    QTimer     *m_muteEndTimer = nullptr;   // drops mutedUntil to 0 when it passes
+    QTimer     *m_muteEndTimer = nullptr;   // re-checks mutedUntil against the clock until it passes
     QString     m_lastBusyOp;
     QVariantMap m_readErrors;
     // The cached reads' answers (readSpec's `cached`: the config schema, the notification styles) for the

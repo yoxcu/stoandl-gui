@@ -5,6 +5,7 @@
 #include <QUrl>
 #include <QDesktopServices>
 #include <QDateTime>
+#include <QGuiApplication>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -26,7 +27,6 @@
 #include <memory>
 
 #include <algorithm>
-#include <limits>
 
 namespace {
 // Service contract — the daemon's docs/dbus-interface.md §"Service summary".
@@ -76,6 +76,9 @@ constexpr int FW_TIMEOUT_MS  = 600000;
 // Watch tasks (sideload, screenshot, logs, core dump): TaskChanged reports them; this poll of TaskStatus is
 // the missed-signal fallback, and a task still running after the ceiling is reported as timed out.
 constexpr int TASK_POLL_MS = 2000;
+// mutedUntil's end is checked against the wall clock at least this often: a timer's clock stops while the
+// device sleeps, so one long timer would show a mute that ended during a suspend for as long as it slept.
+constexpr qint64 MUTE_CHECK_MAX_MS = 60000;
 constexpr qint64 TASK_TIMEOUT_MS = 600000;
 
 // Language install poll: 3 s watchdog cadence, 180 s ceiling. The LanguageProgress signal now
@@ -252,7 +255,15 @@ StoandlClient::StoandlClient(QObject *parent)
 
     m_muteEndTimer = new QTimer(this);
     m_muteEndTimer->setSingleShot(true);
-    connect(m_muteEndTimer, &QTimer::timeout, this, [this] { setMutedUntil(0); });
+    connect(m_muteEndTimer, &QTimer::timeout, this, [this] { setMutedUntil(m_mutedUntil); });
+    // Back in front: a mute that ended meanwhile goes, and one set elsewhere (the CLI) shows. No signal
+    // carries the global mute, so it is read again (also on every watch-list refresh).
+    if (qGuiApp) {
+        connect(qGuiApp, &QGuiApplication::applicationStateChanged, this, [this](Qt::ApplicationState st) {
+            if (st == Qt::ApplicationActive)
+                refreshMuteAll();
+        });
+    }
 
     m_taskTimer = new QTimer(this);
     m_taskTimer->setInterval(TASK_POLL_MS);
@@ -1973,8 +1984,8 @@ void StoandlClient::setMutedUntil(qint64 epochSeconds)
     const qint64 left = epochSeconds - QDateTime::currentSecsSinceEpoch();
     if (left <= 0)
         epochSeconds = 0;
-    if (epochSeconds > 0)
-        m_muteEndTimer->start(int(std::min<qint64>(left * 1000, std::numeric_limits<int>::max())));
+    if (epochSeconds > 0)   // re-checked in steps (MUTE_CHECK_MAX_MS), not one timer to the end
+        m_muteEndTimer->start(int(std::min<qint64>(left * 1000, MUTE_CHECK_MAX_MS)));
     else
         m_muteEndTimer->stop();
     if (epochSeconds != m_mutedUntil) {
@@ -2268,6 +2279,7 @@ void StoandlClient::refreshWatches()
         if (pause != m_linkPause) { m_linkPause = pause; Q_EMIT linkPauseChanged(); }
         Q_EMIT watchesChanged(round->rows);
     };
+    refreshMuteAll();   // the Watch tab's "Muted until" chip, on the same cadence (no signal carries it)
     readAsync(QStringLiteral("bluetoothStatus"), {}, nullptr, [round, apply](const QVariant &v) { round->bt = v.toMap(); apply(); });
     readAsync(QStringLiteral("linkPause"), {}, nullptr, [round, apply](const QVariant &v) { round->pause = v.toMap(); apply(); });
     readAsync(QStringLiteral("listWatches"), {}, nullptr, [round, apply](const QVariant &v) { round->rows = v.toList(); apply(); });
