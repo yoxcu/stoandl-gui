@@ -13,6 +13,9 @@ It speaks the daemon's `de.yoxcu.stoandl.Control` D-Bus contract (session bus, p
 no code is shared with it. Full contract: the daemon repo's `docs/dbus-interface.md`
 ([`docs/dbus-interface.md`](docs/dbus-interface.md) links to it).
 
+The Apps screen browses the public Rebble store (watchfaces and watch apps filtered to
+the connected watch) and installs through the daemon, with live download progress.
+
 ## Layout
 
 ```
@@ -30,7 +33,7 @@ tools/       mock daemon + the run-with-mock launcher
   <tr>
     <td align="center" width="33%"><img src="docs/screenshots/watch.png" width="230" alt="Watch tab"><br><sub><b>Watch</b> — pairing, firmware, battery</sub></td>
     <td align="center" width="33%"><img src="docs/screenshots/health.png" width="230" alt="Health tab"><br><sub><b>Health</b> — steps, sleep, heart rate</sub></td>
-    <td align="center" width="33%"><img src="docs/screenshots/apps.png" width="230" alt="Apps tab"><br><sub><b>Apps</b> — faces, apps, extensions</sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/apps.png" width="230" alt="Apps tab"><br><sub><b>Apps</b> — faces, apps, plugins, store</sub></td>
   </tr>
   <tr>
     <td align="center" width="33%"><img src="docs/screenshots/alerts.png" width="230" alt="Alerts tab"><br><sub><b>Alerts</b> — per-app mute, filters</sub></td>

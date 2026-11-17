@@ -11,8 +11,27 @@ Kirigami.ScrollablePage {
     objectName: "apps"
     title: "Apps & Faces"
 
-    // Which segment is showing: "faces" | "apps" | "ext".
+    // Which segment is showing: "faces" | "apps" | "ext" | "store".
     property string segment: "faces"
+
+    // --- Store segment ----------------------------------------------------
+    // The public Rebble store. Browsing is opt-in egress by use: nothing is fetched until the
+    // segment is opened or a search is typed. Installs run asynchronously in the daemon.
+    property string storeQuery: ""
+    property string storeType: "watchface"   // "watchface" | "watchapp"
+    property var storeHits: []
+    property int storeTotal: 0
+    property int storePages: 0
+    property int storePage: 0
+    property string storePlatform: ""
+    property bool storeLoading: false
+    property bool storeLoaded: false
+    property string storeError: ""
+    property bool storeBusy: false
+    property string storeBusyTitle: ""
+    property int storePercent: -1
+    readonly property int storePageSize: 20
+    readonly property bool storeSegment: segment === "store"
 
     // Latest ListApps snapshot (parsed + flag-decoded in C++), split by isFace.
     property var apps: []
@@ -61,6 +80,75 @@ Kirigami.ScrollablePage {
     // Pull to refresh re-reads the locker, the extensions and the plugins (it ends with the locker's answer).
     supportsRefreshing: true
     onRefreshingChanged: if (refreshing) page.reload()
+
+    // --- Store actions -----------------------------------------------------
+    // Load on first open only; afterwards the list is refreshed explicitly (and after installs).
+    function ensureStoreLoaded() {
+        if (!StoandlClient.daemonUp) return;
+        if (page.storeLoaded || page.storeLoading) return;
+        page.runStoreSearch(true);
+    }
+
+    function runStoreSearch(reset) {
+        if (!StoandlClient.daemonUp) return;
+        storeQueryTimer.stop();
+        if (page.storeLoading) return; // a fetch is already in flight
+        if (reset) {
+            page.storePage = 0;
+            page.storeHits = [];
+            page.storeTotal = 0;
+            page.storePages = 0;
+        }
+        page.storeError = "";
+        page.storeLoading = true;
+        page.fetchStorePage();
+    }
+
+    function fetchStorePage() {
+        const pageNo = page.storePage;
+        // Network daemon-side on a cold cache: run() keeps the UI responsive.
+        StoandlClient.run(page, ["searchStore", page.storeType, page.storeQuery.trim(), "",
+                                 page.storePageSize, pageNo * page.storePageSize], function (r) {
+            if (pageNo !== page.storePage) return; // a newer search started meanwhile
+            page.storeLoading = false;
+            if (!r.ok) {
+                page.storeError = r.notready ? "Connect a watch to browse the store for its model."
+                                             : (r.tail || r.kind);
+                return;
+            }
+            const hits = r.hits || [];
+            page.storeHits = pageNo === 0 ? hits : page.storeHits.concat(hits);
+            page.storeTotal = r.total || 0;
+            page.storePages = r.pages || 0;
+            page.storePlatform = r.platform || "";
+            page.storeLoaded = true;
+        });
+    }
+
+    function loadMoreStore() {
+        if (page.storeLoading || page.storePage + 1 >= page.storePages) return;
+        page.storePage += 1;
+        page.storeError = "";
+        page.storeLoading = true;
+        page.fetchStorePage();
+    }
+
+    function installStoreApp(app) {
+        if (page.storeBusy) return;
+        const r = StoandlClient.installStoreApp(app.id);
+        if (!r.ok) {
+            page.toast("Install failed: " + (r.tail || r.kind));
+            return;
+        }
+        page.storeBusy = true;
+        page.storeBusyTitle = app.title;
+        page.storePercent = -1;
+        page.toast("Installing " + app.title + "…");
+    }
+
+    function openStoreDetails(app) {
+        storeDetailDialog.openFor(app);
+    }
 
     // --- Permissions ---------------------------------------------------------
     function answer(group, allow) {
@@ -178,6 +266,29 @@ Kirigami.ScrollablePage {
         function onExtensionsChanged(rows) { page.extensions = rows; }
         function onPluginsChanged(rows) { page.plugins = rows; }
         function onPermissionRequestsChanged(rows) { page.permRequests = rows; }
+        function onStoreStatus(kind, percent, detail) {
+            if (kind === "downloading") {
+                page.storeBusy = true;
+                page.storePercent = percent;
+            } else if (kind === "installing") {
+                page.storeBusy = true;
+                page.storePercent = -1;
+            } else if (kind === "success") {
+                page.storeBusy = false;
+                page.storePercent = -1;
+                page.toast((detail || "App") + " installed");
+                StoandlClient.refreshApps(); // the locker gained an app
+            } else if (kind === "failed") {
+                page.storeBusy = false;
+                page.storePercent = -1;
+                page.toast("Install failed: " + (detail || "unknown error"));
+            } else if (kind === "disconnected" || kind === "timeout") {
+                page.storeBusy = false;
+                page.storePercent = -1;
+                page.toast(kind === "timeout" ? "Install timed out"
+                                              : "Install lost the watch connection");
+            }
+        }
     }
     Connections {
         target: StoandlClient
@@ -253,6 +364,7 @@ Kirigami.ScrollablePage {
         });
     }
     function smokePerms() {
+        page.smokeStore();
         page.smokeCrash();
         console.log("stoandl-smoke: perm banners " + page.permGroups.map(function (g) {
             return g.appName + (g.running ? "" : "(closed)") }).join(", ") + " · waiting apps " + page.permWaitingApps.length);
@@ -262,6 +374,35 @@ Kirigami.ScrollablePage {
         console.log("stoandl-smoke: perms " + permDialog.rows.map(function (r) { return r.key + "=" + r.status }).join(", ")
                     + " · unseen waiting " + permDialog.unseenWaiting);
         permDialog.close();
+    }
+    // The store (headless): open the segment, search, open a detail, then install the first hit.
+    // The mock's install walker emits StoreProgress during the same smoke run.
+    function smokeStore() {
+        if (!StoandlClient.daemonUp) return;
+        page.segment = "store";
+        page.storeQuery = "tic";
+        page.storeLoading = true;
+        StoandlClient.run(page, ["searchStore", "watchface", "tic", "", page.storePageSize, 0], function (r) {
+            page.storeLoading = false;
+            if (!r.ok) {
+                console.log("stoandl-smoke: store search failed: " + (r.tail || r.kind));
+                return;
+            }
+            page.storeHits = r.hits || [];
+            page.storeTotal = r.total || 0;
+            page.storePages = r.pages || 0;
+            page.storePlatform = r.platform || "";
+            page.storeLoaded = true;
+            console.log("stoandl-smoke: store search " + page.storeHits.length + " of " + page.storeTotal
+                        + " on " + page.storePlatform + " · first compatible="
+                        + (page.storeHits.length > 0 ? page.storeHits[0].compatible : "none"));
+            if (page.storeHits.length === 0) return;
+            StoandlClient.run(page, ["storeDetails", page.storeHits[0].id], function (d) {
+                console.log("stoandl-smoke: storeDetails ok=" + d.ok + " title=" + (d.title || "")
+                            + " size=" + (d.sizeBytes || 0) + " platforms=" + (d.platforms || []).length);
+                page.installStoreApp(page.storeHits[0]);
+            });
+        });
     }
 
     // Segment-aware primary action (§4-0): install .pbw for faces/apps,
@@ -455,9 +596,9 @@ Kirigami.ScrollablePage {
         }
     }
 
-    // Pinned segment switcher (Faces / Apps / Plugins) — stays at the top while the list scrolls. The Plugins
-    // segment lists the plugins (built-in, from installed apps) and the extensions (host-side companions,
-    // which can serve plugins too).
+    // Pinned segment switcher (Faces / Apps / Plugins / Store) — stays at the top while the list scrolls.
+    // The Plugins segment lists the plugins (built-in, from installed apps) and the extensions (host-side
+    // companions, which can serve plugins too). Store browses the public Rebble app store.
     header: QQC2.ToolBar {
         visible: StoandlClient.daemonUp
         height: visible ? implicitHeight : 0
@@ -484,6 +625,16 @@ Kirigami.ScrollablePage {
                 checkable: true; autoExclusive: true
                 checked: page.segment === "ext"
                 onClicked: page.segment = "ext"
+            }
+            QQC2.Button {
+                Layout.fillWidth: true
+                text: "Store"
+                checkable: true; autoExclusive: true
+                checked: page.segment === "store"
+                onClicked: {
+                    page.segment = "store";
+                    page.ensureStoreLoaded();
+                }
             }
         }
     }
@@ -751,6 +902,348 @@ Kirigami.ScrollablePage {
             visible: StoandlClient.daemonUp && page.extSegment && page.extensions.length > 0
             text: "Extensions are host-side companions that drive watch notifications with quick replies and actions, and can serve plugin data to watchfaces and watchapps."
         }
+
+        // --- Store: search controls ----------------------------------------
+        FormCard.FormCard {
+            visible: StoandlClient.daemonUp && page.storeSegment
+            Layout.topMargin: Kirigami.Units.largeSpacing
+
+            FormCard.AbstractFormDelegate {
+                background: null
+                hoverEnabled: false
+
+                contentItem: ColumnLayout {
+                    spacing: Kirigami.Units.smallSpacing
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+
+                        QQC2.TextField {
+                            id: storeSearchField
+                            Layout.fillWidth: true
+                            placeholderText: "Search watchfaces and apps"
+                            onTextChanged: {
+                                page.storeQuery = text;
+                                storeQueryTimer.restart();
+                            }
+                            onAccepted: page.runStoreSearch(true)
+                        }
+
+                        QQC2.ComboBox {
+                            id: storeTypeBox
+                            model: ["Watchfaces", "Watch apps"]
+                            currentIndex: page.storeType === "watchapp" ? 1 : 0
+                            onActivated: {
+                                page.storeType = index === 0 ? "watchface" : "watchapp";
+                                page.runStoreSearch(true);
+                            }
+                        }
+                    }
+
+                    QQC2.Label {
+                        visible: page.storePlatform !== ""
+                        text: "Showing apps for " + page.storePlatform
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.7
+                    }
+                }
+            }
+        }
+
+        // --- Store: error --------------------------------------------------
+        Kirigami.InlineMessage {
+            visible: StoandlClient.daemonUp && page.storeSegment && page.storeError !== ""
+            Layout.fillWidth: true
+            Layout.margins: Kirigami.Units.smallSpacing
+            type: Kirigami.MessageType.Warning
+            text: page.storeError
+            actions: [
+                Kirigami.Action {
+                    text: "Retry"
+                    icon.name: "view-refresh-symbolic"
+                    onTriggered: page.runStoreSearch(true)
+                }
+            ]
+        }
+
+        // --- Store: one install at a time, with the daemon's progress ------
+        FormCard.FormCard {
+            visible: StoandlClient.daemonUp && page.storeSegment && page.storeBusy
+            FormCard.AbstractFormDelegate {
+                background: null
+                hoverEnabled: false
+                contentItem: ColumnLayout {
+                    spacing: Kirigami.Units.smallSpacing
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                        text: page.storePercent < 0
+                              ? "Installing " + page.storeBusyTitle + " — sending to the watch…"
+                              : "Downloading " + page.storeBusyTitle + " — " + page.storePercent + "%"
+                    }
+                    QQC2.ProgressBar {
+                        Layout.fillWidth: true
+                        from: 0
+                        to: 100
+                        value: page.storePercent < 0 ? 0 : page.storePercent
+                        indeterminate: page.storePercent < 0
+                    }
+                }
+            }
+        }
+
+        // --- Store: loading -------------------------------------------------
+        Item {
+            visible: StoandlClient.daemonUp && page.storeSegment && page.storeLoading
+            Layout.fillWidth: true
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 4
+            QQC2.BusyIndicator {
+                anchors.centerIn: parent
+                running: page.storeLoading
+            }
+        }
+
+        // --- Store: empty state --------------------------------------------
+        Kirigami.PlaceholderMessage {
+            visible: StoandlClient.daemonUp && page.storeSegment && !page.storeLoading
+                     && page.storeError === "" && page.storeHits.length === 0
+            Layout.fillWidth: true
+            Layout.topMargin: Kirigami.Units.gridUnit * 3
+            icon.name: "system-software-install-symbolic"
+            text: page.storeQuery.trim() === "" ? "Browse the Rebble store" : "No matching results"
+            explanation: page.storeQuery.trim() === ""
+                ? "Search community watchfaces and watch apps. They install straight to your watch."
+                : "Try a different word, or switch between watchfaces and watch apps."
+            helpfulAction: Kirigami.Action {
+                visible: page.storeQuery.trim() !== ""
+                icon.name: "edit-clear-symbolic"
+                text: "Clear search"
+                onTriggered: storeSearchField.text = "" // debounce reruns the search
+            }
+        }
+
+        // --- Store: results -------------------------------------------------
+        FormCard.FormCard {
+            visible: StoandlClient.daemonUp && page.storeSegment && page.storeHits.length > 0
+            Layout.topMargin: Kirigami.Units.largeSpacing
+
+            Repeater {
+                model: page.storeHits
+                delegate: FormCard.AbstractFormDelegate {
+                    id: storeRow
+                    required property var modelData
+                    onClicked: page.openStoreDetails(storeRow.modelData)
+
+                    contentItem: RowLayout {
+                        spacing: Kirigami.Units.largeSpacing
+
+                        Item {
+                            implicitWidth: Kirigami.Units.iconSizes.huge
+                            implicitHeight: Kirigami.Units.iconSizes.huge
+
+                            // The store serves a 144×144 PNG; the generic glyph is the fallback
+                            // (and what the mock/offline cases show).
+                            Image {
+                                id: storeArt
+                                anchors.fill: parent
+                                source: storeRow.modelData.image || ""
+                                visible: source !== "" && status === Image.Ready
+                                fillMode: Image.PreserveAspectFit
+                                asynchronous: true
+                                cache: true
+                            }
+
+                            Kirigami.Icon {
+                                anchors.centerIn: parent
+                                width: Kirigami.Units.iconSizes.large
+                                height: Kirigami.Units.iconSizes.large
+                                visible: !storeArt.visible
+                                source: storeRow.modelData.type === "watchface"
+                                        ? "preferences-desktop-theme-symbolic"
+                                        : "application-x-executable-symbolic"
+                                color: Kirigami.Theme.textColor
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+                            QQC2.Label {
+                                Layout.fillWidth: true
+                                text: storeRow.modelData.title
+                                elide: Text.ElideRight
+                            }
+                            QQC2.Label {
+                                Layout.fillWidth: true
+                                elide: Text.ElideRight
+                                font: Kirigami.Theme.smallFont
+                                opacity: 0.7
+                                text: {
+                                    const bits = []
+                                    if (storeRow.modelData.author) bits.push(storeRow.modelData.author)
+                                    if (storeRow.modelData.hearts) bits.push("♥ " + storeRow.modelData.hearts)
+                                    if (storeRow.modelData.category && storeRow.modelData.category !== storeRow.modelData.type)
+                                        bits.push(storeRow.modelData.category)
+                                    return bits.join(" · ")
+                                }
+                            }
+                        }
+
+                        // The Algolia index omits the hardware map for some documents; `null`
+                        // means "unknown" (the detail endpoint is authoritative), not "no".
+                        StatusChip {
+                            visible: storeRow.modelData.compatible === false
+                            label: "not for this watch"
+                            tint: Kirigami.Theme.negativeTextColor
+                        }
+
+                        QQC2.Button {
+                            text: "Install"
+                            enabled: !page.storeBusy && storeRow.modelData.compatible !== false
+                            onClicked: page.installStoreApp(storeRow.modelData)
+                            QQC2.ToolTip.text: storeRow.modelData.compatible === false
+                                ? "This app has no build for your watch"
+                                : "Download and install on the watch"
+                            QQC2.ToolTip.visible: hovered
+                        }
+                    }
+                }
+            }
+        }
+
+        QQC2.Button {
+            visible: StoandlClient.daemonUp && page.storeSegment && page.storeHits.length > 0
+                     && page.storePage + 1 < page.storePages
+            Layout.alignment: Qt.AlignHCenter
+            Layout.topMargin: Kirigami.Units.smallSpacing
+            Layout.bottomMargin: Kirigami.Units.largeSpacing
+            enabled: !page.storeLoading
+            text: page.storeLoading
+                  ? "Loading…"
+                  : "Load more (" + page.storeHits.length + " of " + page.storeTotal + ")"
+            onClicked: page.loadMoreStore()
+        }
+    }
+
+    // Typing debounce: one search per pause, not one per keystroke.
+    Timer {
+        id: storeQueryTimer
+        interval: 450
+        repeat: false
+        onTriggered: if (page.storeSegment) page.runStoreSearch(true)
+    }
+
+    // --- store details -----------------------------------------------------
+    Kirigami.Dialog {
+        id: storeDetailDialog
+        title: storeDetailDialog.hit.title || "Store app"
+        preferredWidth: Kirigami.Units.gridUnit * 28
+        standardButtons: QQC2.Dialog.NoButton
+        showCloseButton: true
+
+        property var hit: ({})
+        property var detail: ({})
+        property bool loading: false
+
+        function openFor(app) {
+            hit = app;
+            detail = {};
+            loading = true;
+            open();
+            // Network daemon-side on a cold cache: run() keeps the UI responsive.
+            StoandlClient.run(storeDetailDialog, ["storeDetails", app.id], function (r) {
+                if (storeDetailDialog.hit.id !== app.id) return; // another app was opened meanwhile
+                loading = false;
+                detail = r.ok ? r : { description: r.tail || r.kind, compatible: undefined };
+            });
+        }
+
+        ColumnLayout {
+            spacing: Kirigami.Units.smallSpacing
+
+            QQC2.Label {
+                Layout.fillWidth: true
+                elide: Text.ElideRight
+                font: Kirigami.Theme.smallFont
+                opacity: 0.7
+                text: {
+                    const d = storeDetailDialog.detail
+                    const h = storeDetailDialog.hit
+                    const bits = []
+                    const who = d.author || h.author
+                    const hearts = d.hearts || h.hearts
+                    if (who) bits.push(who)
+                    if (hearts) bits.push("♥ " + hearts)
+                    if (d.category) bits.push(d.category)
+                    return bits.join(" · ")
+                }
+            }
+
+            QQC2.BusyIndicator {
+                Layout.alignment: Qt.AlignHCenter
+                running: storeDetailDialog.loading
+                visible: storeDetailDialog.loading
+            }
+
+            Flickable {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Kirigami.Units.gridUnit * 12
+                visible: !storeDetailDialog.loading
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                contentHeight: storeDescription.implicitHeight
+
+                QQC2.Label {
+                    id: storeDescription
+                    width: parent.width
+                    text: storeDetailDialog.detail.description || "No description."
+                    wrapMode: Text.WordWrap
+                }
+            }
+
+            QQC2.Label {
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+                font: Kirigami.Theme.smallFont
+                opacity: 0.7
+                visible: text !== ""
+                text: {
+                    const d = storeDetailDialog.detail
+                    const bits = []
+                    if (d.version) bits.push("v" + d.version)
+                    if (d.sizeBytes) bits.push(Math.round(d.sizeBytes / 1024) + " KB")
+                    if (d.platforms && d.platforms.length) bits.push("for " + d.platforms.join(", "))
+                    return bits.join(" · ")
+                }
+            }
+
+            Kirigami.InlineMessage {
+                Layout.fillWidth: true
+                visible: storeDetailDialog.detail.compatible === false
+                type: Kirigami.MessageType.Warning
+                text: "This app has no build for your watch."
+            }
+        }
+
+        customFooterActions: [
+            Kirigami.Action {
+                text: storeDetailDialog.detail.compatible === false ? "Unavailable" : "Install"
+                icon.name: "system-software-install-symbolic"
+                enabled: !storeDetailDialog.loading && !page.storeBusy
+                         && storeDetailDialog.detail.compatible !== false
+                onTriggered: {
+                    page.installStoreApp(storeDetailDialog.detail.id
+                                         ? storeDetailDialog.detail : storeDetailDialog.hit);
+                    storeDetailDialog.close();
+                }
+            },
+            Kirigami.Action {
+                text: "Close"
+                icon.name: "dialog-cancel-symbolic"
+                onTriggered: storeDetailDialog.close()
+            }
+        ]
     }
 
     AppPermissionsDialog { id: permDialog }

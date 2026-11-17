@@ -87,7 +87,8 @@ class StoandlClient : public QObject
     // checked against the wall clock (the daemon sends no signal for it).
     Q_PROPERTY(qint64 mutedUntil READ mutedUntil NOTIFY mutedUntilChanged)
     // A long operation this GUI follows that the daemon won't restart under: "pairing" (a Pair/Repair
-    // window), "firmware" (a flash) or "language" (a language pack install); "" when none runs.
+    // window), "firmware" (a flash), "language" (a language pack install) or "store" (a store app
+    // download + push); "" when none runs.
     Q_PROPERTY(QString busyOp READ busyOp NOTIFY busyOpChanged)
     // The running daemon's Version(), read when it comes up; "" while it is down or before the answer.
     Q_PROPERTY(QString daemonVersion READ daemonVersion NOTIFY daemonVersionChanged)
@@ -202,6 +203,17 @@ public:
     Q_INVOKABLE QVariantMap  sideloadApp(const QUrl &fileUrl);
     Q_INVOKABLE QVariantMap  openConfig(const QString &id);  // OpenConfig(s) -> open the daemon-served page via xdg-open
     Q_INVOKABLE void         refreshApps();              // async re-fetch → appsChanged (on show + after any mutation)
+
+    // --- typed wrappers: Rebble store (Apps screen, Store segment) ----------
+    // SearchStore(type, query, platform, limit, offset) and StoreDetails(id) wait on the network
+    // daemon-side (a cold cache), so they are run() calls, not blocking wrappers: the answer is the
+    // usual status map with the JSON in the ok: tail merged in (query, platform, total, page, pages,
+    // hits[] / the full listing), so the QML checks `ok` and reads `hits`. A blank platform uses the
+    // connected watch; `type` is "watchface"/"watchapp".
+    // InstallStoreApp(id): the daemon downloads + sideloads asynchronously. On ok the store poll
+    // starts; live progress arrives via storeStatus (also fed by the StoreProgress signal).
+    Q_INVOKABLE QVariantMap  installStoreApp(const QString &id);
+    Q_INVOKABLE void         stopStorePoll();
 
     // --- typed wrappers: Extensions (Apps screen, 3rd segment) -------------
     Q_INVOKABLE QVariantList extList();                  // -> [{name,installed,enabled,running,config,description,author,version,lastStderr}]
@@ -397,6 +409,9 @@ Q_SIGNALS:
     // success/failed/timeout (firmware) or success/failed/disconnected/timeout (language).
     void firmwareStatus(const QString &kind, int percent, const QString &detail);
     void languageStatus(const QString &kind, int percent, const QString &detail);
+    // Store install. Progress: idle/downloading/installing (percent 0–100 while downloading, else -1).
+    // Terminal: success/failed/disconnected/timeout.
+    void storeStatus(const QString &kind, int percent, const QString &detail);
     void cliResult(const QString &op, bool ok, const QString &message);
     void daemonStartFailed(const QString &message);  // startDaemon() could not start the service
     void firmwareInfoChanged();                      // firmwareInfo / firmwareChecking
@@ -425,6 +440,7 @@ private Q_SLOTS:
     void onLockerChanged();                                           // poke → refreshApps()
     void onCalendarsChanged();                                        // poke → refreshCalendars()
     void onLanguageProgress(const QString &phase, int percent, const QString &detail); // → languageStatus()
+    void onStoreProgress(const QString &phase, int percent, const QString &detail);    // → storeStatus()
     void onExtensionsChanged();                                       // poke → refreshExtensions()
     void onPluginsChanged();                                          // PluginsChanged / PermissionRequestsChanged → refreshPlugins()
     // Finer companion to ExtensionsChanged: an unsolicited per-extension run-state transition
@@ -436,6 +452,7 @@ private Q_SLOTS:
     void pollPairOnce();
     void firmwarePollOnce();
     void languagePollOnce();
+    void storePollOnce();
 
 private:
     QDBusMessage methodCall(const QString &method, const QVariantList &args) const;
@@ -491,6 +508,12 @@ private:
     void         refreshForwarding();
     // Forget the cached answer of the read `name` (empty = every cached read).
     void         dropCache(const QString &name = QString());
+    void         startStorePoll();
+    // Normalise a raw store phase (StoreInstallStatus kind OR StoreProgress phase) to the
+    // terminal/progress `kind` the QML expects and Q_EMIT storeStatus. Shared by the poll loop
+    // and the StoreProgress signal so both map done→success, post-activity notready→disconnected,
+    // failed→failed identically. (The first-poll stale-terminal skip stays in storePollOnce.)
+    void         emitStoreStatus(const QString &phase, int percent, const QString &detail);
     void         runCli(const QString &op, const QStringList &args);
     // Run `systemctl --user <args>` asynchronously; `done` gets (exit 0, first stderr line / reason, stdout).
     void         runSystemctl(const QStringList &args,
@@ -568,6 +591,11 @@ private:
     struct IconEntry { QString url; qint64 answeredMs = 0; };
     QHash<QString, IconEntry> m_icons;
     QSet<QString> m_iconPending;
+
+    QTimer *m_storeTimer = nullptr;
+    int     m_storeElapsedMs = 0;
+    bool    m_storeSeenActivity = false;
+    bool    m_storeFirstPoll = true;
 
     // Per-extension runtime state from ExtensionStateChanged (name → ready|exited|quarantined).
     // Merged into the extList() rows so a quarantined/exited extension isn't shown as a stale
