@@ -90,6 +90,12 @@ constexpr qint64 TASK_TIMEOUT_MS = 600000;
 // as the reboot/disconnect watchdog + terminal-state catch (and the missed-signal fallback).
 constexpr int LANG_INTERVAL_MS = 3000;
 constexpr int LANG_TIMEOUT_MS  = 180000;
+
+// Store install poll: 3 s watchdog cadence, 5 min ceiling. Search and detail are run() calls (they
+// hit the network daemon-side); the install's download + watch push arrives live via StoreProgress,
+// and this tick is the watchdog/terminal catch (and the missed-signal fallback).
+constexpr int STORE_INTERVAL_MS = 3000;
+constexpr int STORE_MAX_MS = 300000;
 } // namespace
 
 // Failures are logged to the terminal (stderr) as well as shown as in-app toasts —
@@ -127,6 +133,26 @@ QVariantMap statusMap(const Status &s)
     m[QStringLiteral("fields")]   = s.fields;
     m[QStringLiteral("ok")]       = s.ok();
     m[QStringLiteral("notready")] = (s.kind == QStringLiteral("notready"));
+    return m;
+}
+
+// statusMap() plus the JSON object in an ok:<json> tail merged in at the top level (the store's
+// search/detail answers: titles and descriptions contain tabs and newlines, so they are JSON).
+// A QVariant return, like statusVariant, so readSpec() can hold it as its `s`-reply parser.
+QVariant storePayload(const Status &s)
+{
+    QVariantMap m = statusMap(s);
+    if (!s.ok() || s.tail.isEmpty())
+        return m;
+    QJsonParseError err {};
+    const QJsonDocument doc = QJsonDocument::fromJson(s.tail.toUtf8(), &err);
+    if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+        qCWarning(lcStoandl).noquote() << "store payload is not JSON:" << err.errorString();
+        return m;
+    }
+    const QVariantMap payload = doc.object().toVariantMap();
+    for (auto it = payload.cbegin(); it != payload.cend(); ++it)
+        m.insert(it.key(), it.value());
     return m;
 }
 
@@ -277,6 +303,16 @@ StoandlClient::StoandlClient(QObject *parent)
     m_taskTimer->setInterval(TASK_POLL_MS);
     connect(m_taskTimer, &QTimer::timeout, this, &StoandlClient::pollTasks);
 
+    m_storeTimer = new QTimer(this);
+    m_storeTimer->setInterval(STORE_INTERVAL_MS);
+    connect(m_storeTimer, &QTimer::timeout, this, &StoandlClient::storePollOnce);
+    connect(this, &StoandlClient::storeStatus, this, [](const QString &kind, int percent, const QString &detail) {
+        if (smokeMs() > 0)
+            qInfo().noquote().nospace() << "stoandl-smoke: storeStatus → " << kind << " " << percent << " " << detail;
+        else
+            qCDebug(lcStoandl).noquote().nospace() << "storeStatus → " << kind << " " << percent << " " << detail;
+    });
+
     // React to the daemon coming up / going down without polling NameHasOwner.
     m_bus.connect(DBUS_SERVICE, DBUS_PATH, DBUS_IFACE, QStringLiteral("NameOwnerChanged"),
                   this, SLOT(onNameOwnerChanged(QString, QString, QString)));
@@ -296,6 +332,8 @@ StoandlClient::StoandlClient(QObject *parent)
                   this, SLOT(onCalendarsChanged()));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("LanguageProgress"),
                   this, SLOT(onLanguageProgress(QString, int, QString)));
+    m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("StoreProgress"),
+                  this, SLOT(onStoreProgress(QString, int, QString)));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("ExtensionsChanged"),
                   this, SLOT(onExtensionsChanged()));
     m_bus.connect(SERVICE, PATH, IFACE, QStringLiteral("PluginsChanged"),
@@ -1192,6 +1230,75 @@ void StoandlClient::emitLanguageStatus(const QString &phase, int percent, const 
         return;
     }
     Q_EMIT languageStatus(phase, percent, detail); // idle / downloading / installing / pre-activity notready
+}
+
+// --- typed wrappers: Rebble store ------------------------------------------
+
+QVariantMap StoandlClient::installStoreApp(const QString &id)
+{
+    // Validation is synchronous daemon-side (id, board, busy); the download and the watch push that
+    // follow are asynchronous, reported through StoreProgress and the poll.
+    const Status s = callStatus(QStringLiteral("InstallStoreApp"), {id});
+    if (s.ok())
+        startStorePoll();
+    return statusMap(s);
+}
+
+void StoandlClient::startStorePoll()
+{
+    m_storeElapsedMs = 0;
+    m_storeSeenActivity = false;
+    m_storeFirstPoll = true;
+    if (!m_storeTimer->isActive())
+        m_storeTimer->start();
+    opPollsChanged();
+}
+
+void StoandlClient::stopStorePoll() { m_storeTimer->stop(); opPollsChanged(); }
+
+void StoandlClient::storePollOnce()
+{
+    m_storeElapsedMs += STORE_INTERVAL_MS;
+    if (m_storeElapsedMs > STORE_MAX_MS) {
+        stopStorePoll();
+        Q_EMIT storeStatus(QStringLiteral("timeout"), -1, QStringLiteral("Install timed out"));
+        return;
+    }
+    const Status s = callStatus(QStringLiteral("StoreInstallStatus"));
+    // Skip one stale sticky terminal on the first poll (previous install's value). This is a
+    // poll-only guard: StoreInstallStatus can snapshot the *prior* install's terminal, whereas the
+    // StoreProgress signal is always live, so the signal path must never drop one.
+    if (m_storeFirstPoll) {
+        m_storeFirstPoll = false;
+        if (s.kind == QStringLiteral("done") || s.kind == QStringLiteral("idle")
+            || s.kind == QStringLiteral("failed"))
+            return;
+    }
+    const int pct = (s.kind == QStringLiteral("downloading")) ? parsePercent(s.tail) : -1;
+    emitStoreStatus(s.kind, pct, s.tail);
+}
+
+void StoandlClient::emitStoreStatus(const QString &phase, int percent, const QString &detail)
+{
+    if (phase == QStringLiteral("downloading") || phase == QStringLiteral("installing"))
+        m_storeSeenActivity = true;
+
+    if (phase == QStringLiteral("done")) {
+        stopStorePoll();
+        Q_EMIT storeStatus(QStringLiteral("success"), 100, detail);
+        return;
+    }
+    if (phase == QStringLiteral("failed")) {
+        stopStorePoll();
+        Q_EMIT storeStatus(QStringLiteral("failed"), -1, detail);
+        return;
+    }
+    if (phase == QStringLiteral("notready") && m_storeSeenActivity) {
+        stopStorePoll();
+        Q_EMIT storeStatus(QStringLiteral("disconnected"), -1, QStringLiteral("Watch disconnected"));
+        return;
+    }
+    Q_EMIT storeStatus(phase, percent, detail); // idle / downloading / installing / pre-activity notready
 }
 
 // --- typed wrappers: System / diagnostics ----------------------------------
@@ -2303,6 +2410,7 @@ QString StoandlClient::busyOp() const
     return m_pairTimer->isActive() ? QStringLiteral("pairing")
          : m_fwTimer->isActive() ? QStringLiteral("firmware")
          : m_langTimer->isActive() ? QStringLiteral("language")
+         : m_storeTimer->isActive() ? QStringLiteral("store")
          : QString();
 }
 
@@ -2532,6 +2640,13 @@ void StoandlClient::onLanguageProgress(const QString &phase, int percent, const 
     qCDebug(lcStoandl).noquote().nospace()
         << "signal LanguageProgress: " << phase << " " << percent << "% " << detail;
     emitLanguageStatus(phase, percent, detail);
+}
+
+void StoandlClient::onStoreProgress(const QString &phase, int percent, const QString &detail)
+{
+    qCDebug(lcStoandl).noquote().nospace()
+        << "signal StoreProgress: " << phase << " " << percent << "% " << detail;
+    emitStoreStatus(phase, percent, detail);
 }
 
 void StoandlClient::onExtensionsChanged()
@@ -2822,6 +2937,10 @@ const ReadSpec *readSpec(const QString &name)
         { QStringLiteral("searchWeatherPlace"), { "SearchWeatherPlace", nullptr, "s", nullptr, placesMap,     SLOW_CALL_TIMEOUT_MS } },
         { QStringLiteral("updateFirmware"),   { "UpdateFirmware",    nullptr,  "",   nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
         { QStringLiteral("launchApp"),        { "LaunchApp",         nullptr,  "s",  nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
+        // Rebble store: search and detail reach the network daemon-side (a cold cache), so run() them.
+        // The answer merges the JSON payload (hits[] / the full listing) into the status map.
+        { QStringLiteral("searchStore"),      { "SearchStore",       nullptr,  "sssii", nullptr, storePayload, SLOW_CALL_TIMEOUT_MS } },
+        { QStringLiteral("storeDetails"),     { "StoreDetails",      nullptr,  "s",  nullptr,  storePayload, SLOW_CALL_TIMEOUT_MS } },
         { QStringLiteral("ping"),             { "Ping",              nullptr,  "",   nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
         { QStringLiteral("transcribe"),       { "Transcribe",        nullptr,  "s",  nullptr,  statusVariant, SLOW_CALL_TIMEOUT_MS } },
     };

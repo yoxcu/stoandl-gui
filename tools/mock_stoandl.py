@@ -462,6 +462,46 @@ class MockStoandl(dbus.service.Object):
             self.config_schema = [dict(zip(CONFIG_COLS, line.rstrip("\n").split("\t"))) for line in f if line.strip()]
         self.config = {c["key"]: c["default"] for c in self.config_schema}
         self.config["weather.locations"] = "Berlin:52.52:13.405"
+        # Rebble store catalog (SearchStore/StoreDetails) + the async install walker
+        # (StoreProgress/StoreInstallStatus). Two documents deliberately omit `platforms` to
+        # exercise the "unknown compatibility" (null) path the index has in real life.
+        self.store_apps = [
+            {"id": "60803d141342ae009528070f", "uuid": "0bcee2c3-a857-40ea-a0fb-7efd2dcc0125",
+             "type": "watchface", "title": "TicToc+", "author": "Nikki", "category": "Faces",
+             "hearts": 68, "platforms": ["aplite", "basalt", "chalk", "diorite"],
+             "version": "1.3", "description":
+                 "An extension of the default Pebble Time watchface, with weather, health and "
+                 "a configurable layout. This long description exercises the detail dialog's "
+                 "scrolling behaviour across several lines of text.",
+             "published": "Mon, 28 Mar 2022 13:57:29 GMT", "image": ""},
+            {"id": "54a1ba1afc5f23e4c000012d", "uuid": "17bf83aa-88a9-459a-a6e5-60aa60e1dc07",
+             "type": "watchapp", "title": "Timer+", "author": "Ycleptic Studios", "category": "Tools",
+             "hearts": 44, "platforms": ["aplite", "basalt", "diorite", "emery"],
+             "version": "2.0", "description": "Multiple countdown timers on the watch.",
+             "published": "Fri, 04 Mar 2016 10:00:00 GMT", "image": ""},
+            {"id": "59f3bdea0dfc323bd0002c45", "uuid": "7f0a2d5e-1c44-4a83-9a2e-2d9d2f3b6c11",
+             "type": "watchface", "title": "TicToc", "author": "Andrew Bota", "category": "Faces",
+             "hearts": 15, "platforms": ["aplite", "basalt"], "version": "1.0",
+             "description": "The original TicToc watchface.",
+             "published": "Mon, 01 Aug 2016 08:30:00 GMT", "image": ""},
+            {"id": "6951f2e5828bd90009267488", "uuid": "1c6a1f0b-8194-491f-acc4-fc06a6f9966d",
+             "type": "watchface", "title": "Lexiclock", "author": "fishy", "category": "Faces",
+             "hearts": 9, "platforms": [], "version": "2.1",
+             "description": "A word-clock watchface. The index omits its hardware list, so the "
+                            "search hit's compatibility is unknown until the detail is opened.",
+             "published": "Tue, 12 Jan 2021 12:00:00 GMT", "image": ""},
+            {"id": "6aa4bd364185ac000967dd9e", "uuid": "b1f2a3c4-5566-4778-99aa-bbccddeeff00",
+             "type": "watchapp", "title": "Cassiopeia", "author": "sailor", "category": "Tools",
+             "hearts": 21, "platforms": [], "version": "0.9",
+             "description": "An astronomy watch app; hardware list omitted by the index too.",
+             "published": "Wed, 03 Mar 2021 09:00:00 GMT", "image": ""},
+            {"id": "57cdf8c0a789e1e0b800000d", "uuid": "d4e5f6a7-8899-4aab-bcde-f01234567890",
+             "type": "watchface", "title": "Rota Minute", "author": "dmn", "category": "Faces",
+             "hearts": 6, "platforms": ["emery"], "version": "1.2",
+             "description": "A minimal rotating-minute face for the larger displays.",
+             "published": "Sun, 08 May 2022 16:45:00 GMT", "image": ""},
+        ]
+        self.store = None  # None when idle, else {"app": ..., "polls": n}
         # HOOK #8: health. Per-day data is GENERATED deterministically from each date's ordinal
         # (see the _*_for/_window helpers) so the period-aware GetHealthSummary/GetHealthSeries
         # (day/week/month + offset) all light up with realistic multi-day data. Global flags only:
@@ -2109,6 +2149,97 @@ class MockStoandl(dbus.service.Object):
             return f"installing:{p * 25}"          # 25,50,75,100
         return f"done:{self.lang['name']}"
 
+    # --- Rebble store ------------------------------------------------------
+    def _store_platform(self):
+        """The connected watch's store codename (the daemon's WatchType.codename), or None."""
+        name = self._connected_name()
+        return None if name is None else self.watches[name]["platform"].lower()
+
+    @dbus.service.method(IFACE, in_signature="sssii", out_signature="s")
+    def SearchStore(self, item_type, query, platform, limit, offset):
+        t = "watchapp" if item_type in ("watchapp", "watchapps", "app", "apps") else "watchface"
+        hw = platform.strip().lower() or self._store_platform()
+        if hw is None:
+            return "notready:No watch connected"
+        limit = max(1, min(int(limit), 1000))
+        start = max(0, int(offset))
+        q = query.strip().lower()
+        hits = []
+        for a in self.store_apps:
+            if a["type"] != t:
+                continue
+            if a["platforms"] and hw not in a["platforms"]:
+                continue
+            if q and q not in (a["title"] + " " + a["author"] + " " + a["category"]).lower():
+                continue
+            hits.append(a)
+        total = len(hits)
+        payload = {
+            "query": query, "platform": hw,
+            "total": total,
+            "page": start // limit,
+            "pages": (total + limit - 1) // limit,
+            "hits": [{
+                "id": a["id"], "uuid": a["uuid"], "type": a["type"], "title": a["title"],
+                "author": a["author"], "category": a["category"], "hearts": a["hearts"],
+                "image": a["image"] or None,
+                "platforms": a["platforms"],
+                # Empty platform list = the index omitted the map => unknown (null), as in the daemon.
+                "compatible": None if not a["platforms"] else hw in a["platforms"],
+            } for a in hits[start:start + limit]],
+        }
+        return "ok:" + json.dumps(payload, separators=(",", ":"))
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def StoreDetails(self, id):
+        app = next((a for a in self.store_apps if a["id"] == id), None)
+        if app is None:
+            return f"notfound:No app with id '{id}' in the Rebble store"
+        hw = self._store_platform()
+        platforms = app["platforms"]
+        payload = {
+            "id": app["id"], "uuid": app["uuid"], "type": app["type"], "title": app["title"],
+            "author": app["author"], "category": app["category"], "hearts": app["hearts"],
+            "description": app["description"], "platforms": platforms,
+            "platform": hw,
+            # The REST map is authoritative; unknown hardware is still installable (the PBW validates).
+            "compatible": None if hw is None else (not platforms or hw in platforms),
+            "version": app["version"], "published": app["published"],
+            "pbw": "https://example.invalid/pbw/" + app["id"] + ".pbw",
+            "sizeBytes": 339235, "image": app["image"] or None,
+        }
+        return "ok:" + json.dumps(payload, separators=(",", ":"))
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s")
+    def InstallStoreApp(self, id):
+        app = next((a for a in self.store_apps if a["id"] == id), None)
+        if app is None:
+            return f"notfound:No app with id '{id}' in the Rebble store"
+        if self._store_platform() is None:
+            return "notready:No watch connected"
+        if self.store is not None:
+            return f"busy:{self.store['app']['title']}"
+        self.store = {"app": app, "polls": 0}
+        GLib.timeout_add(700, self._store_tick)  # ~match the firmware/language push cadence
+        return f"ok:{app['title']}"
+
+    @dbus.service.method(IFACE, in_signature="", out_signature="s")
+    def StoreInstallStatus(self):
+        # Snapshot of the op _store_tick drives (same contract as LanguageStatus).
+        if self.store is None:
+            return "idle:"
+        p = self.store["polls"]
+        title = self.store["app"]["title"]
+        if p == 0:
+            return "downloading:-1"
+        if p == 1:
+            return "downloading:35"
+        if p == 2:
+            return "downloading:100"
+        if p == 3:
+            return f"installing:{title}"
+        return f"done:{title}"
+
     # --- Developer connection ----------------------------------------------
     @dbus.service.method(IFACE, in_signature="", out_signature="s")
     def StartDevConnection(self):
@@ -2218,6 +2349,12 @@ class MockStoandl(dbus.service.Object):
     def LanguageProgress(self, phase, percent, detail):
         # phase ∈ {downloading,installing,done,idle,failed,notready} (LanguageStatus vocabulary);
         # percent 0–100 while installing else -1; detail = language name / failure reason.
+        pass
+
+    @dbus.service.signal(IFACE, signature="sis")
+    def StoreProgress(self, phase, percent, detail):
+        # phase ∈ {downloading,installing,done,idle,failed,notready} (StoreInstallStatus vocabulary);
+        # percent 0–100 while downloading else -1; detail = app title / failure reason.
         pass
 
     @dbus.service.signal(IFACE, signature="")
@@ -2576,6 +2713,41 @@ class MockStoandl(dbus.service.Object):
     def _start_lang_push(self, name, target):
         self.lang = {"polls": 0, "name": name, "target": target}
         GLib.timeout_add(700, self._lang_tick)  # ~match the firmware push cadence
+
+    # --- store install walker (pushes StoreProgress on a GLib tick) ---------
+    def _store_tick(self):
+        """Drive a store install forward one step and PUSH the phase via StoreProgress.
+
+        Mirrors StoreInstallStatus()'s walk so the polled path still works as a fallback;
+        returns True to keep the GLib timer running, False to stop it once terminal.
+        """
+        if self.store is None:
+            return False
+        p = self.store["polls"]
+        self.store["polls"] += 1
+        title = self.store["app"]["title"]
+        if p == 0:
+            self.StoreProgress("downloading", -1, title)
+        elif p == 1:
+            self.StoreProgress("downloading", 35, title)
+        elif p == 2:
+            self.StoreProgress("downloading", 100, title)
+        elif p == 3:
+            self.StoreProgress("installing", -1, title)
+        else:
+            self._sideload_seq += 1
+            order = max((a["order"] for a in self.apps), default=-1) + 1
+            self.apps.append({
+                "uuid": f"side{self._sideload_seq:04d}",
+                "type": self.store["app"]["type"],
+                "order": order, "flags": ["sideloaded"], "title": title,
+                "developer": self.store["app"]["author"],
+            })
+            self.store = None
+            self.StoreProgress("done", 100, title)  # success → installed
+            self.LockerChanged()
+            return False
+        return True
 
 
 def main():
